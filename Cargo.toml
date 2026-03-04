@@ -1,0 +1,23 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/orchestrator-core",
+    "crates/orchestrator-runtime",
+    "crates/provider-contracts",
+    "crates/provider-mocks",
+    "crates/orchestrator-api",
+    "crates/orchestrator-observability",
+    "examples/happy_path",
+    "examples/consumer_example",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["Commerce Orchestrator Contributors"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/your-org/commerce-orchestrator"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "allow"

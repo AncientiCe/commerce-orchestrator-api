@@ -1,0 +1,19 @@
+[package]
+name = "happy_path"
+version.workspace = true
+edition.workspace = true
+description = "Runnable example wiring mock providers for end-to-end transaction"
+
+[dependencies]
+orchestrator-api = { path = "../../crates/orchestrator-api" }
+orchestrator-core = { path = "../../crates/orchestrator-core" }
+orchestrator-runtime = { path = "../../crates/orchestrator-runtime" }
+provider-contracts = { path = "../../crates/provider-contracts" }
+provider-mocks = { path = "../../crates/provider-mocks" }
+orchestrator-observability = { path = "../../crates/orchestrator-observability" }
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[lints]
+workspace = true

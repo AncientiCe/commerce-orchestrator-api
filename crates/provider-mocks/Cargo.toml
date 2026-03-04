@@ -1,0 +1,14 @@
+[package]
+name = "provider-mocks"
+version.workspace = true
+edition.workspace = true
+description = "Deterministic in-memory mock implementations for integration tests"
+
+[dependencies]
+provider-contracts = { path = "../provider-contracts" }
+orchestrator-core = { path = "../orchestrator-core" }
+async-trait = "0.1"
+uuid = { version = "1", features = ["v4", "serde"] }
+serde = { version = "1", features = ["derive"] }
+[lints]
+workspace = true

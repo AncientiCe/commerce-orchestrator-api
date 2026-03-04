@@ -1,0 +1,16 @@
+[package]
+name = "orchestrator-observability"
+version.workspace = true
+edition.workspace = true
+description = "Tracing spans, metrics helpers, and audit event schemas"
+
+[dependencies]
+orchestrator-core = { path = "../orchestrator-core" }
+tracing = "0.1"
+serde = { version = "1", features = ["derive"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+tokio = { version = "1", features = ["sync"] }
+
+[lints]
+workspace = true

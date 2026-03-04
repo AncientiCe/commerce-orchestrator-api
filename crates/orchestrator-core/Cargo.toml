@@ -1,0 +1,14 @@
+[package]
+name = "orchestrator-core"
+version.workspace = true
+edition.workspace = true
+description = "Domain model, state machine, transaction contract, and policy engine for POS orchestration"
+
+[dependencies]
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+
+[lints]
+workspace = true

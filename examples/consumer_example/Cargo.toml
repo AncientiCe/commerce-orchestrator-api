@@ -1,0 +1,22 @@
+[package]
+name = "consumer_example"
+version.workspace = true
+edition.workspace = true
+description = "Template: wire your own provider adapters into OrchestratorFacade and run happy-path checkout"
+
+[dependencies]
+async-trait = "0.1"
+orchestrator-api = { path = "../../crates/orchestrator-api" }
+orchestrator-core = { path = "../../crates/orchestrator-core" }
+provider-contracts = { path = "../../crates/provider-contracts" }
+provider-mocks = { path = "../../crates/provider-mocks" }
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+orchestrator-core = { path = "../../crates/orchestrator-core" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+
+[lints]
+workspace = true

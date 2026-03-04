@@ -1,0 +1,23 @@
+[package]
+name = "orchestrator-api"
+version.workspace = true
+edition.workspace = true
+description = "Minimal API surface for app/agent integration"
+
+[dependencies]
+orchestrator-core = { path = "../orchestrator-core" }
+orchestrator-runtime = { path = "../orchestrator-runtime" }
+provider-contracts = { path = "../provider-contracts" }
+orchestrator-observability = { path = "../orchestrator-observability" }
+async-trait = "0.1"
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+
+[dev-dependencies]
+provider-mocks = { path = "../provider-mocks" }
+tempfile = "3"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+
+[lints]
+workspace = true

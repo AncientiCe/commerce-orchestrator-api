@@ -1,0 +1,33 @@
+# --- Rust ---
+/target/
+
+# Keep Cargo.lock committed unless you intentionally choose library-style lockfile policy.
+# /Cargo.lock
+
+# --- IDE / Editor ---
+.vscode/
+.idea/
+*.iml
+
+# --- Cursor ---
+.cursor/
+
+# --- OS files ---
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# --- Logs / temp ---
+*.log
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+
+# --- Env / local secrets ---
+.env
+.env.*
+!.env.example
+*.local
+
