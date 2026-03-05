@@ -1,5 +1,5 @@
-# Build stage: compile orchestrator-server
-FROM rust:1.75-bookworm AS builder
+# Build stage: compile orchestrator-server (Rust 1.85+ for Cargo.lock v4 and edition2024 deps)
+FROM rust:1.85-bookworm AS builder
 WORKDIR /app
 COPY . .
 
