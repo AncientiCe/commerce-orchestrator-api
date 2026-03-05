@@ -1,6 +1,17 @@
-# Commerce Orchestrator
+# Agentic Commerce Orchestrator
 
-Production-ready interface orchestrator for commerce: cart lifecycle, checkout, payment capture/void/refund, and reliable outbox/inbox/dead-letter operations. Deploy as an HTTP service, plug in your six downstream APIs (catalog, pricing, tax, geo, payment, receipt), and run.
+**UCP/A2A/AP2/MCP-ready middleware for reliable cart-to-checkout in the age of AI agents** — Rust, production-grade, open-source.
+
+[![Rust](https://img.shields.io/badge/Rust-stable-orange?logo=rust&logoColor=white)](https://www.rust-lang.org/)
+[![Kubernetes-ready](https://img.shields.io/badge/Kubernetes-ready-326CE5?logo=kubernetes&logoColor=white)](deploy/README.md)
+[![Protocol Conformance](https://img.shields.io/badge/Protocols-UCP%20%7C%20A2A%20%7C%20AP2%20%7C%20MCP-blueviolet)](docs/standards/conformance-matrix.md)
+[![v0.1.0](https://img.shields.io/badge/version-0.1.0-blue)](CHANGELOG.md)
+[![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20%2F%20Apache--2.0-green)](LICENSE-MIT)
+[![CI](https://img.shields.io/github/actions/workflow/status/AncientiCe/commerce-orchestrator/ci.yml?branch=main&label=CI)](https://github.com/AncientiCe/commerce-orchestrator/actions)
+
+---
+
+An agent → orchestrator → merchant middleware layer: your AI agents (or any client) call the REST/A2A API; the orchestrator runs deterministic cart and checkout flows, delegates to your catalog, pricing, tax, geo, payment, and receipt backends. Deploy, configure six downstream URLs, and integrate — no fork required.
 
 ## Documentation
 
