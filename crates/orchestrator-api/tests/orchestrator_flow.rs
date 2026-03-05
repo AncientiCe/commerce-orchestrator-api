@@ -266,18 +266,30 @@ async fn run_reconciliation_returns_no_mismatch_when_in_sync() {
         .await
         .expect("checkout");
     let report = facade
-        .run_reconciliation(&[result.transaction_id.clone()])
+        .run_reconciliation(std::slice::from_ref(&result.transaction_id))
         .await;
-    assert!(report.mismatches.is_empty(), "no drift when provider has no state");
+    assert!(
+        report.mismatches.is_empty(),
+        "no drift when provider has no state"
+    );
 }
 
 #[tokio::test]
 async fn accept_incoming_event_once_dedupes_duplicate_delivery() {
     let facade = build_facade();
-    let first = facade.accept_incoming_event_once("webhook_evt_1").await.expect("accept once");
-    let second = facade.accept_incoming_event_once("webhook_evt_1").await.expect("accept once");
+    let first = facade
+        .accept_incoming_event_once("webhook_evt_1")
+        .await
+        .expect("accept once");
+    let second = facade
+        .accept_incoming_event_once("webhook_evt_1")
+        .await
+        .expect("accept once");
     assert!(first, "first delivery accepted");
-    assert!(!second, "duplicate delivery must be rejected for at-least-once idempotent handling");
+    assert!(
+        !second,
+        "duplicate delivery must be rejected for at-least-once idempotent handling"
+    );
 }
 
 #[tokio::test]
@@ -336,9 +348,16 @@ async fn dead_letter_replay_roundtrip() {
         facade.process_outbox_once(3).await.expect("process outbox");
     }
     let dl = facade.list_dead_letter().await;
-    assert_eq!(dl.len(), 1, "one message in dead-letter after 4 process attempts");
+    assert_eq!(
+        dl.len(),
+        1,
+        "one message in dead-letter after 4 process attempts"
+    );
     let msg_id = dl[0].id.clone();
-    let replayed = facade.replay_from_dead_letter(&msg_id).await.expect("replay");
+    let replayed = facade
+        .replay_from_dead_letter(&msg_id)
+        .await
+        .expect("replay");
     assert!(replayed);
     let dl_after = facade.list_dead_letter().await;
     assert!(dl_after.is_empty(), "replay removes from dead-letter");

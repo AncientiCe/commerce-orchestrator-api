@@ -2,6 +2,7 @@
 
 use crate::commit::InMemoryCommitStore;
 use crate::effects::{DeadLetter, InboxDedupe, Outbox, OutboxMessage};
+use crate::events::CartStreamEvent;
 use crate::idempotency::{IdempotencyKey, IdempotencyState, InMemoryIdempotencyStore};
 use crate::inventory::InMemoryReservationStore;
 use crate::order::InMemoryOrderStore;
@@ -9,7 +10,6 @@ use crate::payment_state::{
     InMemoryPaymentStateStore, PaymentMismatch, PaymentStateStore, ReconciliationReport,
 };
 use crate::persistence;
-use crate::events::CartStreamEvent;
 use crate::store_error::StoreError;
 use crate::store_traits::*;
 use orchestrator_core::contract::{PaymentState, *};
@@ -64,7 +64,11 @@ impl InMemoryEventStore {
 
 #[async_trait::async_trait]
 impl EventStore for InMemoryEventStore {
-    async fn append_cart_event(&self, cart_id: CartId, event: CartStreamEvent) -> Result<(), StoreError> {
+    async fn append_cart_event(
+        &self,
+        cart_id: CartId,
+        event: CartStreamEvent,
+    ) -> Result<(), StoreError> {
         let mut guard = self.cart_events.lock().await;
         guard.entry(cart_id).or_default().push(event);
         Ok(())
@@ -153,6 +157,7 @@ impl Runner {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn with_stores(
         providers: ProviderSet,
         policy: PolicyEngine,
@@ -214,8 +219,12 @@ impl Runner {
                         },
                     )
                     .await?;
-                self.event_store.put_cart_snapshot(projection.clone()).await?;
-                self.event_store.set_cart_state(id, CartState::CartCreated).await?;
+                self.event_store
+                    .put_cart_snapshot(projection.clone())
+                    .await?;
+                self.event_store
+                    .set_cart_state(id, CartState::CartCreated)
+                    .await?;
                 Ok(projection)
             }
             CartCommand::AddItem(payload) => {
@@ -324,7 +333,9 @@ impl Runner {
                 self.event_store
                     .append_cart_event(payload.cart_id, CartStreamEvent::CheckoutReady)
                     .await?;
-                self.event_store.put_cart_snapshot(projection.clone()).await?;
+                self.event_store
+                    .put_cart_snapshot(projection.clone())
+                    .await?;
                 self.transition_cart(payload.cart_id, CartEvent::MarkCheckoutReady)
                     .await?;
                 Ok(projection)
@@ -500,7 +511,9 @@ impl Runner {
 
         let receipt = self.providers.receipt.generate(&cart, &result).await?;
         result.receipt_payload = Some(receipt.content);
-        self.reservation_store.finalize_cart(request.cart_id).await?;
+        self.reservation_store
+            .finalize_cart(request.cart_id)
+            .await?;
         self.outbox
             .enqueue(OutboxMessage {
                 id: format!("msg_{}", Uuid::new_v4()),
@@ -617,18 +630,11 @@ impl Runner {
 
     /// Run reconciliation for the given transaction IDs: compare our stored payment state
     /// with the provider's view and return any mismatches.
-    pub async fn run_reconciliation(
-        &self,
-        transaction_ids: &[String],
-    ) -> ReconciliationReport {
+    pub async fn run_reconciliation(&self, transaction_ids: &[String]) -> ReconciliationReport {
         let mut mismatches = Vec::new();
         for txn_id in transaction_ids {
             let our = self.payment_state_store.get(txn_id).await;
-            let provider = self
-                .providers
-                .payment
-                .get_payment_state(txn_id)
-                .await;
+            let provider = self.providers.payment.get_payment_state(txn_id).await;
             if let (Some(our_s), Some(prov_s)) = (our, provider) {
                 if our_s != prov_s {
                     mismatches.push(PaymentMismatch {
@@ -721,7 +727,9 @@ impl Runner {
             )
             .await?;
 
-        self.event_store.put_cart_snapshot(projection.clone()).await?;
+        self.event_store
+            .put_cart_snapshot(projection.clone())
+            .await?;
         Ok(projection)
     }
 

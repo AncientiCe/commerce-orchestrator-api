@@ -62,7 +62,11 @@ impl OrderStore for InMemoryOrderStore {
     async fn get(&self, order_id: &str) -> Option<OrderRecord> {
         self.records.lock().await.get(order_id).cloned()
     }
-    async fn append_event(&self, order_id: &str, event: OrderEvent) -> Result<Option<OrderRecord>, StoreError> {
+    async fn append_event(
+        &self,
+        order_id: &str,
+        event: OrderEvent,
+    ) -> Result<Option<OrderRecord>, StoreError> {
         let mut guard = self.records.lock().await;
         let record = match guard.get_mut(order_id) {
             Some(r) => r,
@@ -84,7 +88,11 @@ impl OrderStore for InMemoryOrderStore {
         record.adjustments.push(adjustment);
         Ok(Some(record.clone()))
     }
-    async fn update_status(&self, order_id: &str, status: OrderStatus) -> Result<Option<OrderRecord>, StoreError> {
+    async fn update_status(
+        &self,
+        order_id: &str,
+        status: OrderStatus,
+    ) -> Result<Option<OrderRecord>, StoreError> {
         let mut guard = self.records.lock().await;
         let record = match guard.get_mut(order_id) {
             Some(r) => r,

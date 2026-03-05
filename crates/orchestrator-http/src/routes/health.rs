@@ -1,11 +1,6 @@
 //! Health check endpoints for liveness and readiness.
 
-use axum::{
-    extract::State,
-    http::StatusCode,
-    response::IntoResponse,
-    Json,
-};
+use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
 use serde::Serialize;
 
 use crate::state::AppState;
@@ -46,7 +41,9 @@ pub async fn ready(State(state): State<AppState>) -> impl IntoResponse {
     if state.is_shutting_down() {
         return (
             StatusCode::SERVICE_UNAVAILABLE,
-            Json(ReadyResponse { status: "shutting_down" }),
+            Json(ReadyResponse {
+                status: "shutting_down",
+            }),
         );
     }
     (StatusCode::OK, Json(ReadyResponse { status: "ok" }))

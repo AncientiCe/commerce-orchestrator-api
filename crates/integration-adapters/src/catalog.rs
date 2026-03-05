@@ -1,9 +1,9 @@
 //! HTTP adapter for the catalog component API.
 
-use async_trait::async_trait;
-use provider_contracts::{CatalogError, CatalogItem, CatalogProvider};
 use crate::client::{build_client, get_with_retry, ClientConfig};
 use crate::error::AdapterError;
+use async_trait::async_trait;
+use provider_contracts::{CatalogError, CatalogItem, CatalogProvider};
 
 /// Catalog item as returned by the catalog API (wire format).
 #[derive(Debug, serde::Deserialize)]
@@ -53,12 +53,13 @@ impl CatalogProvider for CatalogHttpAdapter {
     async fn get_item(&self, item_id: &str) -> Result<CatalogItem, CatalogError> {
         let url = self.item_url(item_id);
         let correlation_id = None::<&str>;
-        let resp =         get_with_retry(&self.client, &url, correlation_id, &self.config)
+        let resp = get_with_retry(&self.client, &url, correlation_id, &self.config)
             .await
             .map_err(CatalogError::from)?;
-        let dto: CatalogItemDto = resp.json().await.map_err(|e| {
-            CatalogError::NotFound(format!("invalid catalog response: {}", e))
-        })?;
+        let dto: CatalogItemDto = resp
+            .json()
+            .await
+            .map_err(|e| CatalogError::NotFound(format!("invalid catalog response: {}", e)))?;
         Ok(dto.into())
     }
 }

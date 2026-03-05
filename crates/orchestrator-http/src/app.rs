@@ -19,5 +19,5 @@ pub async fn serve(
 ) -> Result<(), std::io::Error> {
     let listener = tokio::net::TcpListener::bind(addr).await?;
     tracing::info!("orchestrator API listening on {}", addr);
-    axum::serve(listener, router.with_state(state)).await.map_err(Into::into)
+    axum::serve(listener, router.with_state(state)).await
 }

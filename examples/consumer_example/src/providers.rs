@@ -10,8 +10,9 @@ use orchestrator_core::contract::{
 };
 use provider_contracts::{
     AuthResult, CatalogError, CatalogItem, CatalogProvider, GeoCheckResult, GeoError, GeoProvider,
-    LinePrice, PaymentError, PaymentOperationResult, PaymentProvider, PricingError, PricingProvider,
-    ReceiptError, ReceiptPayload, ReceiptProvider, TaxError, TaxProvider, TaxResult,
+    LinePrice, PaymentError, PaymentOperationResult, PaymentProvider, PricingError,
+    PricingProvider, ReceiptError, ReceiptPayload, ReceiptProvider, TaxError, TaxProvider,
+    TaxResult,
 };
 use provider_mocks::{
     MockCatalogProvider, MockGeoProvider, MockPaymentProvider, MockPricingProvider,
@@ -22,6 +23,12 @@ use std::sync::Arc;
 /// Your catalog adapter (here: wraps mock; replace with your catalog service).
 pub struct MyCatalogProvider {
     inner: MockCatalogProvider,
+}
+
+impl Default for MyCatalogProvider {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl MyCatalogProvider {

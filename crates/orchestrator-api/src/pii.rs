@@ -19,7 +19,10 @@ impl RedactedPaymentIntent {
         Self {
             amount_minor: intent.amount_minor,
             token_or_reference: REDACTED.to_string(),
-            ap2_consent_proof: intent.ap2_consent_proof.as_ref().map(|_| REDACTED.to_string()),
+            ap2_consent_proof: intent
+                .ap2_consent_proof
+                .as_ref()
+                .map(|_| REDACTED.to_string()),
             payment_handler_id: intent.payment_handler_id.clone(),
         }
     }

@@ -49,18 +49,13 @@ impl TaxHttpAdapter {
 impl TaxProvider for TaxHttpAdapter {
     async fn resolve_tax(&self, cart: &CartProjection) -> Result<TaxResult, TaxError> {
         let url = self.resolve_url();
-        let resp = post_json_with_retry(
-            &self.client,
-            &url,
-            cart,
-            None::<&str>,
-            &self.config,
-        )
-        .await
-        .map_err(TaxError::from)?;
-        let body: ResolveTaxResponse = resp.json().await.map_err(|e| {
-            TaxError::Failed(format!("invalid tax response: {}", e))
-        })?;
+        let resp = post_json_with_retry(&self.client, &url, cart, None::<&str>, &self.config)
+            .await
+            .map_err(TaxError::from)?;
+        let body: ResolveTaxResponse = resp
+            .json()
+            .await
+            .map_err(|e| TaxError::Failed(format!("invalid tax response: {}", e)))?;
         Ok(body.into())
     }
 }

@@ -98,19 +98,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let receipt = Arc::new(MockReceiptProvider);
         let policy = orchestrator_core::policy::PolicyEngine::default();
         let facade = orchestrator_api::OrchestratorFacade::new(
-            catalog,
-            pricing,
-            tax,
-            geo,
-            payment,
-            receipt,
-            policy,
+            catalog, pricing, tax, geo, payment, receipt, policy,
         );
         (facade, None, true)
     };
 
-    let state = AppState::new(facade)
-        .production_mode(profile.is_production());
+    let state = AppState::new(facade).production_mode(profile.is_production());
     let state = if let Some(a) = authn {
         state.with_authn(a)
     } else {
@@ -127,9 +120,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     );
 
     let shutdown_flag = state.shutdown_flag.clone();
-    let server = tokio::spawn(async move {
-        app::serve(router, state, addr).await
-    });
+    let server = tokio::spawn(async move { app::serve(router, state, addr).await });
     tokio::select! {
         res = server => {
             match res {

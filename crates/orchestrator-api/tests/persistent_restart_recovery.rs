@@ -13,10 +13,7 @@ use provider_mocks::{
 };
 use std::sync::Arc;
 
-fn build_providers_and_policy() -> (
-    Arc<MockCatalogProvider>,
-    PolicyEngine,
-) {
+fn build_providers_and_policy() -> (Arc<MockCatalogProvider>, PolicyEngine) {
     let catalog = MockCatalogProvider::new();
     catalog.add_item(CatalogItem {
         id: "item_1".to_string(),
@@ -94,7 +91,10 @@ async fn persistent_runner_restart_returns_same_idempotent_result() {
         idempotency_key: "idem_restart_test".to_string(),
     };
 
-    let result1 = facade1.execute_checkout(req.clone()).await.expect("first checkout");
+    let result1 = facade1
+        .execute_checkout(req.clone())
+        .await
+        .expect("first checkout");
     assert_eq!(result1.status, TransactionStatus::Completed);
     drop(facade1);
 
@@ -112,7 +112,10 @@ async fn persistent_runner_restart_returns_same_idempotent_result() {
     .await
     .expect("reopen persistent facade");
 
-    let result2 = facade2.execute_checkout(req).await.expect("replay same key");
+    let result2 = facade2
+        .execute_checkout(req)
+        .await
+        .expect("replay same key");
     assert_eq!(result2.status, TransactionStatus::Completed);
     assert_eq!(
         result1.transaction_id, result2.transaction_id,

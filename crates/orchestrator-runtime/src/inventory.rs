@@ -3,10 +3,10 @@
 use crate::store_error::StoreError;
 use crate::store_traits::ReservationStore;
 use orchestrator_core::contract::CartId;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use serde::{Deserialize, Serialize};
 use tokio::time::{Duration, Instant};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -84,25 +84,6 @@ impl InMemoryReservationStore {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use orchestrator_core::contract::CartId;
-
-    #[tokio::test]
-    async fn reserve_and_finalize_cart() {
-        let store = InMemoryReservationStore::default();
-        let cart_id = CartId::new();
-        store
-            .reserve(cart_id, "sku_1".to_string(), 2, Duration::from_secs(10))
-            .await;
-        store.finalize_cart(cart_id).await;
-        let records = store.by_cart(cart_id).await;
-        assert_eq!(records.len(), 1);
-        assert_eq!(records[0].state, ReservationState::Finalized);
-    }
-}
-
 #[async_trait::async_trait]
 impl ReservationStore for InMemoryReservationStore {
     async fn reserve(
@@ -160,5 +141,24 @@ impl ReservationStore for InMemoryReservationStore {
             .filter(|r| r.cart_id == cart_id)
             .cloned()
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use orchestrator_core::contract::CartId;
+
+    #[tokio::test]
+    async fn reserve_and_finalize_cart() {
+        let store = InMemoryReservationStore::default();
+        let cart_id = CartId::new();
+        store
+            .reserve(cart_id, "sku_1".to_string(), 2, Duration::from_secs(10))
+            .await;
+        store.finalize_cart(cart_id).await;
+        let records = store.by_cart(cart_id).await;
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].state, ReservationState::Finalized);
     }
 }

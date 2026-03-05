@@ -15,7 +15,11 @@ use crate::store_error::StoreError;
 /// Cart events, snapshots, and cart state machine state.
 #[async_trait]
 pub trait EventStore: Send + Sync {
-    async fn append_cart_event(&self, cart_id: CartId, event: CartStreamEvent) -> Result<(), StoreError>;
+    async fn append_cart_event(
+        &self,
+        cart_id: CartId,
+        event: CartStreamEvent,
+    ) -> Result<(), StoreError>;
     async fn put_cart_snapshot(&self, snapshot: CartProjection) -> Result<(), StoreError>;
     async fn get_cart_snapshot(&self, cart_id: &CartId) -> Option<CartProjection>;
     async fn get_cart_state(&self, cart_id: &CartId) -> Option<CartState>;
@@ -26,7 +30,11 @@ pub trait EventStore: Send + Sync {
 #[async_trait]
 pub trait IdempotencyStore: Send + Sync {
     async fn claim(&self, key: &IdempotencyKey) -> Result<Option<IdempotencyState>, StoreError>;
-    async fn complete(&self, key: IdempotencyKey, result: TransactionResult) -> Result<(), StoreError>;
+    async fn complete(
+        &self,
+        key: IdempotencyKey,
+        result: TransactionResult,
+    ) -> Result<(), StoreError>;
 }
 
 /// Atomic commit boundary.
@@ -42,7 +50,13 @@ pub trait CommitStore: Send + Sync {
 /// Inventory reservation lifecycle.
 #[async_trait]
 pub trait ReservationStore: Send + Sync {
-    async fn reserve(&self, cart_id: CartId, sku: String, quantity: u32, ttl: std::time::Duration) -> Result<(), StoreError>;
+    async fn reserve(
+        &self,
+        cart_id: CartId,
+        sku: String,
+        quantity: u32,
+        ttl: std::time::Duration,
+    ) -> Result<(), StoreError>;
     async fn finalize_cart(&self, cart_id: CartId) -> Result<(), StoreError>;
     async fn release_cart(&self, cart_id: CartId) -> Result<(), StoreError>;
     async fn sweep_expired(&self) -> Result<usize, StoreError>;
@@ -55,6 +69,9 @@ pub trait OutboxStore: Send + Sync {
     async fn enqueue(&self, message: OutboxMessage) -> Result<(), StoreError>;
     async fn dequeue(&self) -> Result<Option<OutboxMessage>, StoreError>;
     async fn len(&self) -> usize;
+    async fn is_empty(&self) -> bool {
+        self.len().await == 0
+    }
 }
 
 /// Inbox dedupe for webhook/event consumers.
@@ -70,6 +87,9 @@ pub trait DeadLetterStore: Send + Sync {
     async fn len(&self) -> usize;
     async fn list(&self) -> Vec<OutboxMessage>;
     async fn take(&self, message_id: &str) -> Result<Option<OutboxMessage>, StoreError>;
+    async fn is_empty(&self) -> bool {
+        self.len().await == 0
+    }
 }
 
 /// Order and post-purchase timeline.
@@ -77,11 +97,19 @@ pub trait DeadLetterStore: Send + Sync {
 pub trait OrderStore: Send + Sync {
     async fn put(&self, record: OrderRecord) -> Result<(), StoreError>;
     async fn get(&self, order_id: &str) -> Option<OrderRecord>;
-    async fn append_event(&self, order_id: &str, event: OrderEvent) -> Result<Option<OrderRecord>, StoreError>;
+    async fn append_event(
+        &self,
+        order_id: &str,
+        event: OrderEvent,
+    ) -> Result<Option<OrderRecord>, StoreError>;
     async fn add_adjustment(
         &self,
         order_id: &str,
         adjustment: OrderAdjustment,
     ) -> Result<Option<OrderRecord>, StoreError>;
-    async fn update_status(&self, order_id: &str, status: OrderStatus) -> Result<Option<OrderRecord>, StoreError>;
+    async fn update_status(
+        &self,
+        order_id: &str,
+        status: OrderStatus,
+    ) -> Result<Option<OrderRecord>, StoreError>;
 }

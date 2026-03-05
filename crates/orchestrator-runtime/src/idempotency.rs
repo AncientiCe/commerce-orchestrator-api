@@ -70,7 +70,11 @@ impl IdempotencyStore for InMemoryIdempotencyStore {
             }
         })
     }
-    async fn complete(&self, key: IdempotencyKey, result: TransactionResult) -> Result<(), StoreError> {
+    async fn complete(
+        &self,
+        key: IdempotencyKey,
+        result: TransactionResult,
+    ) -> Result<(), StoreError> {
         let mut guard = self.inner.lock().await;
         guard.insert(key, IdempotencyState::Completed(result));
         Ok(())

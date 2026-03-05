@@ -47,8 +47,14 @@ pub enum ApiError {
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let (status, code, message): (StatusCode, String, String) = match &self {
-            ApiError::BadRequest(msg) => (StatusCode::BAD_REQUEST, "BAD_REQUEST".into(), msg.clone()),
-            ApiError::Unauthorized => (StatusCode::UNAUTHORIZED, "UNAUTHORIZED".into(), "Unauthorized".into()),
+            ApiError::BadRequest(msg) => {
+                (StatusCode::BAD_REQUEST, "BAD_REQUEST".into(), msg.clone())
+            }
+            ApiError::Unauthorized => (
+                StatusCode::UNAUTHORIZED,
+                "UNAUTHORIZED".into(),
+                "Unauthorized".into(),
+            ),
             ApiError::Forbidden(msg) => (StatusCode::FORBIDDEN, "FORBIDDEN".into(), msg.clone()),
             ApiError::Orchestrator(e) => {
                 let (s, c) = orchestrator_error_to_http(e);
@@ -60,7 +66,14 @@ impl IntoResponse for ApiError {
                 "Internal server error".into(),
             ),
         };
-        (status, Json(ErrorBody { error: message, code: Some(code) })).into_response()
+        (
+            status,
+            Json(ErrorBody {
+                error: message,
+                code: Some(code),
+            }),
+        )
+            .into_response()
     }
 }
 
@@ -74,7 +87,9 @@ fn orchestrator_error_to_http(e: &FacadeError) -> (StatusCode, &'static str) {
             RunnerError::Payment(_) => (StatusCode::UNPROCESSABLE_ENTITY, "PAYMENT_ERROR"),
             RunnerError::Validation(_) => (StatusCode::BAD_REQUEST, "VALIDATION_ERROR"),
             RunnerError::AlreadyInFlight => (StatusCode::CONFLICT, "IDEMPOTENCY_CONFLICT"),
-            RunnerError::CartNotFound | RunnerError::LineNotFound => (StatusCode::NOT_FOUND, "NOT_FOUND"),
+            RunnerError::CartNotFound | RunnerError::LineNotFound => {
+                (StatusCode::NOT_FOUND, "NOT_FOUND")
+            }
             RunnerError::MissingCartId => (StatusCode::BAD_REQUEST, "MISSING_CART_ID"),
             _ => (StatusCode::INTERNAL_SERVER_ERROR, "RUNNER_ERROR"),
         },

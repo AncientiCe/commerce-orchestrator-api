@@ -1,11 +1,10 @@
 //! API v1 request/response DTOs. Transport boundary only; no internal types leak.
 
 use orchestrator_core::contract::{
-    AddItemPayload, ApplyAdjustmentPayload, CartCommand, CartId, CartLineProjection, CartProjection,
-    CartStatus, CheckoutRequest, CreateCartPayload, CustomerHint, GetCartPayload, LocationHint,
-    PaymentIntent, PaymentLifecycleRequest, RemoveItemPayload, StartCheckoutPayload,
-    TransactionResult, TransactionStatus, PaymentState,
-    UpdateItemQtyPayload,
+    AddItemPayload, ApplyAdjustmentPayload, CartCommand, CartId, CartLineProjection,
+    CartProjection, CartStatus, CheckoutRequest, CreateCartPayload, CustomerHint, GetCartPayload,
+    LocationHint, PaymentIntent, PaymentLifecycleRequest, PaymentState, RemoveItemPayload,
+    StartCheckoutPayload, TransactionResult, TransactionStatus, UpdateItemQtyPayload,
 };
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
@@ -55,9 +54,13 @@ impl TryFrom<CartCommandDto> for CartCommand {
 
     fn try_from(dto: CartCommandDto) -> Result<Self, Self::Error> {
         Ok(match dto {
-            CartCommandDto::CreateCart { merchant_id, currency } => {
-                CartCommand::CreateCart(CreateCartPayload { merchant_id, currency })
-            }
+            CartCommandDto::CreateCart {
+                merchant_id,
+                currency,
+            } => CartCommand::CreateCart(CreateCartPayload {
+                merchant_id,
+                currency,
+            }),
             CartCommandDto::AddItem { item_id, quantity } => {
                 CartCommand::AddItem(AddItemPayload { item_id, quantity })
             }
@@ -70,15 +73,16 @@ impl TryFrom<CartCommandDto> for CartCommand {
             CartCommandDto::ApplyAdjustment { code } => {
                 CartCommand::ApplyAdjustment(ApplyAdjustmentPayload { code })
             }
-            CartCommandDto::GetCart { cart_id } => {
-                CartCommand::GetCart(GetCartPayload { cart_id: parse_cart_id(&cart_id)? })
-            }
-            CartCommandDto::StartCheckout { cart_id, cart_version } => {
-                CartCommand::StartCheckout(StartCheckoutPayload {
-                    cart_id: parse_cart_id(&cart_id)?,
-                    cart_version,
-                })
-            }
+            CartCommandDto::GetCart { cart_id } => CartCommand::GetCart(GetCartPayload {
+                cart_id: parse_cart_id(&cart_id)?,
+            }),
+            CartCommandDto::StartCheckout {
+                cart_id,
+                cart_version,
+            } => CartCommand::StartCheckout(StartCheckoutPayload {
+                cart_id: parse_cart_id(&cart_id)?,
+                cart_version,
+            }),
         })
     }
 }
@@ -125,7 +129,11 @@ impl From<CartProjection> for CartProjectionDto {
             cart_id: p.cart_id.0.to_string(),
             version: p.version,
             currency: p.currency,
-            lines: p.lines.into_iter().map(CartLineProjectionDto::from).collect(),
+            lines: p
+                .lines
+                .into_iter()
+                .map(CartLineProjectionDto::from)
+                .collect(),
             subtotal_minor: p.subtotal_minor,
             tax_minor: p.tax_minor,
             total_minor: p.total_minor,

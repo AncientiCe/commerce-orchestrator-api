@@ -86,7 +86,7 @@ pub struct ComponentsConfig {
 
 impl ComponentsConfig {
     fn trim_opt(s: Option<String>) -> Option<String> {
-        s.map(|s| {
+        s.and_then(|s| {
             let t = s.trim().to_string();
             if t.is_empty() {
                 None
@@ -94,7 +94,6 @@ impl ComponentsConfig {
                 Some(t)
             }
         })
-        .flatten()
     }
 
     /// Apply env overrides. Env vars: CATALOG_BASE_URL, PRICING_BASE_URL, TAX_BASE_URL, GEO_BASE_URL, PAYMENT_BASE_URL, RECEIPT_BASE_URL.
@@ -174,7 +173,7 @@ pub struct ResolvedComponents {
 }
 
 /// Full server configuration. Can be loaded from YAML and overridden by env.
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct ServerConfig {
     #[serde(default)]
     pub server: ServerSection,
@@ -215,24 +214,13 @@ pub struct PersistenceSection {
     pub path: Option<String>,
 }
 
-impl Default for ServerConfig {
-    fn default() -> Self {
-        Self {
-            server: ServerSection::default(),
-            auth: AuthSection::default(),
-            persistence: PersistenceSection::default(),
-            components: ComponentsConfig::default(),
-            http_client: HttpClientConfig::default(),
-        }
-    }
-}
-
 impl ServerConfig {
     /// Load config: file-first (if path exists) then apply env overrides.
     pub fn load(config_path: Option<&Path>) -> Result<Self, String> {
         let mut config = if let Some(p) = config_path {
             if p.exists() {
-                let s = std::fs::read_to_string(p).map_err(|e| format!("read config file: {}", e))?;
+                let s =
+                    std::fs::read_to_string(p).map_err(|e| format!("read config file: {}", e))?;
                 serde_yaml::from_str(&s).map_err(|e| format!("parse config: {}", e))?
             } else {
                 Self::default()
@@ -337,7 +325,11 @@ pub fn default_config_path() -> Option<std::path::PathBuf> {
     std::env::var("CONFIG_FILE")
         .ok()
         .map(std::path::PathBuf::from)
-        .or_else(|| std::env::current_dir().ok().map(|cwd| cwd.join("config.yaml")))
+        .or_else(|| {
+            std::env::current_dir()
+                .ok()
+                .map(|cwd| cwd.join("config.yaml"))
+        })
 }
 
 #[cfg(test)]

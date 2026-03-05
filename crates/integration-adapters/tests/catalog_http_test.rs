@@ -10,13 +10,11 @@ async fn get_item_returns_catalog_item() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/items/item_1"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "id": "item_1",
-                "title": "Test Product",
-                "price_minor": 1999
-            })),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": "item_1",
+            "title": "Test Product",
+            "price_minor": 1999
+        })))
         .mount(&server)
         .await;
 

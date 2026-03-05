@@ -1,14 +1,16 @@
 //! Integration tests for pricing, tax, geo, payment, and receipt HTTP adapters using wiremock.
 
 use integration_adapters::{
-    GeoHttpAdapter, PaymentHttpAdapter, PricingHttpAdapter, ReceiptHttpAdapter, TaxHttpAdapter,
-    ClientConfig,
+    ClientConfig, GeoHttpAdapter, PaymentHttpAdapter, PricingHttpAdapter, ReceiptHttpAdapter,
+    TaxHttpAdapter,
 };
 use orchestrator_core::contract::{
     CartId, CartLineProjection, CartProjection, CartStatus, CheckoutRequest, PaymentIntent,
     PaymentLifecycleRequest, PaymentState, TotalsBreakdown, TransactionResult, TransactionStatus,
 };
-use provider_contracts::{GeoProvider, PaymentProvider, PricingProvider, ReceiptProvider, TaxProvider};
+use provider_contracts::{
+    GeoProvider, PaymentProvider, PricingProvider, ReceiptProvider, TaxProvider,
+};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -38,13 +40,11 @@ async fn pricing_resolve_returns_line_prices() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/prices/resolve"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "prices": [
-                    { "line_id": "L1", "unit_price_minor": 1000, "total_minor": 1000 }
-                ]
-            })),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "prices": [
+                { "line_id": "L1", "unit_price_minor": 1000, "total_minor": 1000 }
+            ]
+        })))
         .mount(&server)
         .await;
 
@@ -64,11 +64,9 @@ async fn tax_resolve_returns_total_tax() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/tax/resolve"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "total_tax_minor": 80
-            })),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "total_tax_minor": 80
+        })))
         .mount(&server)
         .await;
 
@@ -119,12 +117,10 @@ async fn payment_authorize_returns_auth_result() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/authorize"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "authorized": true,
-                "reference": "ref-123"
-            })),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "authorized": true,
+            "reference": "ref-123"
+        })))
         .mount(&server)
         .await;
 
@@ -156,12 +152,10 @@ async fn payment_capture_returns_operation_result() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/capture"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "success": true,
-                "reference": "cap-456"
-            })),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "success": true,
+            "reference": "cap-456"
+        })))
         .mount(&server)
         .await;
 
@@ -199,11 +193,9 @@ async fn receipt_generate_returns_content() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/receipts/generate"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "content": "Receipt #123\nTotal: 10.00 USD"
-            })),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "content": "Receipt #123\nTotal: 10.00 USD"
+        })))
         .mount(&server)
         .await;
 

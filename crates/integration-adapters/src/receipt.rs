@@ -62,18 +62,13 @@ impl ReceiptProvider for ReceiptHttpAdapter {
             cart: cart.clone(),
             result: result.clone(),
         };
-        let resp = post_json_with_retry(
-            &self.client,
-            &url,
-            &body,
-            None::<&str>,
-            &self.config,
-        )
-        .await
-        .map_err(ReceiptError::from)?;
-        let payload: GenerateReceiptResponse = resp.json().await.map_err(|e| {
-            ReceiptError::Failed(format!("invalid receipt response: {}", e))
-        })?;
+        let resp = post_json_with_retry(&self.client, &url, &body, None::<&str>, &self.config)
+            .await
+            .map_err(ReceiptError::from)?;
+        let payload: GenerateReceiptResponse = resp
+            .json()
+            .await
+            .map_err(|e| ReceiptError::Failed(format!("invalid receipt response: {}", e)))?;
         Ok(payload.into())
     }
 }

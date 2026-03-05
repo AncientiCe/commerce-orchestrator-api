@@ -1,16 +1,16 @@
 //! API v1 routes: cart, checkout, payments, events, operations.
 
+use crate::auth::AuthContextExtractor;
+use crate::dto::*;
+use crate::error::ApiError;
+use crate::state::AppState;
 use axum::{
     extract::State,
     routing::{get, post},
     Json, Router,
 };
-use crate::auth::AuthContextExtractor;
-use crate::dto::*;
-use crate::error::ApiError;
-use crate::state::AppState;
-use orchestrator_core::contract::{CartCommand, CartId, CheckoutRequest};
 use orchestrator_api::redact_checkout_request;
+use orchestrator_core::contract::{CartCommand, CartId, CheckoutRequest};
 use std::str::FromStr;
 use uuid::Uuid;
 
@@ -40,10 +40,7 @@ async fn dispatch_cart_command(
         .map(|s| Uuid::from_str(s).map(CartId))
         .transpose()
         .map_err(|e| ApiError::BadRequest(e.to_string()))?;
-    let projection = state
-        .facade
-        .dispatch_cart_command(cmd, cart_id)
-        .await?;
+    let projection = state.facade.dispatch_cart_command(cmd, cart_id).await?;
     Ok(Json(projection.into()))
 }
 
@@ -154,7 +151,10 @@ async fn replay_dead_letter(
     State(state): State<AppState>,
     Json(req): Json<ReplayDeadLetterRequestDto>,
 ) -> Result<Json<ReplayDeadLetterResponseDto>, ApiError> {
-    let replayed = state.facade.replay_from_dead_letter(&req.message_id).await?;
+    let replayed = state
+        .facade
+        .replay_from_dead_letter(&req.message_id)
+        .await?;
     Ok(Json(ReplayDeadLetterResponseDto { replayed }))
 }
 
@@ -163,10 +163,7 @@ async fn run_reconciliation(
     State(state): State<AppState>,
     Json(req): Json<ReconciliationRequestDto>,
 ) -> Result<Json<ReconciliationReportDto>, ApiError> {
-    let report = state
-        .facade
-        .run_reconciliation(&req.transaction_ids)
-        .await;
+    let report = state.facade.run_reconciliation(&req.transaction_ids).await;
     Ok(Json(ReconciliationReportDto {
         mismatches: report
             .mismatches

@@ -126,9 +126,10 @@ impl FromRequestParts<AppState> for OptionalAuthContext {
                 s.strip_prefix("Bearer ").map(str::trim)
             });
 
-        let context = state.authn.as_ref().and_then(|resolver| {
-            auth_header.and_then(|t| resolver.resolve_bearer(t))
-        });
+        let context = state
+            .authn
+            .as_ref()
+            .and_then(|resolver| auth_header.and_then(|t| resolver.resolve_bearer(t)));
         Ok(OptionalAuthContext(context))
     }
 }

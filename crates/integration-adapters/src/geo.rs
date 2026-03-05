@@ -62,18 +62,13 @@ impl GeoProvider for GeoHttpAdapter {
             cart: cart.clone(),
             request: request.clone(),
         };
-        let resp = post_json_with_retry(
-            &self.client,
-            &url,
-            &body,
-            None::<&str>,
-            &self.config,
-        )
-        .await
-        .map_err(GeoError::from)?;
-        let result: GeoCheckResponse = resp.json().await.map_err(|e| {
-            GeoError::Failed(format!("invalid geo response: {}", e))
-        })?;
+        let resp = post_json_with_retry(&self.client, &url, &body, None::<&str>, &self.config)
+            .await
+            .map_err(GeoError::from)?;
+        let result: GeoCheckResponse = resp
+            .json()
+            .await
+            .map_err(|e| GeoError::Failed(format!("invalid geo response: {}", e)))?;
         Ok(result.into())
     }
 }

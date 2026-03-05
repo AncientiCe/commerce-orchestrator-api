@@ -186,8 +186,14 @@ fn pii_redaction_redacts_payment_and_customer() {
     };
     let redacted = redact_checkout_request(&request);
     assert_eq!(redacted.payment_intent.token_or_reference, "[REDACTED]");
-    assert_eq!(redacted.customer.as_ref().unwrap().email.as_deref(), Some("[REDACTED]"));
-    assert_eq!(redacted.customer.as_ref().unwrap().full_name.as_deref(), Some("[REDACTED]"));
+    assert_eq!(
+        redacted.customer.as_ref().unwrap().email.as_deref(),
+        Some("[REDACTED]")
+    );
+    assert_eq!(
+        redacted.customer.as_ref().unwrap().full_name.as_deref(),
+        Some("[REDACTED]")
+    );
 }
 
 #[tokio::test]

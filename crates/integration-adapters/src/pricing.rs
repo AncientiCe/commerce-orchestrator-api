@@ -58,18 +58,13 @@ impl PricingHttpAdapter {
 impl PricingProvider for PricingHttpAdapter {
     async fn resolve_prices(&self, cart: &CartProjection) -> Result<Vec<LinePrice>, PricingError> {
         let url = self.resolve_url();
-        let resp = post_json_with_retry(
-            &self.client,
-            &url,
-            cart,
-            None::<&str>,
-            &self.config,
-        )
-        .await
-        .map_err(PricingError::from)?;
-        let body: ResolvePricesResponse = resp.json().await.map_err(|e| {
-            PricingError::Failed(format!("invalid pricing response: {}", e))
-        })?;
+        let resp = post_json_with_retry(&self.client, &url, cart, None::<&str>, &self.config)
+            .await
+            .map_err(PricingError::from)?;
+        let body: ResolvePricesResponse = resp
+            .json()
+            .await
+            .map_err(|e| PricingError::Failed(format!("invalid pricing response: {}", e)))?;
         Ok(body.prices.into_iter().map(LinePrice::from).collect())
     }
 }

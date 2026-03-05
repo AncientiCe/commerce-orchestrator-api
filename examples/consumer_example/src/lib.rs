@@ -6,8 +6,8 @@ pub use providers::*;
 
 use orchestrator_api::OrchestratorFacade;
 use orchestrator_core::contract::{
-    AddItemPayload, CartCommand, CartProjection, CheckoutRequest, CreateCartPayload,
-    LocationHint, PaymentIntent, StartCheckoutPayload, TransactionResult,
+    AddItemPayload, CartCommand, CartProjection, CheckoutRequest, CreateCartPayload, LocationHint,
+    PaymentIntent, StartCheckoutPayload, TransactionResult,
 };
 use orchestrator_core::policy::PolicyEngine;
 use provider_contracts::CatalogItem;
@@ -25,11 +25,17 @@ pub fn build_facade() -> OrchestratorFacade {
 
     OrchestratorFacade::new(
         Arc::new(catalog),
-        Arc::new(MyPricingProvider(Arc::new(provider_mocks::MockPricingProvider))),
+        Arc::new(MyPricingProvider(Arc::new(
+            provider_mocks::MockPricingProvider,
+        ))),
         Arc::new(MyTaxProvider(Arc::new(provider_mocks::MockTaxProvider))),
         Arc::new(MyGeoProvider(Arc::new(provider_mocks::MockGeoProvider))),
-        Arc::new(MyPaymentProvider(Arc::new(provider_mocks::MockPaymentProvider))),
-        Arc::new(MyReceiptProvider(Arc::new(provider_mocks::MockReceiptProvider))),
+        Arc::new(MyPaymentProvider(Arc::new(
+            provider_mocks::MockPaymentProvider,
+        ))),
+        Arc::new(MyReceiptProvider(Arc::new(
+            provider_mocks::MockReceiptProvider,
+        ))),
         PolicyEngine::default(),
     )
 }

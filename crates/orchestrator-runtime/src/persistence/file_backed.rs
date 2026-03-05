@@ -41,8 +41,7 @@ impl ReservationDto {
             sku: self.sku.clone(),
             quantity: self.quantity,
             state: self.state,
-            lease_until: tokio::time::Instant::now()
-                + std::time::Duration::from_secs(remaining),
+            lease_until: tokio::time::Instant::now() + std::time::Duration::from_secs(remaining),
         }
     }
 }
@@ -106,9 +105,8 @@ pub async fn open_persistent_stores(
         std::sync::Arc::new(FileBackedOutboxStore::open(base.join("outbox.json")).await?);
     let inbox: std::sync::Arc<dyn InboxStore> =
         std::sync::Arc::new(FileBackedInboxStore::open(base.join("inbox.json")).await?);
-    let dead_letter: std::sync::Arc<dyn DeadLetterStore> = std::sync::Arc::new(
-        FileBackedDeadLetterStore::open(base.join("dead_letter.json")).await?,
-    );
+    let dead_letter: std::sync::Arc<dyn DeadLetterStore> =
+        std::sync::Arc::new(FileBackedDeadLetterStore::open(base.join("dead_letter.json")).await?);
     let order_store: std::sync::Arc<dyn OrderStore> =
         std::sync::Arc::new(FileBackedOrderStore::open(base.join("orders.json")).await?);
     Ok(PersistentStores {
@@ -129,8 +127,11 @@ pub async fn open_persistent_stores(
 #[derive(Clone)]
 struct FileBackedEventStore {
     dir: std::path::PathBuf,
-    cart_events: std::sync::Arc<tokio::sync::RwLock<std::collections::HashMap<String, Vec<CartStreamEvent>>>>,
-    cart_snapshots: std::sync::Arc<tokio::sync::RwLock<std::collections::HashMap<String, CartProjection>>>,
+    cart_events: std::sync::Arc<
+        tokio::sync::RwLock<std::collections::HashMap<String, Vec<CartStreamEvent>>>,
+    >,
+    cart_snapshots:
+        std::sync::Arc<tokio::sync::RwLock<std::collections::HashMap<String, CartProjection>>>,
     cart_states: std::sync::Arc<tokio::sync::RwLock<std::collections::HashMap<String, CartState>>>,
 }
 
@@ -166,7 +167,11 @@ impl FileBackedEventStore {
 
 #[async_trait]
 impl EventStore for FileBackedEventStore {
-    async fn append_cart_event(&self, cart_id: CartId, event: CartStreamEvent) -> Result<(), StoreError> {
+    async fn append_cart_event(
+        &self,
+        cart_id: CartId,
+        event: CartStreamEvent,
+    ) -> Result<(), StoreError> {
         let key = cart_id_key(&cart_id);
         let mut guard = self.cart_events.write().await;
         guard.entry(key).or_default().push(event);
@@ -240,9 +245,16 @@ impl IdempotencyStore for FileBackedIdempotencyStore {
         };
         Ok(out)
     }
-    async fn complete(&self, key: IdempotencyKey, result: orchestrator_core::contract::TransactionResult) -> Result<(), StoreError> {
+    async fn complete(
+        &self,
+        key: IdempotencyKey,
+        result: orchestrator_core::contract::TransactionResult,
+    ) -> Result<(), StoreError> {
         let mut guard = self.inner.write().await;
-        guard.insert(idempotency_key_str(&key), IdempotencyState::Completed(result));
+        guard.insert(
+            idempotency_key_str(&key),
+            IdempotencyState::Completed(result),
+        );
         drop(guard);
         self.save().await?;
         Ok(())
@@ -299,9 +311,7 @@ impl CommitStore for FileBackedCommitStore {
 #[derive(Clone)]
 struct FileBackedReservationStore {
     path: std::path::PathBuf,
-    inner: std::sync::Arc<
-        tokio::sync::RwLock<std::collections::HashMap<String, ReservationDto>>,
-    >,
+    inner: std::sync::Arc<tokio::sync::RwLock<std::collections::HashMap<String, ReservationDto>>>,
 }
 
 impl FileBackedReservationStore {
@@ -490,10 +500,9 @@ struct FileBackedDeadLetterStore {
 
 impl FileBackedDeadLetterStore {
     async fn open(path: std::path::PathBuf) -> Result<Self, std::io::Error> {
-        let records =
-            load_json::<std::collections::HashMap<String, OutboxMessage>>(&path)
-                .await
-                .unwrap_or_default();
+        let records = load_json::<std::collections::HashMap<String, OutboxMessage>>(&path)
+            .await
+            .unwrap_or_default();
         Ok(Self {
             path,
             records: std::sync::Arc::new(tokio::sync::RwLock::new(records)),
@@ -567,7 +576,11 @@ impl OrderStore for FileBackedOrderStore {
     async fn get(&self, order_id: &str) -> Option<OrderRecord> {
         self.records.read().await.get(order_id).cloned()
     }
-    async fn append_event(&self, order_id: &str, event: OrderEvent) -> Result<Option<OrderRecord>, StoreError> {
+    async fn append_event(
+        &self,
+        order_id: &str,
+        event: OrderEvent,
+    ) -> Result<Option<OrderRecord>, StoreError> {
         let mut guard = self.records.write().await;
         let record = match guard.get_mut(order_id) {
             Some(r) => r,
@@ -595,7 +608,11 @@ impl OrderStore for FileBackedOrderStore {
         self.save().await?;
         Ok(Some(out))
     }
-    async fn update_status(&self, order_id: &str, status: OrderStatus) -> Result<Option<OrderRecord>, StoreError> {
+    async fn update_status(
+        &self,
+        order_id: &str,
+        status: OrderStatus,
+    ) -> Result<Option<OrderRecord>, StoreError> {
         let mut guard = self.records.write().await;
         let record = match guard.get_mut(order_id) {
             Some(r) => r,
@@ -619,10 +636,14 @@ async fn load_json<T: serde::de::DeserializeOwned + Default>(
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Default::default()),
         Err(e) => return Err(e),
     };
-    serde_json::from_slice(&data).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+    serde_json::from_slice(&data)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
 }
 
-async fn save_json<T: serde::Serialize>(path: &std::path::Path, value: &T) -> Result<(), std::io::Error> {
+async fn save_json<T: serde::Serialize>(
+    path: &std::path::Path,
+    value: &T,
+) -> Result<(), std::io::Error> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).await?;
     }

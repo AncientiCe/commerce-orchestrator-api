@@ -1,16 +1,10 @@
 //! HTTP adapter for the payment component API.
 
 use async_trait::async_trait;
-use orchestrator_core::contract::{
-    CheckoutRequest, PaymentLifecycleRequest, PaymentState,
-};
-use provider_contracts::{
-    AuthResult, PaymentError, PaymentOperationResult, PaymentProvider,
-};
+use orchestrator_core::contract::{CheckoutRequest, PaymentLifecycleRequest, PaymentState};
+use provider_contracts::{AuthResult, PaymentError, PaymentOperationResult, PaymentProvider};
 
-use crate::client::{
-    build_client, get_with_retry, post_json_with_retry, ClientConfig,
-};
+use crate::client::{build_client, get_with_retry, post_json_with_retry, ClientConfig};
 use crate::error::AdapterError;
 
 /// Response DTO for authorize.
@@ -92,18 +86,13 @@ impl PaymentHttpAdapter {
 impl PaymentProvider for PaymentHttpAdapter {
     async fn authorize(&self, request: &CheckoutRequest) -> Result<AuthResult, PaymentError> {
         let url = self.authorize_url();
-        let resp = post_json_with_retry(
-            &self.client,
-            &url,
-            request,
-            None::<&str>,
-            &self.config,
-        )
-        .await
-        .map_err(PaymentError::from)?;
-        let body: AuthResponse = resp.json().await.map_err(|e| {
-            PaymentError::AuthFailed(format!("invalid authorize response: {}", e))
-        })?;
+        let resp = post_json_with_retry(&self.client, &url, request, None::<&str>, &self.config)
+            .await
+            .map_err(PaymentError::from)?;
+        let body: AuthResponse = resp
+            .json()
+            .await
+            .map_err(|e| PaymentError::AuthFailed(format!("invalid authorize response: {}", e)))?;
         Ok(body.into())
     }
 
@@ -112,18 +101,13 @@ impl PaymentProvider for PaymentHttpAdapter {
         request: &PaymentLifecycleRequest,
     ) -> Result<PaymentOperationResult, PaymentError> {
         let url = self.capture_url();
-        let resp = post_json_with_retry(
-            &self.client,
-            &url,
-            request,
-            None::<&str>,
-            &self.config,
-        )
-        .await
-        .map_err(PaymentError::from)?;
-        let body: OperationResponse = resp.json().await.map_err(|e| {
-            PaymentError::Unsupported(format!("invalid capture response: {}", e))
-        })?;
+        let resp = post_json_with_retry(&self.client, &url, request, None::<&str>, &self.config)
+            .await
+            .map_err(PaymentError::from)?;
+        let body: OperationResponse = resp
+            .json()
+            .await
+            .map_err(|e| PaymentError::Unsupported(format!("invalid capture response: {}", e)))?;
         Ok(body.into())
     }
 
@@ -132,18 +116,13 @@ impl PaymentProvider for PaymentHttpAdapter {
         request: &PaymentLifecycleRequest,
     ) -> Result<PaymentOperationResult, PaymentError> {
         let url = self.void_url();
-        let resp = post_json_with_retry(
-            &self.client,
-            &url,
-            request,
-            None::<&str>,
-            &self.config,
-        )
-        .await
-        .map_err(PaymentError::from)?;
-        let body: OperationResponse = resp.json().await.map_err(|e| {
-            PaymentError::Unsupported(format!("invalid void response: {}", e))
-        })?;
+        let resp = post_json_with_retry(&self.client, &url, request, None::<&str>, &self.config)
+            .await
+            .map_err(PaymentError::from)?;
+        let body: OperationResponse = resp
+            .json()
+            .await
+            .map_err(|e| PaymentError::Unsupported(format!("invalid void response: {}", e)))?;
         Ok(body.into())
     }
 
@@ -152,31 +131,21 @@ impl PaymentProvider for PaymentHttpAdapter {
         request: &PaymentLifecycleRequest,
     ) -> Result<PaymentOperationResult, PaymentError> {
         let url = self.refund_url();
-        let resp = post_json_with_retry(
-            &self.client,
-            &url,
-            request,
-            None::<&str>,
-            &self.config,
-        )
-        .await
-        .map_err(PaymentError::from)?;
-        let body: OperationResponse = resp.json().await.map_err(|e| {
-            PaymentError::Unsupported(format!("invalid refund response: {}", e))
-        })?;
+        let resp = post_json_with_retry(&self.client, &url, request, None::<&str>, &self.config)
+            .await
+            .map_err(PaymentError::from)?;
+        let body: OperationResponse = resp
+            .json()
+            .await
+            .map_err(|e| PaymentError::Unsupported(format!("invalid refund response: {}", e)))?;
         Ok(body.into())
     }
 
     async fn get_payment_state(&self, transaction_id: &str) -> Option<PaymentState> {
         let url = self.state_url(transaction_id);
-        let resp = get_with_retry(
-            &self.client,
-            &url,
-            None::<&str>,
-            &self.config,
-        )
-        .await
-        .ok()?;
+        let resp = get_with_retry(&self.client, &url, None::<&str>, &self.config)
+            .await
+            .ok()?;
         let status = resp.status();
         if status.as_u16() == 404 {
             return None;
@@ -197,7 +166,7 @@ struct PaymentStateDto {
 }
 
 impl PaymentStateDto {
-    fn to_payment_state(self) -> Option<PaymentState> {
+    fn to_payment_state(&self) -> Option<PaymentState> {
         match self.state.as_str() {
             "authorized" => Some(PaymentState::Authorized),
             "captured" => Some(PaymentState::Captured),
