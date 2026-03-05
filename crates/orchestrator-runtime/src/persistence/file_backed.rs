@@ -1,7 +1,7 @@
 //! File-backed store implementations using JSON files in a directory.
 
 use async_trait::async_trait;
-use orchestrator_core::contract::*;
+use orchestrator_core::contract::{PaymentState, *};
 use orchestrator_core::state_machine::CartState;
 use std::path::Path;
 use tokio::fs;
@@ -12,6 +12,7 @@ use crate::effects::OutboxMessage;
 use crate::events::CartStreamEvent;
 use crate::idempotency::{IdempotencyKey, IdempotencyState};
 use crate::inventory::{ReservationRecord, ReservationState};
+use crate::payment_state::PaymentStateStore;
 use crate::store_error::StoreError;
 use crate::store_traits::*;
 
@@ -57,6 +58,7 @@ pub struct PersistentStores {
     inbox: std::sync::Arc<dyn InboxStore>,
     dead_letter: std::sync::Arc<dyn DeadLetterStore>,
     order_store: std::sync::Arc<dyn OrderStore>,
+    payment_state_store: std::sync::Arc<dyn PaymentStateStore>,
 }
 
 impl PersistentStores {
@@ -84,6 +86,9 @@ impl PersistentStores {
     pub fn order_store(&self) -> std::sync::Arc<dyn OrderStore> {
         std::sync::Arc::clone(&self.order_store)
     }
+    pub fn payment_state_store(&self) -> std::sync::Arc<dyn PaymentStateStore> {
+        std::sync::Arc::clone(&self.payment_state_store)
+    }
 }
 
 /// Open or create persistent stores at the given directory.
@@ -109,6 +114,9 @@ pub async fn open_persistent_stores(
         std::sync::Arc::new(FileBackedDeadLetterStore::open(base.join("dead_letter.json")).await?);
     let order_store: std::sync::Arc<dyn OrderStore> =
         std::sync::Arc::new(FileBackedOrderStore::open(base.join("orders.json")).await?);
+    let payment_state_store: std::sync::Arc<dyn PaymentStateStore> = std::sync::Arc::new(
+        FileBackedPaymentStateStore::open(base.join("payment_state.json")).await?,
+    );
     Ok(PersistentStores {
         base,
         event_store,
@@ -119,6 +127,7 @@ pub async fn open_persistent_stores(
         inbox,
         dead_letter,
         order_store,
+        payment_state_store,
     })
 }
 
@@ -623,6 +632,44 @@ impl OrderStore for FileBackedOrderStore {
         drop(guard);
         self.save().await?;
         Ok(Some(out))
+    }
+}
+
+// --- FileBackedPaymentStateStore ---
+
+#[derive(Clone)]
+struct FileBackedPaymentStateStore {
+    path: std::path::PathBuf,
+    inner: std::sync::Arc<tokio::sync::RwLock<std::collections::HashMap<String, PaymentState>>>,
+}
+
+impl FileBackedPaymentStateStore {
+    async fn open(path: std::path::PathBuf) -> Result<Self, std::io::Error> {
+        let inner = load_json::<std::collections::HashMap<String, PaymentState>>(&path)
+            .await
+            .unwrap_or_default();
+        Ok(Self {
+            path,
+            inner: std::sync::Arc::new(tokio::sync::RwLock::new(inner)),
+        })
+    }
+    async fn save(&self) -> Result<(), std::io::Error> {
+        let guard = self.inner.read().await;
+        save_json(&self.path, &*guard).await
+    }
+}
+
+#[async_trait]
+impl PaymentStateStore for FileBackedPaymentStateStore {
+    async fn put(&self, transaction_id: String, state: PaymentState) {
+        let mut guard = self.inner.write().await;
+        guard.insert(transaction_id, state);
+        drop(guard);
+        let _ = self.save().await;
+    }
+    async fn get(&self, transaction_id: &str) -> Option<PaymentState> {
+        let guard = self.inner.read().await;
+        guard.get(transaction_id).copied()
     }
 }
 

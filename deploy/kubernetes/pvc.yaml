@@ -1,0 +1,15 @@
+# PersistentVolumeClaim for orchestrator data (PERSISTENCE_PATH=/data).
+# Apply this before the Deployment so pods can mount /data for file-backed stores.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: orchestrator-api-data
+  labels:
+    app: orchestrator-api
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+  # storageClassName: optional; omit to use cluster default

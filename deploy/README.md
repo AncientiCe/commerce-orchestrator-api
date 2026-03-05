@@ -1,5 +1,7 @@
 # Deployment
 
+For the full path from plugging your APIs to deployment and validation, see [Plug and deploy](../docs/plug-and-deploy.md).
+
 ## Kubernetes (shared cluster)
 
 Manifests are split into one resource per file. Apply the whole directory (order is handled by kubectl):
@@ -13,7 +15,8 @@ Files:
 - `configmap.yaml` – non-sensitive config (ENV, BIND_ADDR, RUST_LOG, PERSISTENCE_PATH, and all six component base URLs).
 - `secret.yaml` – sensitive values (AUTH_BEARER_TOKEN, AUTH_TENANT_ID, AUTH_CALLER_ID). Replace placeholder before apply or create the secret manually.
 - `serviceaccount.yaml` – ServiceAccount for the deployment.
-- `deployment.yaml` – Deployment; env is loaded from ConfigMap and Secret via `envFrom`.
+- `pvc.yaml` – PersistentVolumeClaim for `/data` (PERSISTENCE_PATH). Apply before the Deployment. Uses ReadWriteOnce; for multiple replicas use a ReadWriteMany storage class or run a single replica.
+- `deployment.yaml` – Deployment; env from ConfigMap and Secret via `envFrom`; mounts PVC at `/data`.
 - `service.yaml` – ClusterIP Service.
 - `hpa.yaml` – HorizontalPodAutoscaler.
 - `pdb.yaml` – PodDisruptionBudget.
@@ -84,3 +87,9 @@ kubectl rollout status deployment/orchestrator-api
 ```
 
 For a canary, deploy a second Deployment with a different image tag and selector, then shift traffic (e.g. via Service selector or ingress weights) before promoting.
+
+## Persistence, backup and restore
+
+- File-backed stores (events, idempotency, commits, reservations, outbox, inbox, dead-letter, orders, payment_state) live under `PERSISTENCE_PATH` (e.g. `/data`). In Kubernetes this is the mounted PVC.
+- **Backup**: Snapshot or copy the volume (e.g. `kubectl exec` and tar the directory, or use your cloud provider’s volume snapshot API). Ensure the orchestrator is not writing during a consistent backup, or use a storage layer that supports point-in-time snapshots.
+- **Restore**: Replace the volume contents from backup and restart the deployment. No built-in migration tool is provided; keep backups before upgrading if the store format changes.

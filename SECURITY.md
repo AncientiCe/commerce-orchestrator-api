@@ -3,7 +3,9 @@
 ## Authentication and authorization
 
 - Use `execute_checkout_authorized` with an `AuthContext` (tenant_id, scopes) so that only callers with scope `checkout:execute` and matching tenant can run checkout.
-- Implement `AuthnResolver` in your API layer (e.g. HTTP middleware) to turn bearer tokens into `AuthContext` before calling the facade.
+- The HTTP service accepts any `AuthnResolver` (see `orchestrator_api::AuthnResolver`): turn bearer tokens into `AuthContext` in your API layer.
+- **Static token (default):** `StaticTokenAuthnResolver` validates a single shared secret from `AUTH_BEARER_TOKEN`. Suitable for simple deployments; rotate the token periodically and keep it in a secret store.
+- **Production identity (JWT/OIDC):** For production, implement `AuthnResolver` with JWT validation: verify signature via JWKS, validate issuer and audience, and map claims to `AuthContext` (e.g. `tenant_id`, `caller_id`, `scopes`). Deploy this resolver in the HTTP server instead of `StaticTokenAuthnResolver` so the service never uses a single shared static token. Use short-lived access tokens and refresh as needed.
 - Idempotency keys are scoped by tenant: different tenants never share idempotency state.
 
 ## PII and sensitive data

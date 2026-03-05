@@ -80,6 +80,18 @@ pub trait InboxStore: Send + Sync {
     async fn accept_once(&self, message_id: &str) -> Result<bool, StoreError>;
 }
 
+/// Optional outbox delivery: when set, process_outbox_once will attempt to deliver each message.
+/// On success the message is consumed; on failure attempts are incremented and the message is re-enqueued or moved to dead-letter.
+#[async_trait]
+pub trait OutboxDeliverer: Send + Sync {
+    async fn deliver(&self, message: &OutboxMessage) -> Result<(), OutboxDeliveryError>;
+}
+
+/// Error from an outbox delivery attempt (e.g. downstream unreachable).
+#[derive(Debug, thiserror::Error)]
+#[error("outbox delivery failed: {0}")]
+pub struct OutboxDeliveryError(pub String);
+
 /// Dead-letter queue for failed outbox messages.
 #[async_trait]
 pub trait DeadLetterStore: Send + Sync {

@@ -18,15 +18,17 @@ pub struct ReadyResponse {
 #[derive(Serialize)]
 pub struct MetricsResponse {
     pub http_requests_total: u64,
+    pub http_errors_total: u64,
 }
 
-/// GET /metrics - simple metrics for RED (request count; extend with error/latency in future).
+/// GET /metrics - request count and error count for basic RED-style monitoring.
 pub async fn metrics() -> impl IntoResponse {
-    use crate::observability::get_request_count;
+    use crate::observability::{get_error_count, get_request_count};
     (
         axum::http::StatusCode::OK,
         axum::Json(MetricsResponse {
             http_requests_total: get_request_count(),
+            http_errors_total: get_error_count(),
         }),
     )
 }

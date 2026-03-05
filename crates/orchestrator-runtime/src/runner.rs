@@ -11,7 +11,7 @@ use crate::payment_state::{
 };
 use crate::persistence;
 use crate::store_error::StoreError;
-use crate::store_traits::*;
+use crate::store_traits::{OutboxDeliverer, *};
 use orchestrator_core::contract::{PaymentState, *};
 use orchestrator_core::policy::{PolicyCheckResult, PolicyEngine};
 use orchestrator_core::state_machine::{
@@ -115,6 +115,7 @@ pub struct Runner {
     order_store: Arc<dyn OrderStore>,
     payment_state_store: Arc<dyn PaymentStateStore>,
     policy: PolicyEngine,
+    outbox_deliverer: Option<Arc<dyn OutboxDeliverer>>,
 }
 
 impl Runner {
@@ -132,6 +133,7 @@ impl Runner {
             Arc::new(DeadLetter::default()),
             Arc::new(InMemoryOrderStore::default()),
             Arc::new(InMemoryPaymentStateStore::default()),
+            None,
         )
     }
 
@@ -152,8 +154,9 @@ impl Runner {
             inbox: stores.inbox(),
             dead_letter: stores.dead_letter(),
             order_store: stores.order_store(),
-            payment_state_store: Arc::new(InMemoryPaymentStateStore::default()),
+            payment_state_store: stores.payment_state_store(),
             policy,
+            outbox_deliverer: None,
         })
     }
 
@@ -170,6 +173,7 @@ impl Runner {
         dead_letter: Arc<dyn DeadLetterStore>,
         order_store: Arc<dyn OrderStore>,
         payment_state_store: Arc<dyn PaymentStateStore>,
+        outbox_deliverer: Option<Arc<dyn OutboxDeliverer>>,
     ) -> Self {
         Self {
             providers,
@@ -183,6 +187,7 @@ impl Runner {
             order_store,
             payment_state_store,
             policy,
+            outbox_deliverer,
         }
     }
 
@@ -328,6 +333,12 @@ impl Runner {
                     .get_cart_snapshot(&payload.cart_id)
                     .await
                     .ok_or(RunnerError::CartNotFound)?;
+                if projection.version != payload.cart_version {
+                    return Err(RunnerError::CartVersionConflict {
+                        expected: payload.cart_version,
+                        current: projection.version,
+                    });
+                }
                 projection.status = CartStatus::CheckoutReady;
                 projection.version += 1;
                 self.event_store
@@ -370,6 +381,13 @@ impl Runner {
             .get_cart_snapshot(&request.cart_id)
             .await
             .ok_or(RunnerError::CartNotFound)?;
+
+        if cart.version != request.cart_version {
+            return Err(RunnerError::CartVersionConflict {
+                expected: request.cart_version,
+                current: cart.version,
+            });
+        }
 
         for line in &cart.lines {
             self.reservation_store
@@ -533,17 +551,35 @@ impl Runner {
         Ok(result)
     }
 
-    /// Process one message from the outbox; after max_attempts failures it goes to dead-letter, else re-enqueued for retry.
+    /// Process one message from the outbox. If an [OutboxDeliverer] is set, delivery is attempted;
+    /// on success the message is consumed; on failure attempts are incremented and the message is re-enqueued or moved to dead-letter.
+    /// Without a deliverer, attempts are incremented and the message is re-enqueued or dead-lettered (queue churn only).
     pub async fn process_outbox_once(&self, max_attempts: u32) -> Result<(), RunnerError> {
         if let Some(mut msg) = self.outbox.dequeue().await? {
-            msg.attempts += 1;
-            if msg.attempts > max_attempts {
-                self.dead_letter.put(msg).await?;
+            let delivery_failed = if let Some(deliverer) = &self.outbox_deliverer {
+                deliverer.deliver(&msg).await.is_err()
             } else {
-                self.outbox.enqueue(msg).await?;
+                true
+            };
+            if delivery_failed {
+                msg.attempts += 1;
+                if msg.attempts > max_attempts {
+                    self.dead_letter.put(msg).await?;
+                } else {
+                    self.outbox.enqueue(msg).await?;
+                }
             }
         }
         Ok(())
+    }
+
+    /// Attach an optional outbox deliverer so that [Self::process_outbox_once] attempts real delivery.
+    /// Returns a new Runner with the deliverer set (Runner is not mutated).
+    pub fn with_outbox_deliverer(self, deliverer: Arc<dyn OutboxDeliverer>) -> Self {
+        Self {
+            outbox_deliverer: Some(deliverer),
+            ..self
+        }
     }
 
     /// List dead-letter entries (id, topic, correlation_id, attempts) for diagnostics.
@@ -759,6 +795,8 @@ pub enum RunnerError {
     AlreadyInFlight,
     #[error("invalid deterministic state transition")]
     InvalidStateTransition,
+    #[error("cart version conflict: request expected version {expected}, current cart version is {current}")]
+    CartVersionConflict { expected: u64, current: u64 },
     #[error("unsupported non-exhaustive command variant")]
     UnsupportedCommand,
     #[error("store persistence error: {0}")]

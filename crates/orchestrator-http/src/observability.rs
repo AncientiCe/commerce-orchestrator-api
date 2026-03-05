@@ -13,6 +13,7 @@ use uuid::Uuid;
 const X_REQUEST_ID: &str = "x-request-id";
 
 static REQUEST_COUNT: AtomicU64 = AtomicU64::new(0);
+static ERROR_COUNT: AtomicU64 = AtomicU64::new(0);
 
 /// Middleware that sets or propagates X-Request-ID and records it on the tracing span.
 pub async fn request_id_middleware(request: Request, next: Next) -> Response {
@@ -37,4 +38,14 @@ pub async fn request_id_middleware(request: Request, next: Next) -> Response {
 /// Returns total request count for the /metrics endpoint.
 pub fn get_request_count() -> u64 {
     REQUEST_COUNT.load(Ordering::Relaxed)
+}
+
+/// Increment the error counter (call from error handler for 4xx/5xx responses).
+pub fn increment_error_count() {
+    ERROR_COUNT.fetch_add(1, Ordering::Relaxed);
+}
+
+/// Returns total error response count for the /metrics endpoint.
+pub fn get_error_count() -> u64 {
+    ERROR_COUNT.load(Ordering::Relaxed)
 }

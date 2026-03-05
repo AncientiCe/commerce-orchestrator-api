@@ -17,3 +17,10 @@ The orchestrator writes external side effects (e.g. order.created) to an outbox.
 2. **Run the processor** regularly: `facade.process_outbox_once(3).await` (or your chosen max).
 3. **Inspect dead-letter** via `facade.list_dead_letter().await`; each entry includes `id`, `topic`, `correlation_id`, and `attempts` for diagnostics.
 4. **Replay after fixing cause**: use `facade.replay_from_dead_letter(&message_id).await` to put the message back on the outbox (attempts reset to 0). Ensure the downstream cause of failure is resolved before replaying.
+
+## Failure behaviour
+
+- **No deliverer configured**: Each `process_outbox_once` run increments `attempts` and re-enqueues or moves to dead-letter when `attempts > max_attempts` (queue churn only; no external delivery).
+- **Deliverer returns Ok**: Message is consumed (removed from outbox, not re-enqueued).
+- **Deliverer returns Err**: `attempts` is incremented; if `attempts > max_attempts` the message is moved to dead-letter, otherwise re-enqueued for a later retry.
+- **Idempotency**: Checkout and payment lifecycle use idempotency keys; duplicate requests with the same key return the same result without re-running side effects.

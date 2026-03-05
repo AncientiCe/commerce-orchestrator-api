@@ -46,6 +46,7 @@ pub enum ApiError {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
+        crate::observability::increment_error_count();
         let (status, code, message): (StatusCode, String, String) = match &self {
             ApiError::BadRequest(msg) => {
                 (StatusCode::BAD_REQUEST, "BAD_REQUEST".into(), msg.clone())
@@ -89,6 +90,9 @@ fn orchestrator_error_to_http(e: &FacadeError) -> (StatusCode, &'static str) {
             RunnerError::AlreadyInFlight => (StatusCode::CONFLICT, "IDEMPOTENCY_CONFLICT"),
             RunnerError::CartNotFound | RunnerError::LineNotFound => {
                 (StatusCode::NOT_FOUND, "NOT_FOUND")
+            }
+            RunnerError::CartVersionConflict { .. } => {
+                (StatusCode::CONFLICT, "CART_VERSION_CONFLICT")
             }
             RunnerError::MissingCartId => (StatusCode::BAD_REQUEST, "MISSING_CART_ID"),
             _ => (StatusCode::INTERNAL_SERVER_ERROR, "RUNNER_ERROR"),

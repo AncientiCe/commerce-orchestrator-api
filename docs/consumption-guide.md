@@ -47,7 +47,7 @@ See [consumer-integration.md](consumer-integration.md) for the high-level integr
 |--------|------|-------------|
 | `GET` | `/health/live` | Liveness probe. |
 | `GET` | `/health/ready` | Readiness probe. |
-| `GET` | `/metrics` | Simple metrics (e.g. request count). |
+| `GET` | `/metrics` | JSON metrics: `http_requests_total`, `http_errors_total` (for basic RED-style monitoring). |
 
 ---
 

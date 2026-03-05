@@ -1,12 +1,13 @@
 use orchestrator_api::{
     authorize_checkout, extract_ap2_metadata, redact_checkout_request, A2AHandoffProfile,
-    AuthContext, OrchestratorFacade, UcpCheckoutEnvelope,
+    AuthContext, FacadeError, OrchestratorFacade, UcpCheckoutEnvelope,
 };
 use orchestrator_core::contract::{
     AddItemPayload, CartCommand, CartId, CheckoutRequest, CreateCartPayload, CustomerHint,
     PaymentIntent, StartCheckoutPayload,
 };
 use orchestrator_core::policy::PolicyEngine;
+use orchestrator_runtime::RunnerError;
 use provider_contracts::CatalogItem;
 use provider_mocks::{
     MockCatalogProvider, MockGeoProvider, MockPaymentProvider, MockPricingProvider,
@@ -316,4 +317,86 @@ async fn cross_tenant_idempotency_isolation() {
         result_a.transaction_id, result_b.transaction_id,
         "different tenants must get different transactions for same idempotency key"
     );
+}
+
+#[tokio::test]
+async fn execute_checkout_rejects_stale_cart_version() {
+    let catalog = MockCatalogProvider::new();
+    catalog.add_item(CatalogItem {
+        id: "item_1".to_string(),
+        title: "Sample".to_string(),
+        price_minor: 100,
+    });
+    let facade = OrchestratorFacade::new(
+        Arc::new(catalog),
+        Arc::new(MockPricingProvider),
+        Arc::new(MockTaxProvider),
+        Arc::new(MockGeoProvider),
+        Arc::new(MockPaymentProvider),
+        Arc::new(MockReceiptProvider),
+        PolicyEngine::default(),
+    );
+    let created = facade
+        .dispatch_cart_command(
+            CartCommand::CreateCart(CreateCartPayload {
+                merchant_id: "m".to_string(),
+                currency: "USD".to_string(),
+            }),
+            None,
+        )
+        .await
+        .expect("create cart");
+    let _ = facade
+        .dispatch_cart_command(
+            CartCommand::AddItem(AddItemPayload {
+                item_id: "item_1".to_string(),
+                quantity: 1,
+            }),
+            Some(created.cart_id),
+        )
+        .await
+        .expect("add item");
+    let ready = facade
+        .dispatch_cart_command(
+            CartCommand::StartCheckout(StartCheckoutPayload {
+                cart_id: created.cart_id,
+                cart_version: created.version + 1,
+            }),
+            None,
+        )
+        .await
+        .expect("start checkout");
+    assert!(
+        ready.version >= 2,
+        "cart version after start_checkout should be at least 2"
+    );
+    let err = facade
+        .execute_checkout(CheckoutRequest {
+            tenant_id: "t".to_string(),
+            merchant_id: "m".to_string(),
+            cart_id: ready.cart_id,
+            cart_version: 1,
+            currency: "USD".to_string(),
+            customer: None,
+            location: None,
+            payment_intent: PaymentIntent {
+                amount_minor: ready.total_minor,
+                token_or_reference: "tok".to_string(),
+                ap2_consent_proof: None,
+                payment_handler_id: None,
+            },
+            idempotency_key: "key".to_string(),
+        })
+        .await
+        .expect_err("execute_checkout with stale cart_version must fail");
+    match &err {
+        FacadeError::Runner(RunnerError::CartVersionConflict { expected, current }) => {
+            assert_eq!(*expected, 1, "request sent stale version 1");
+            assert_eq!(
+                *current, ready.version,
+                "current cart version must match snapshot"
+            );
+        }
+        _ => panic!("expected CartVersionConflict, got {:?}", err),
+    }
 }
