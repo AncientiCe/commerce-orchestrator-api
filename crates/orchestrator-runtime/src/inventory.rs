@@ -1,5 +1,6 @@
 //! Inventory reservation lifecycle with TTL semantics.
 
+use crate::store_error::StoreError;
 use crate::store_traits::ReservationStore;
 use orchestrator_core::contract::CartId;
 use std::collections::HashMap;
@@ -110,7 +111,7 @@ impl ReservationStore for InMemoryReservationStore {
         sku: String,
         quantity: u32,
         ttl: std::time::Duration,
-    ) {
+    ) -> Result<(), StoreError> {
         let ttl = Duration::from_secs(ttl.as_secs());
         let mut guard = self.inner.lock().await;
         guard.insert(
@@ -123,20 +124,23 @@ impl ReservationStore for InMemoryReservationStore {
                 lease_until: Instant::now() + ttl,
             },
         );
+        Ok(())
     }
-    async fn finalize_cart(&self, cart_id: CartId) {
+    async fn finalize_cart(&self, cart_id: CartId) -> Result<(), StoreError> {
         let mut guard = self.inner.lock().await;
         for record in guard.values_mut().filter(|r| r.cart_id == cart_id) {
             record.state = ReservationState::Finalized;
         }
+        Ok(())
     }
-    async fn release_cart(&self, cart_id: CartId) {
+    async fn release_cart(&self, cart_id: CartId) -> Result<(), StoreError> {
         let mut guard = self.inner.lock().await;
         for record in guard.values_mut().filter(|r| r.cart_id == cart_id) {
             record.state = ReservationState::Released;
         }
+        Ok(())
     }
-    async fn sweep_expired(&self) -> usize {
+    async fn sweep_expired(&self) -> Result<usize, StoreError> {
         let mut guard = self.inner.lock().await;
         let now = Instant::now();
         let mut count = 0;
@@ -146,7 +150,7 @@ impl ReservationStore for InMemoryReservationStore {
                 count += 1;
             }
         }
-        count
+        Ok(count)
     }
     async fn by_cart(&self, cart_id: CartId) -> Vec<ReservationRecord> {
         self.inner

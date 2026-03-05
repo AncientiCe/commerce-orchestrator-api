@@ -1,5 +1,6 @@
 //! Order and post-purchase timeline storage.
 
+use crate::store_error::StoreError;
 use crate::store_traits::OrderStore;
 use orchestrator_core::contract::{OrderAdjustment, OrderEvent, OrderRecord, OrderStatus};
 use std::collections::HashMap;
@@ -51,36 +52,46 @@ impl InMemoryOrderStore {
 
 #[async_trait::async_trait]
 impl OrderStore for InMemoryOrderStore {
-    async fn put(&self, record: OrderRecord) {
+    async fn put(&self, record: OrderRecord) -> Result<(), StoreError> {
         self.records
             .lock()
             .await
             .insert(record.order_id.clone(), record);
+        Ok(())
     }
     async fn get(&self, order_id: &str) -> Option<OrderRecord> {
         self.records.lock().await.get(order_id).cloned()
     }
-    async fn append_event(&self, order_id: &str, event: OrderEvent) -> Option<OrderRecord> {
+    async fn append_event(&self, order_id: &str, event: OrderEvent) -> Result<Option<OrderRecord>, StoreError> {
         let mut guard = self.records.lock().await;
-        let record = guard.get_mut(order_id)?;
+        let record = match guard.get_mut(order_id) {
+            Some(r) => r,
+            None => return Ok(None),
+        };
         record.events.push(event);
-        Some(record.clone())
+        Ok(Some(record.clone()))
     }
     async fn add_adjustment(
         &self,
         order_id: &str,
         adjustment: OrderAdjustment,
-    ) -> Option<OrderRecord> {
+    ) -> Result<Option<OrderRecord>, StoreError> {
         let mut guard = self.records.lock().await;
-        let record = guard.get_mut(order_id)?;
+        let record = match guard.get_mut(order_id) {
+            Some(r) => r,
+            None => return Ok(None),
+        };
         record.adjustments.push(adjustment);
-        Some(record.clone())
+        Ok(Some(record.clone()))
     }
-    async fn update_status(&self, order_id: &str, status: OrderStatus) -> Option<OrderRecord> {
+    async fn update_status(&self, order_id: &str, status: OrderStatus) -> Result<Option<OrderRecord>, StoreError> {
         let mut guard = self.records.lock().await;
-        let record = guard.get_mut(order_id)?;
+        let record = match guard.get_mut(order_id) {
+            Some(r) => r,
+            None => return Ok(None),
+        };
         record.status = status;
-        Some(record.clone())
+        Ok(Some(record.clone()))
     }
 }
 

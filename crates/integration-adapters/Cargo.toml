@@ -1,0 +1,27 @@
+[package]
+name = "integration-adapters"
+version.workspace = true
+edition.workspace = true
+description = "HTTP-based adapters for external component APIs (catalog, payment, etc.)"
+
+[dependencies]
+orchestrator-core = { path = "../orchestrator-core" }
+provider-contracts = { path = "../provider-contracts" }
+async-trait = "0.1"
+reqwest = { version = "0.12", features = ["json"], default-features = false }
+tokio = { version = "1", features = ["time", "sync"] }
+thiserror = "2"
+tracing = "0.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+url = "2"
+
+[dev-dependencies]
+orchestrator-core = { path = "../orchestrator-core" }
+provider-contracts = { path = "../provider-contracts" }
+wiremock = "0.5"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+uuid = { version = "1", features = ["v4"] }
+
+[lints]
+workspace = true

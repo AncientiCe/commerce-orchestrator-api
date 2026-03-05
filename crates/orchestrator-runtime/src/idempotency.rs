@@ -1,5 +1,6 @@
 //! Idempotency and deterministic in-flight dedupe.
 
+use crate::store_error::StoreError;
 use crate::store_traits::IdempotencyStore;
 use orchestrator_core::contract::TransactionResult;
 use serde::{Deserialize, Serialize};
@@ -59,18 +60,19 @@ impl InMemoryIdempotencyStore {
 
 #[async_trait::async_trait]
 impl IdempotencyStore for InMemoryIdempotencyStore {
-    async fn claim(&self, key: &IdempotencyKey) -> Option<IdempotencyState> {
+    async fn claim(&self, key: &IdempotencyKey) -> Result<Option<IdempotencyState>, StoreError> {
         let mut guard = self.inner.lock().await;
-        match guard.get(key).cloned() {
+        Ok(match guard.get(key).cloned() {
             Some(state) => Some(state),
             None => {
                 guard.insert(key.clone(), IdempotencyState::InFlight);
                 None
             }
-        }
+        })
     }
-    async fn complete(&self, key: IdempotencyKey, result: TransactionResult) {
+    async fn complete(&self, key: IdempotencyKey, result: TransactionResult) -> Result<(), StoreError> {
         let mut guard = self.inner.lock().await;
         guard.insert(key, IdempotencyState::Completed(result));
+        Ok(())
     }
 }

@@ -10,6 +10,7 @@ use crate::payment_state::{
 };
 use crate::persistence;
 use crate::events::CartStreamEvent;
+use crate::store_error::StoreError;
 use crate::store_traits::*;
 use orchestrator_core::contract::{PaymentState, *};
 use orchestrator_core::policy::{PolicyCheckResult, PolicyEngine};
@@ -63,15 +64,17 @@ impl InMemoryEventStore {
 
 #[async_trait::async_trait]
 impl EventStore for InMemoryEventStore {
-    async fn append_cart_event(&self, cart_id: CartId, event: CartStreamEvent) {
+    async fn append_cart_event(&self, cart_id: CartId, event: CartStreamEvent) -> Result<(), StoreError> {
         let mut guard = self.cart_events.lock().await;
         guard.entry(cart_id).or_default().push(event);
+        Ok(())
     }
-    async fn put_cart_snapshot(&self, snapshot: CartProjection) {
+    async fn put_cart_snapshot(&self, snapshot: CartProjection) -> Result<(), StoreError> {
         self.cart_snapshots
             .lock()
             .await
             .insert(snapshot.cart_id, snapshot);
+        Ok(())
     }
     async fn get_cart_snapshot(&self, cart_id: &CartId) -> Option<CartProjection> {
         self.cart_snapshots.lock().await.get(cart_id).cloned()
@@ -79,8 +82,9 @@ impl EventStore for InMemoryEventStore {
     async fn get_cart_state(&self, cart_id: &CartId) -> Option<CartState> {
         self.cart_states.lock().await.get(cart_id).copied()
     }
-    async fn set_cart_state(&self, cart_id: CartId, state: CartState) {
+    async fn set_cart_state(&self, cart_id: CartId, state: CartState) -> Result<(), StoreError> {
         self.cart_states.lock().await.insert(cart_id, state);
+        Ok(())
     }
 }
 
@@ -209,9 +213,9 @@ impl Runner {
                             currency: payload.currency,
                         },
                     )
-                    .await;
-                self.event_store.put_cart_snapshot(projection.clone()).await;
-                self.event_store.set_cart_state(id, CartState::CartCreated).await;
+                    .await?;
+                self.event_store.put_cart_snapshot(projection.clone()).await?;
+                self.event_store.set_cart_state(id, CartState::CartCreated).await?;
                 Ok(projection)
             }
             CartCommand::AddItem(payload) => {
@@ -301,7 +305,7 @@ impl Runner {
                         id,
                         CartStreamEvent::AdjustmentApplied { code: payload.code },
                     )
-                    .await;
+                    .await?;
                 Ok(projection)
             }
             CartCommand::GetCart(payload) => self
@@ -319,8 +323,8 @@ impl Runner {
                 projection.version += 1;
                 self.event_store
                     .append_cart_event(payload.cart_id, CartStreamEvent::CheckoutReady)
-                    .await;
-                self.event_store.put_cart_snapshot(projection.clone()).await;
+                    .await?;
+                self.event_store.put_cart_snapshot(projection.clone()).await?;
                 self.transition_cart(payload.cart_id, CartEvent::MarkCheckoutReady)
                     .await?;
                 Ok(projection)
@@ -343,7 +347,7 @@ impl Runner {
             request.merchant_id.clone(),
             request.idempotency_key.clone(),
         );
-        if let Some(state) = self.idempotency.claim(&idempotency_key).await {
+        if let Some(state) = self.idempotency.claim(&idempotency_key).await? {
             return match state {
                 IdempotencyState::InFlight => Err(RunnerError::AlreadyInFlight),
                 IdempotencyState::Completed(result) => Ok(result),
@@ -364,7 +368,7 @@ impl Runner {
                     line.quantity,
                     Duration::from_secs(300),
                 )
-                .await;
+                .await?;
         }
 
         let mut checkout_state = CheckoutState::Received;
@@ -396,10 +400,10 @@ impl Runner {
                 payment_state: PaymentState::Failed,
                 order_id: None,
             };
-            self.reservation_store.release_cart(request.cart_id).await;
+            self.reservation_store.release_cart(request.cart_id).await?;
             self.idempotency
                 .complete(idempotency_key, result.clone())
-                .await;
+                .await?;
             return Ok(result);
         }
 
@@ -421,10 +425,10 @@ impl Runner {
                 payment_state: PaymentState::Failed,
                 order_id: None,
             };
-            self.reservation_store.release_cart(request.cart_id).await;
+            self.reservation_store.release_cart(request.cart_id).await?;
             self.idempotency
                 .complete(idempotency_key, failed.clone())
-                .await;
+                .await?;
             return Ok(failed);
         }
 
@@ -433,7 +437,7 @@ impl Runner {
         let committed = self
             .commit_store
             .commit(request.cart_id, Some(auth.reference.clone()))
-            .await;
+            .await?;
         let capture = self
             .providers
             .payment
@@ -463,7 +467,7 @@ impl Runner {
                 }],
                 adjustments: Vec::new(),
             })
-            .await;
+            .await?;
 
         let mut result = TransactionResult {
             transaction_id: committed.transaction_id,
@@ -496,7 +500,7 @@ impl Runner {
 
         let receipt = self.providers.receipt.generate(&cart, &result).await?;
         result.receipt_payload = Some(receipt.content);
-        self.reservation_store.finalize_cart(request.cart_id).await;
+        self.reservation_store.finalize_cart(request.cart_id).await?;
         self.outbox
             .enqueue(OutboxMessage {
                 id: format!("msg_{}", Uuid::new_v4()),
@@ -505,11 +509,11 @@ impl Runner {
                 correlation_id: result.correlation_id.to_string(),
                 attempts: 0,
             })
-            .await;
+            .await?;
 
         self.idempotency
             .complete(idempotency_key, result.clone())
-            .await;
+            .await?;
         self.payment_state_store
             .put(result.transaction_id.clone(), result.payment_state)
             .await;
@@ -517,15 +521,16 @@ impl Runner {
     }
 
     /// Process one message from the outbox; after max_attempts failures it goes to dead-letter, else re-enqueued for retry.
-    pub async fn process_outbox_once(&self, max_attempts: u32) {
-        if let Some(mut msg) = self.outbox.dequeue().await {
+    pub async fn process_outbox_once(&self, max_attempts: u32) -> Result<(), RunnerError> {
+        if let Some(mut msg) = self.outbox.dequeue().await? {
             msg.attempts += 1;
             if msg.attempts > max_attempts {
-                self.dead_letter.put(msg).await;
+                self.dead_letter.put(msg).await?;
             } else {
-                self.outbox.enqueue(msg).await;
+                self.outbox.enqueue(msg).await?;
             }
         }
+        Ok(())
     }
 
     /// List dead-letter entries (id, topic, correlation_id, attempts) for diagnostics.
@@ -534,18 +539,18 @@ impl Runner {
     }
 
     /// Replay a message from dead-letter back to the outbox (attempts reset to 0).
-    pub async fn replay_from_dead_letter(&self, message_id: &str) -> bool {
-        if let Some(mut msg) = self.dead_letter.take(message_id).await {
+    pub async fn replay_from_dead_letter(&self, message_id: &str) -> Result<bool, RunnerError> {
+        if let Some(mut msg) = self.dead_letter.take(message_id).await? {
             msg.attempts = 0;
-            self.outbox.enqueue(msg).await;
-            true
+            self.outbox.enqueue(msg).await?;
+            Ok(true)
         } else {
-            false
+            Ok(false)
         }
     }
 
-    pub async fn accept_incoming_event_once(&self, message_id: &str) -> bool {
-        self.inbox.accept_once(message_id).await
+    pub async fn accept_incoming_event_once(&self, message_id: &str) -> Result<bool, RunnerError> {
+        Ok(self.inbox.accept_once(message_id).await?)
     }
 
     pub async fn outbox_len(&self) -> usize {
@@ -647,7 +652,7 @@ impl Runner {
             .await?;
         self.event_store
             .append_cart_event(cart_id, primary_event)
-            .await;
+            .await?;
 
         let priced_lines = self.providers.pricing.resolve_prices(&projection).await?;
         for priced in priced_lines {
@@ -665,7 +670,7 @@ impl Runner {
             .await?;
         self.event_store
             .append_cart_event(cart_id, CartStreamEvent::Repriced)
-            .await;
+            .await?;
 
         let tax = self.providers.tax.resolve_tax(&projection).await?;
         projection.tax_minor = tax.total_tax_minor;
@@ -679,7 +684,7 @@ impl Runner {
                     tax_minor: tax.total_tax_minor,
                 },
             )
-            .await;
+            .await?;
 
         let geo = self
             .providers
@@ -714,9 +719,9 @@ impl Runner {
                     allowed: geo.allowed,
                 },
             )
-            .await;
+            .await?;
 
-        self.event_store.put_cart_snapshot(projection.clone()).await;
+        self.event_store.put_cart_snapshot(projection.clone()).await?;
         Ok(projection)
     }
 
@@ -727,7 +732,7 @@ impl Runner {
             .await
             .ok_or(RunnerError::CartNotFound)?;
         let next = next_cart_state(current, event).ok_or(RunnerError::InvalidStateTransition)?;
-        self.event_store.set_cart_state(cart_id, next).await;
+        self.event_store.set_cart_state(cart_id, next).await?;
         Ok(())
     }
 }
@@ -748,6 +753,8 @@ pub enum RunnerError {
     InvalidStateTransition,
     #[error("unsupported non-exhaustive command variant")]
     UnsupportedCommand,
+    #[error("store persistence error: {0}")]
+    Store(#[from] StoreError),
     #[error("catalog provider error: {0}")]
     Catalog(#[from] provider_contracts::CatalogError),
     #[error("pricing provider error: {0}")]

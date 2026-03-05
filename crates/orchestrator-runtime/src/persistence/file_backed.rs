@@ -12,6 +12,7 @@ use crate::effects::OutboxMessage;
 use crate::events::CartStreamEvent;
 use crate::idempotency::{IdempotencyKey, IdempotencyState};
 use crate::inventory::{ReservationRecord, ReservationState};
+use crate::store_error::StoreError;
 use crate::store_traits::*;
 
 fn cart_id_key(cart_id: &CartId) -> String {
@@ -165,19 +166,21 @@ impl FileBackedEventStore {
 
 #[async_trait]
 impl EventStore for FileBackedEventStore {
-    async fn append_cart_event(&self, cart_id: CartId, event: CartStreamEvent) {
+    async fn append_cart_event(&self, cart_id: CartId, event: CartStreamEvent) -> Result<(), StoreError> {
         let key = cart_id_key(&cart_id);
         let mut guard = self.cart_events.write().await;
         guard.entry(key).or_default().push(event);
         drop(guard);
-        let _ = self.save_events().await;
+        self.save_events().await?;
+        Ok(())
     }
-    async fn put_cart_snapshot(&self, snapshot: CartProjection) {
+    async fn put_cart_snapshot(&self, snapshot: CartProjection) -> Result<(), StoreError> {
         let key = cart_id_key(&snapshot.cart_id);
         let mut guard = self.cart_snapshots.write().await;
         guard.insert(key, snapshot);
         drop(guard);
-        let _ = self.save_snapshots().await;
+        self.save_snapshots().await?;
+        Ok(())
     }
     async fn get_cart_snapshot(&self, cart_id: &CartId) -> Option<CartProjection> {
         let guard = self.cart_snapshots.read().await;
@@ -187,12 +190,13 @@ impl EventStore for FileBackedEventStore {
         let guard = self.cart_states.read().await;
         guard.get(&cart_id_key(cart_id)).copied()
     }
-    async fn set_cart_state(&self, cart_id: CartId, state: CartState) {
+    async fn set_cart_state(&self, cart_id: CartId, state: CartState) -> Result<(), StoreError> {
         let key = cart_id_key(&cart_id);
         let mut guard = self.cart_states.write().await;
         guard.insert(key, state);
         drop(guard);
-        let _ = self.save_states().await;
+        self.save_states().await?;
+        Ok(())
     }
 }
 
@@ -222,24 +226,26 @@ impl FileBackedIdempotencyStore {
 
 #[async_trait]
 impl IdempotencyStore for FileBackedIdempotencyStore {
-    async fn claim(&self, key: &IdempotencyKey) -> Option<IdempotencyState> {
+    async fn claim(&self, key: &IdempotencyKey) -> Result<Option<IdempotencyState>, StoreError> {
         let k = idempotency_key_str(key);
         let mut guard = self.inner.write().await;
-        match guard.get(&k).cloned() {
+        let out = match guard.get(&k).cloned() {
             Some(s) => Some(s),
             None => {
                 guard.insert(k, IdempotencyState::InFlight);
                 drop(guard);
-                let _ = self.save().await;
+                self.save().await?;
                 None
             }
-        }
+        };
+        Ok(out)
     }
-    async fn complete(&self, key: IdempotencyKey, result: orchestrator_core::contract::TransactionResult) {
+    async fn complete(&self, key: IdempotencyKey, result: orchestrator_core::contract::TransactionResult) -> Result<(), StoreError> {
         let mut guard = self.inner.write().await;
         guard.insert(idempotency_key_str(&key), IdempotencyState::Completed(result));
         drop(guard);
-        let _ = self.save().await;
+        self.save().await?;
+        Ok(())
     }
 }
 
@@ -273,7 +279,7 @@ impl CommitStore for FileBackedCommitStore {
         &self,
         cart_id: CartId,
         payment_reference: Option<String>,
-    ) -> CommitRecord {
+    ) -> Result<CommitRecord, StoreError> {
         let key = cart_id_key(&cart_id);
         let record = CommitRecord {
             transaction_id: format!("txn_{}", uuid::Uuid::new_v4()),
@@ -283,8 +289,8 @@ impl CommitStore for FileBackedCommitStore {
         let mut guard = self.inner.write().await;
         guard.insert(key, record.clone());
         drop(guard);
-        let _ = self.save().await;
-        record
+        self.save().await?;
+        Ok(record)
     }
 }
 
@@ -325,7 +331,7 @@ impl ReservationStore for FileBackedReservationStore {
         sku: String,
         quantity: u32,
         ttl: std::time::Duration,
-    ) {
+    ) -> Result<(), StoreError> {
         let lease_until_secs = chrono::Utc::now().timestamp() + ttl.as_secs() as i64;
         let key = Self::key(cart_id, &sku);
         let dto = ReservationDto {
@@ -338,9 +344,10 @@ impl ReservationStore for FileBackedReservationStore {
         let mut guard = self.inner.write().await;
         guard.insert(key, dto);
         drop(guard);
-        let _ = self.save().await;
+        self.save().await?;
+        Ok(())
     }
-    async fn finalize_cart(&self, cart_id: CartId) {
+    async fn finalize_cart(&self, cart_id: CartId) -> Result<(), StoreError> {
         let prefix = format!("{}|", cart_id.0);
         let mut guard = self.inner.write().await;
         for (k, v) in guard.iter_mut() {
@@ -349,9 +356,10 @@ impl ReservationStore for FileBackedReservationStore {
             }
         }
         drop(guard);
-        let _ = self.save().await;
+        self.save().await?;
+        Ok(())
     }
-    async fn release_cart(&self, cart_id: CartId) {
+    async fn release_cart(&self, cart_id: CartId) -> Result<(), StoreError> {
         let prefix = format!("{}|", cart_id.0);
         let mut guard = self.inner.write().await;
         for (k, v) in guard.iter_mut() {
@@ -360,9 +368,10 @@ impl ReservationStore for FileBackedReservationStore {
             }
         }
         drop(guard);
-        let _ = self.save().await;
+        self.save().await?;
+        Ok(())
     }
-    async fn sweep_expired(&self) -> usize {
+    async fn sweep_expired(&self) -> Result<usize, StoreError> {
         let now = chrono::Utc::now().timestamp();
         let mut guard = self.inner.write().await;
         let mut count = 0;
@@ -373,8 +382,8 @@ impl ReservationStore for FileBackedReservationStore {
             }
         }
         drop(guard);
-        let _ = self.save().await;
-        count
+        self.save().await?;
+        Ok(count)
     }
     async fn by_cart(&self, cart_id: CartId) -> Vec<ReservationRecord> {
         let prefix = format!("{}|", cart_id.0);
@@ -413,20 +422,21 @@ impl FileBackedOutboxStore {
 
 #[async_trait]
 impl OutboxStore for FileBackedOutboxStore {
-    async fn enqueue(&self, message: OutboxMessage) {
+    async fn enqueue(&self, message: OutboxMessage) -> Result<(), StoreError> {
         let mut guard = self.queue.write().await;
         guard.push_back(message);
         drop(guard);
-        let _ = self.save().await;
+        self.save().await?;
+        Ok(())
     }
-    async fn dequeue(&self) -> Option<OutboxMessage> {
+    async fn dequeue(&self) -> Result<Option<OutboxMessage>, StoreError> {
         let mut guard = self.queue.write().await;
         let msg = guard.pop_front();
         drop(guard);
         if msg.is_some() {
-            let _ = self.save().await;
+            self.save().await?;
         }
-        msg
+        Ok(msg)
     }
     async fn len(&self) -> usize {
         self.queue.read().await.len()
@@ -459,14 +469,14 @@ impl FileBackedInboxStore {
 
 #[async_trait]
 impl InboxStore for FileBackedInboxStore {
-    async fn accept_once(&self, message_id: &str) -> bool {
+    async fn accept_once(&self, message_id: &str) -> Result<bool, StoreError> {
         let mut guard = self.seen.write().await;
         let inserted = guard.insert(message_id.to_string());
         drop(guard);
         if inserted {
-            let _ = self.save().await;
+            self.save().await?;
         }
-        inserted
+        Ok(inserted)
     }
 }
 
@@ -497,11 +507,12 @@ impl FileBackedDeadLetterStore {
 
 #[async_trait]
 impl DeadLetterStore for FileBackedDeadLetterStore {
-    async fn put(&self, message: OutboxMessage) {
+    async fn put(&self, message: OutboxMessage) -> Result<(), StoreError> {
         let mut guard = self.records.write().await;
         guard.insert(message.id.clone(), message);
         drop(guard);
-        let _ = self.save().await;
+        self.save().await?;
+        Ok(())
     }
     async fn len(&self) -> usize {
         self.records.read().await.len()
@@ -509,14 +520,14 @@ impl DeadLetterStore for FileBackedDeadLetterStore {
     async fn list(&self) -> Vec<OutboxMessage> {
         self.records.read().await.values().cloned().collect()
     }
-    async fn take(&self, message_id: &str) -> Option<OutboxMessage> {
+    async fn take(&self, message_id: &str) -> Result<Option<OutboxMessage>, StoreError> {
         let mut guard = self.records.write().await;
         let msg = guard.remove(message_id);
         drop(guard);
         if msg.is_some() {
-            let _ = self.save().await;
+            self.save().await?;
         }
-        msg
+        Ok(msg)
     }
 }
 
@@ -546,45 +557,55 @@ impl FileBackedOrderStore {
 
 #[async_trait]
 impl OrderStore for FileBackedOrderStore {
-    async fn put(&self, record: OrderRecord) {
+    async fn put(&self, record: OrderRecord) -> Result<(), StoreError> {
         let mut guard = self.records.write().await;
         guard.insert(record.order_id.clone(), record);
         drop(guard);
-        let _ = self.save().await;
+        self.save().await?;
+        Ok(())
     }
     async fn get(&self, order_id: &str) -> Option<OrderRecord> {
         self.records.read().await.get(order_id).cloned()
     }
-    async fn append_event(&self, order_id: &str, event: OrderEvent) -> Option<OrderRecord> {
+    async fn append_event(&self, order_id: &str, event: OrderEvent) -> Result<Option<OrderRecord>, StoreError> {
         let mut guard = self.records.write().await;
-        let record = guard.get_mut(order_id)?;
+        let record = match guard.get_mut(order_id) {
+            Some(r) => r,
+            None => return Ok(None),
+        };
         record.events.push(event);
         let out = record.clone();
         drop(guard);
-        let _ = self.save().await;
-        Some(out)
+        self.save().await?;
+        Ok(Some(out))
     }
     async fn add_adjustment(
         &self,
         order_id: &str,
         adjustment: OrderAdjustment,
-    ) -> Option<OrderRecord> {
+    ) -> Result<Option<OrderRecord>, StoreError> {
         let mut guard = self.records.write().await;
-        let record = guard.get_mut(order_id)?;
+        let record = match guard.get_mut(order_id) {
+            Some(r) => r,
+            None => return Ok(None),
+        };
         record.adjustments.push(adjustment);
         let out = record.clone();
         drop(guard);
-        let _ = self.save().await;
-        Some(out)
+        self.save().await?;
+        Ok(Some(out))
     }
-    async fn update_status(&self, order_id: &str, status: OrderStatus) -> Option<OrderRecord> {
+    async fn update_status(&self, order_id: &str, status: OrderStatus) -> Result<Option<OrderRecord>, StoreError> {
         let mut guard = self.records.write().await;
-        let record = guard.get_mut(order_id)?;
+        let record = match guard.get_mut(order_id) {
+            Some(r) => r,
+            None => return Ok(None),
+        };
         record.status = status;
         let out = record.clone();
         drop(guard);
-        let _ = self.save().await;
-        Some(out)
+        self.save().await?;
+        Ok(Some(out))
     }
 }
 

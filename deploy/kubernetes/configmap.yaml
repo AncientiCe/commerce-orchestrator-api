@@ -1,0 +1,21 @@
+# ConfigMap: non-sensitive runtime config (component API URLs, server, persistence).
+# Override values per environment; secrets go in secret.yaml.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: orchestrator-api
+  labels:
+    app: orchestrator-api
+data:
+  ENV: "production"
+  BIND_ADDR: "0.0.0.0:8080"
+  RUST_LOG: "info"
+  # Persistence path inside the container (e.g. emptyDir or PVC mount).
+  PERSISTENCE_PATH: "/data"
+  # Downstream component API base URLs (no trailing slash). Replace with your service URLs.
+  CATALOG_BASE_URL: "http://catalog-service:8080"
+  PRICING_BASE_URL: "http://pricing-service:8080"
+  TAX_BASE_URL: "http://tax-service:8080"
+  GEO_BASE_URL: "http://geo-service:8080"
+  PAYMENT_BASE_URL: "http://payment-service:8080"
+  RECEIPT_BASE_URL: "http://receipt-service:8080"

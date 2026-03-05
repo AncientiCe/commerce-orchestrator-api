@@ -7,6 +7,8 @@ members = [
     "crates/provider-mocks",
     "crates/orchestrator-api",
     "crates/orchestrator-observability",
+    "crates/orchestrator-http",
+    "crates/integration-adapters",
     "examples/happy_path",
     "examples/consumer_example",
 ]

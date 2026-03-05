@@ -274,8 +274,8 @@ async fn run_reconciliation_returns_no_mismatch_when_in_sync() {
 #[tokio::test]
 async fn accept_incoming_event_once_dedupes_duplicate_delivery() {
     let facade = build_facade();
-    let first = facade.accept_incoming_event_once("webhook_evt_1").await;
-    let second = facade.accept_incoming_event_once("webhook_evt_1").await;
+    let first = facade.accept_incoming_event_once("webhook_evt_1").await.expect("accept once");
+    let second = facade.accept_incoming_event_once("webhook_evt_1").await.expect("accept once");
     assert!(first, "first delivery accepted");
     assert!(!second, "duplicate delivery must be rejected for at-least-once idempotent handling");
 }
@@ -333,12 +333,12 @@ async fn dead_letter_replay_roundtrip() {
         .await
         .expect("checkout");
     for _ in 0..4 {
-        facade.process_outbox_once(3).await;
+        facade.process_outbox_once(3).await.expect("process outbox");
     }
     let dl = facade.list_dead_letter().await;
     assert_eq!(dl.len(), 1, "one message in dead-letter after 4 process attempts");
     let msg_id = dl[0].id.clone();
-    let replayed = facade.replay_from_dead_letter(&msg_id).await;
+    let replayed = facade.replay_from_dead_letter(&msg_id).await.expect("replay");
     assert!(replayed);
     let dl_after = facade.list_dead_letter().await;
     assert!(dl_after.is_empty(), "replay removes from dead-letter");

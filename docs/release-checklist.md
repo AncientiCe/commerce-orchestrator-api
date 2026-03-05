@@ -4,7 +4,10 @@ Before cutting a release (e.g. GitHub tag and release notes), complete the follo
 
 ## Pre-release
 
-- [ ] All CI jobs pass (format, clippy, tests, release-gate).
+- [ ] All pipelines pass before push/release:
+  - **CI** (`.github/workflows/ci.yml`): format, clippy, tests, release-gate.
+  - **Audit** (`.github/workflows/audit.yml`): `cargo audit` (dependency vulnerabilities).
+- [ ] For first version / branch protection: require both **CI** and **Audit** as status checks so no push or merge succeeds until both pass.
 - [ ] `CHANGELOG.md` is updated for the release version and date.
 - [ ] Version in root `Cargo.toml` (workspace.package) and any crate-specific overrides is set to the release version.
 - [ ] Runbooks are up to date: `docs/runbooks/retries-and-outbox.md`, `dead-letter-handling.md`, `reconciliation.md`.
@@ -12,7 +15,7 @@ Before cutting a release (e.g. GitHub tag and release notes), complete the follo
 ## Acceptance
 
 - [ ] `cargo test --workspace` passes locally.
-- [ ] Security and authz tests pass (`authorize_checkout`, tenant mismatch, missing scope, cross-tenant idempotency).
+- [ ] Security and authz tests pass (`authorize_checkout`, tenant mismatch, missing scope, cross-tenant idempotency; API integration tests for 401 when auth required and missing/invalid token).
 - [ ] Persistent restart-recovery test passes (`persistent_runner_restart_returns_same_idempotent_result`).
 - [ ] Payment reconciliation and lifecycle tests pass.
 - [ ] Outbox/dead-letter and duplicate-delivery tests pass.
@@ -26,3 +29,8 @@ Before cutting a release (e.g. GitHub tag and release notes), complete the follo
 ## Post-release
 
 - [ ] Bump version to next development (e.g. 0.1.1 or 0.2.0) in `Cargo.toml` and add an `[Unreleased]` section in `CHANGELOG.md` if using Keep a Changelog.
+
+## Optional (supply chain)
+
+- [ ] Generate SBOM (e.g. `cargo cyclonedx` or `cargo sbom`) and attach to release.
+- [ ] Run container image vulnerability scan before promoting to production.

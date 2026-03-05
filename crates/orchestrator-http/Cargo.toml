@@ -1,0 +1,39 @@
+[package]
+name = "orchestrator-http"
+version.workspace = true
+edition.workspace = true
+description = "REST API service for commerce orchestrator (Agent-facing)"
+
+[[bin]]
+name = "orchestrator-server"
+path = "src/main.rs"
+
+[dependencies]
+integration-adapters = { path = "../integration-adapters" }
+orchestrator-api = { path = "../orchestrator-api" }
+orchestrator-core = { path = "../orchestrator-core" }
+orchestrator-runtime = { path = "../orchestrator-runtime" }
+provider-contracts = { path = "../provider-contracts" }
+provider-mocks = { path = "../provider-mocks" }
+orchestrator-observability = { path = "../orchestrator-observability" }
+axum = { version = "0.7", features = ["json", "macros", "tokio"] }
+tower = "0.4"
+tower-http = { version = "0.5", features = ["trace"] }
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+
+[dev-dependencies]
+provider-mocks = { path = "../provider-mocks" }
+tower = "0.4"
+axum-test = "14"
+http = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+
+[lints]
+workspace = true

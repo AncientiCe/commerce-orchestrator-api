@@ -36,9 +36,13 @@ cargo run -p happy_path
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
+cargo audit   # dependency vulnerabilities (also runs in Audit pipeline)
 ```
 
-CI also runs a release-gate job (full test suite + doc tests) for production readiness. See `docs/release-checklist.md` before cutting a release.
+- **CI** (`.github/workflows/ci.yml`): format, clippy, tests, release-gate (full suite + doc tests).  
+- **Audit** (`.github/workflows/audit.yml`): `cargo audit`.  
+
+Both pipelines must pass before push/release. See `docs/release-checklist.md` before cutting a release.
 
 ## License
 

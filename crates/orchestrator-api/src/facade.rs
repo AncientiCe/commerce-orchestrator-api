@@ -137,8 +137,8 @@ impl OrchestratorFacade {
     }
 
     /// Process one outbox message; after max_attempts failures it is moved to dead-letter.
-    pub async fn process_outbox_once(&self, max_attempts: u32) {
-        self.runner.process_outbox_once(max_attempts).await;
+    pub async fn process_outbox_once(&self, max_attempts: u32) -> Result<(), FacadeError> {
+        self.runner.process_outbox_once(max_attempts).await.map_err(FacadeError::Runner)
     }
 
     /// List dead-letter entries for diagnostics (id, topic, correlation_id, attempts).
@@ -147,13 +147,13 @@ impl OrchestratorFacade {
     }
 
     /// Replay a message from dead-letter back to the outbox.
-    pub async fn replay_from_dead_letter(&self, message_id: &str) -> bool {
-        self.runner.replay_from_dead_letter(message_id).await
+    pub async fn replay_from_dead_letter(&self, message_id: &str) -> Result<bool, FacadeError> {
+        self.runner.replay_from_dead_letter(message_id).await.map_err(FacadeError::Runner)
     }
 
     /// Accept an incoming event once (idempotent dedupe for webhooks). Returns true if accepted, false if duplicate.
-    pub async fn accept_incoming_event_once(&self, message_id: &str) -> bool {
-        self.runner.accept_incoming_event_once(message_id).await
+    pub async fn accept_incoming_event_once(&self, message_id: &str) -> Result<bool, FacadeError> {
+        self.runner.accept_incoming_event_once(message_id).await.map_err(FacadeError::Runner)
     }
 }
 

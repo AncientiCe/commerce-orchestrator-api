@@ -1,0 +1,40 @@
+# NetworkPolicy: restrict ingress to trusted clients and limit egress to DNS + required downstreams.
+# Ingress: allow traffic only from pods with label orchestrator-client: "true" (e.g. your ingress/gateway).
+# Egress: allow DNS and HTTPS to catalog/downstreams; deny all other outbound by default.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: orchestrator-api
+spec:
+  podSelector:
+    matchLabels:
+      app: orchestrator-api
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - ports:
+        - protocol: TCP
+          port: 8080
+      from:
+        # Allow from pods labeled orchestrator-client: "true" (ingress controller, API gateway, or tests).
+        - podSelector:
+            matchLabels:
+              orchestrator-client: "true"
+  egress:
+    # DNS (cluster DNS or kube-dns)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # HTTP/HTTPS for catalog and other external downstreams
+    - ports:
+        - protocol: TCP
+          port: 80
+        - protocol: TCP
+          port: 443

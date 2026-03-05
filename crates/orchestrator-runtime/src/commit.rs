@@ -1,5 +1,6 @@
 //! Atomic commit boundary abstraction.
 
+use crate::store_error::StoreError;
 use crate::store_traits::CommitStore;
 use orchestrator_core::contract::CartId;
 use std::collections::HashMap;
@@ -38,7 +39,7 @@ impl CommitStore for InMemoryCommitStore {
         &self,
         cart_id: CartId,
         payment_reference: Option<String>,
-    ) -> CommitRecord {
+    ) -> Result<CommitRecord, StoreError> {
         let mut guard = self.records.lock().await;
         let record = CommitRecord {
             transaction_id: format!("txn_{}", Uuid::new_v4()),
@@ -46,6 +47,6 @@ impl CommitStore for InMemoryCommitStore {
             payment_reference,
         };
         guard.insert(cart_id, record.clone());
-        record
+        Ok(record)
     }
 }

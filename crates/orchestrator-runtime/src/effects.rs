@@ -1,5 +1,6 @@
 //! Reliable external effects: outbox + inbox dedupe primitives.
 
+use crate::store_error::StoreError;
 use crate::store_traits::{DeadLetterStore, InboxStore, OutboxStore};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -74,11 +75,12 @@ impl DeadLetter {
 
 #[async_trait::async_trait]
 impl OutboxStore for Outbox {
-    async fn enqueue(&self, message: OutboxMessage) {
+    async fn enqueue(&self, message: OutboxMessage) -> Result<(), StoreError> {
         self.queue.lock().await.push_back(message);
+        Ok(())
     }
-    async fn dequeue(&self) -> Option<OutboxMessage> {
-        self.queue.lock().await.pop_front()
+    async fn dequeue(&self) -> Result<Option<OutboxMessage>, StoreError> {
+        Ok(self.queue.lock().await.pop_front())
     }
     async fn len(&self) -> usize {
         self.queue.lock().await.len()
@@ -87,8 +89,8 @@ impl OutboxStore for Outbox {
 
 #[async_trait::async_trait]
 impl InboxStore for InboxDedupe {
-    async fn accept_once(&self, message_id: &str) -> bool {
-        self.seen.lock().await.insert(message_id.to_string())
+    async fn accept_once(&self, message_id: &str) -> Result<bool, StoreError> {
+        Ok(self.seen.lock().await.insert(message_id.to_string()))
     }
 }
 
@@ -103,11 +105,12 @@ impl DeadLetter {
 
 #[async_trait::async_trait]
 impl DeadLetterStore for DeadLetter {
-    async fn put(&self, message: OutboxMessage) {
+    async fn put(&self, message: OutboxMessage) -> Result<(), StoreError> {
         self.records
             .lock()
             .await
             .insert(message.id.clone(), message);
+        Ok(())
     }
     async fn len(&self) -> usize {
         self.records.lock().await.len()
@@ -115,8 +118,8 @@ impl DeadLetterStore for DeadLetter {
     async fn list(&self) -> Vec<OutboxMessage> {
         self.records.lock().await.values().cloned().collect()
     }
-    async fn take(&self, message_id: &str) -> Option<OutboxMessage> {
-        self.records.lock().await.remove(message_id)
+    async fn take(&self, message_id: &str) -> Result<Option<OutboxMessage>, StoreError> {
+        Ok(self.records.lock().await.remove(message_id))
     }
 }
 
