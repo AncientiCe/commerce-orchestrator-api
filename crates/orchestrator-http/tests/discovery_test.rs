@@ -36,8 +36,15 @@ async fn well_known_ucp_returns_200_and_manifest() {
     assert!(ucp.get("manifest").is_some(), "manifest present");
     let manifest = ucp.get("manifest").unwrap();
     assert!(manifest.get("capabilities").is_some());
-    let rest = ucp.get("rest_endpoint").and_then(|v| v.as_str()).unwrap_or("");
-    assert!(rest.starts_with("https://orchestrator.example.com"), "rest_endpoint {:?}", rest);
+    let rest = ucp
+        .get("rest_endpoint")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    assert!(
+        rest.starts_with("https://orchestrator.example.com"),
+        "rest_endpoint {:?}",
+        rest
+    );
 }
 
 #[tokio::test]
@@ -97,7 +104,10 @@ async fn advertised_capabilities_have_implemented_routes() {
         "payment_intent": { "amount_minor": 100, "token_or_reference": "tok" },
         "idempotency_key": "key-cap-parity"
     });
-    let r_checkout = server.post("/api/v1/checkout/execute").json(&checkout_body).await;
+    let r_checkout = server
+        .post("/api/v1/checkout/execute")
+        .json(&checkout_body)
+        .await;
     assert_ne!(
         r_checkout.status_code().as_u16(),
         404,

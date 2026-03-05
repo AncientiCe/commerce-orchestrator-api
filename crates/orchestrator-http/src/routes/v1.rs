@@ -9,7 +9,9 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use orchestrator_api::{normalize_a2a_cart_envelope, normalize_a2a_checkout_envelope, redact_checkout_request};
+use orchestrator_api::{
+    normalize_a2a_cart_envelope, normalize_a2a_checkout_envelope, redact_checkout_request,
+};
 use orchestrator_core::contract::{CartCommand, CartId, CheckoutRequest};
 use std::str::FromStr;
 use uuid::Uuid;

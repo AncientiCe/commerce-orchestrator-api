@@ -152,7 +152,10 @@ async fn ap2_strict_rejects_missing_consent_and_handler() {
         },
         idempotency_key: "key-ap2".to_string(),
     };
-    let err = facade.execute_checkout(request).await.expect_err("must fail with AP2 strict");
+    let err = facade
+        .execute_checkout(request)
+        .await
+        .expect_err("must fail with AP2 strict");
     assert!(matches!(err, FacadeError::Ap2Verification(_)));
 }
 
