@@ -71,6 +71,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             .map_err(|e| format!("receipt adapter: {}", e))?,
         );
         let policy = orchestrator_core::policy::PolicyEngine::default();
+        let ap2_strict = matches!(
+            std::env::var("AP2_STRICT").as_deref(),
+            Ok("1") | Ok("true") | Ok("yes")
+        );
         let facade = orchestrator_api::OrchestratorFacade::new_persistent(
             catalog,
             pricing,
@@ -82,7 +86,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             &prod.persistence_path,
         )
         .await
-        .map_err(|e| format!("persistent facade: {}", e))?;
+        .map_err(|e| format!("persistent facade: {}", e))?
+        .with_ap2_strict(ap2_strict);
         let authn = Arc::new(StaticTokenAuthnResolver::new(
             prod.auth_token,
             prod.auth_tenant_id,
@@ -97,13 +102,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let payment = Arc::new(MockPaymentProvider);
         let receipt = Arc::new(MockReceiptProvider);
         let policy = orchestrator_core::policy::PolicyEngine::default();
+        let ap2_strict = matches!(
+            std::env::var("AP2_STRICT").as_deref(),
+            Ok("1") | Ok("true") | Ok("yes")
+        );
         let facade = orchestrator_api::OrchestratorFacade::new(
             catalog, pricing, tax, geo, payment, receipt, policy,
-        );
+        )
+        .with_ap2_strict(ap2_strict);
         (facade, None, true)
     };
 
-    let state = AppState::new(facade).production_mode(profile.is_production());
+    let discovery_base_url = server_config
+        .server
+        .public_base_url
+        .clone()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| {
+            let port = server_config
+                .server
+                .bind_addr
+                .rsplit(':')
+                .next()
+                .unwrap_or("8080");
+            format!("http://127.0.0.1:{}", port)
+        });
+    let state = AppState::new(facade)
+        .production_mode(profile.is_production())
+        .with_discovery_base_url(discovery_base_url);
     let state = if let Some(a) = authn {
         state.with_authn(a)
     } else {

@@ -13,6 +13,8 @@ pub struct AppState {
     pub allow_dev_auth: bool,
     /// Set to true when shutdown signal received; readiness returns 503 when true.
     pub shutdown_flag: Arc<AtomicBool>,
+    /// Base URL for this service (used in /.well-known/ucp discovery manifest). Defaults to http://127.0.0.1:port from bind.
+    pub discovery_base_url: String,
 }
 
 impl AppState {
@@ -22,7 +24,14 @@ impl AppState {
             authn: None,
             allow_dev_auth: true,
             shutdown_flag: Arc::new(AtomicBool::new(false)),
+            discovery_base_url: "http://127.0.0.1:8080".to_string(),
         }
+    }
+
+    /// Set the base URL used in the discovery manifest (/.well-known/ucp). Call when deploying behind a known public URL.
+    pub fn with_discovery_base_url(mut self, url: String) -> Self {
+        self.discovery_base_url = url;
+        self
     }
 
     /// Returns true if the server is shutting down (readiness should fail).

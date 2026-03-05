@@ -193,6 +193,8 @@ pub struct ServerSection {
     pub bind_addr: String,
     #[serde(default = "default_log_level")]
     pub log_level: String,
+    /// Public base URL for this orchestrator (e.g. https://orchestrator.example.com). Used for discovery manifest rest_endpoint.
+    pub public_base_url: Option<String>,
 }
 
 fn default_bind_addr() -> String {
@@ -238,6 +240,12 @@ impl ServerConfig {
             let t = v.trim().to_string();
             if !t.is_empty() {
                 self.server.bind_addr = t;
+            }
+        }
+        if let Ok(v) = std::env::var("PUBLIC_BASE_URL") {
+            let t = v.trim().to_string();
+            if !t.is_empty() {
+                self.server.public_base_url = Some(t);
             }
         }
         if let Ok(v) = std::env::var("RUST_LOG") {

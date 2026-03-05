@@ -8,6 +8,11 @@
 - **Production identity (JWT/OIDC):** For production, implement `AuthnResolver` with JWT validation: verify signature via JWKS, validate issuer and audience, and map claims to `AuthContext` (e.g. `tenant_id`, `caller_id`, `scopes`). Deploy this resolver in the HTTP server instead of `StaticTokenAuthnResolver` so the service never uses a single shared static token. Use short-lived access tokens and refresh as needed.
 - Idempotency keys are scoped by tenant: different tenants never share idempotency state.
 
+## AP2 (Agent Payments Protocol) strict mode
+
+- Set `AP2_STRICT=1` (or `true`/`yes`) to require valid AP2 artifacts on checkout: `ap2_consent_proof` and `payment_handler_id` must be present and non-empty. When strict mode is on, checkout fails with `AP2_VERIFICATION_ERROR` if either is missing (fail closed).
+- You can plug in a custom verifier via `orchestrator_api::Ap2MandateVerifier` for signature, issuer trust, and expiry checks when integrating a full AP2 credential stack.
+
 ## PII and sensitive data
 
 - Never log raw `CheckoutRequest` or payment tokens. Use `redact_checkout_request()` from `orchestrator_api::pii` for any logging or audit payloads.

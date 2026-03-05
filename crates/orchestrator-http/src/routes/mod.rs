@@ -1,5 +1,6 @@
 //! Route modules for the API.
 
+mod discovery;
 mod health;
 mod v1;
 
@@ -12,6 +13,7 @@ use crate::state::AppState;
 
 pub fn router() -> Router<AppState> {
     Router::new()
+        .merge(discovery::routes())
         .merge(health::routes())
         .nest("/api/v1", v1::routes())
         .layer(middleware::from_fn(request_id_middleware))

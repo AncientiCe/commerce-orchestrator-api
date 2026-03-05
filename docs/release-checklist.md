@@ -16,6 +16,7 @@ Before cutting a release (e.g. GitHub tag and release notes), complete the follo
 
 - [ ] `cargo test --workspace` passes locally.
 - [ ] Security and authz tests pass (`authorize_checkout`, tenant mismatch, missing scope, cross-tenant idempotency; API integration tests for 401 when auth required and missing/invalid token).
+- [ ] Conformance tests pass: `cargo test -p orchestrator-http --test discovery_test` and `cargo test -p orchestrator-api --test authz_and_adapters` (discovery, A2A, AP2 strict).
 - [ ] Persistent restart-recovery test passes (`persistent_runner_restart_returns_same_idempotent_result`).
 - [ ] Payment reconciliation and lifecycle tests pass.
 - [ ] Outbox/dead-letter and duplicate-delivery tests pass.

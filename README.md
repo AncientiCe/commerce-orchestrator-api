@@ -15,6 +15,7 @@ Production-ready interface orchestrator for commerce: cart lifecycle, checkout, 
 | [Changelog](CHANGELOG.md) | Version history and release notes. |
 | [Runbooks](docs/runbooks/) | [Retries and outbox](docs/runbooks/retries-and-outbox.md), [dead-letter handling](docs/runbooks/dead-letter-handling.md), [reconciliation](docs/runbooks/reconciliation.md). |
 | [Consumer example](examples/consumer_example/README.md) | Template for wiring providers and running happy-path tests. |
+| [Standards conformance](docs/standards/conformance-matrix.md) | Target protocol versions (UCP-style, A2A, MCP, AP2) and conformance matrix with acceptance criteria. |
 
 ## Overview
 
@@ -121,7 +122,14 @@ cargo audit
 
 ## Standards Alignment
 
-Capability discovery and checkout semantics are modeled so they can map to UCP-style integrations without hard-coupling to a single transport. Room for A2A/MCP/AP2 adapters is preserved.
+This service implements protocol-aligned behavior for agentic commerce:
+
+- **Discovery:** `GET /.well-known/ucp` returns a capability manifest (UCP-style) with `rest_endpoint`; advertised capabilities map to implemented routes (see [conformance matrix](docs/standards/conformance-matrix.md)).
+- **REST:** Cart, checkout, and payment endpoints match the [consumption guide](docs/consumption-guide.md); auth and tenant isolation are enforced.
+- **A2A:** `POST /api/v1/a2a/checkout` and `POST /api/v1/a2a/cart` accept A2A-style envelopes; requests are normalized to the same domain types and policy as REST.
+- **AP2:** Payment intent supports `ap2_consent_proof` and `payment_handler_id`. With `AP2_STRICT=1`, checkout requires both and fails closed if missing; see [SECURITY.md](SECURITY.md).
+
+Conformance is asserted by CI (discovery, A2A, and AP2 tests). Target protocol versions and required/optional items are in the [conformance matrix](docs/standards/conformance-matrix.md).
 
 ## License
 

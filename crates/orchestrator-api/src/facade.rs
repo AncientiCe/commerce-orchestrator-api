@@ -1,5 +1,6 @@
 //! Library facade: single entrypoint for agents/apps.
 
+use crate::ap2_verification::{verify_ap2_strict, Ap2VerificationError};
 use crate::authz::{authorize_checkout, AuthContext, AuthzError};
 use orchestrator_core::contract::{
     CartCommand, CartId, CartProjection, CheckoutRequest, PaymentLifecycleRequest,
@@ -17,6 +18,8 @@ use std::sync::Arc;
 #[derive(Clone)]
 pub struct OrchestratorFacade {
     runner: Runner,
+    /// When true, checkout requires valid AP2 artifacts (consent proof, payment_handler_id); fail closed if missing.
+    ap2_strict: bool,
 }
 
 impl OrchestratorFacade {
@@ -39,7 +42,14 @@ impl OrchestratorFacade {
         };
         Self {
             runner: Runner::new(providers, policy),
+            ap2_strict: false,
         }
+    }
+
+    /// Enable AP2 strict mode: checkout will fail with Ap2Verification error if ap2_consent_proof or payment_handler_id is missing.
+    pub fn with_ap2_strict(mut self, strict: bool) -> Self {
+        self.ap2_strict = strict;
+        self
     }
 
     /// Create a facade with persistent file-backed stores (for production).
@@ -63,7 +73,10 @@ impl OrchestratorFacade {
             receipt,
         };
         let runner = Runner::new_persistent(providers, policy, base_path).await?;
-        Ok(Self { runner })
+        Ok(Self {
+            runner,
+            ap2_strict: false,
+        })
     }
 
     /// Dispatch a cart command.
@@ -83,6 +96,9 @@ impl OrchestratorFacade {
         &self,
         request: CheckoutRequest,
     ) -> Result<TransactionResult, FacadeError> {
+        if self.ap2_strict {
+            verify_ap2_strict(&request).map_err(FacadeError::Ap2Verification)?;
+        }
         self.runner
             .execute_checkout(request)
             .await
@@ -173,4 +189,6 @@ pub enum FacadeError {
     Runner(#[from] RunnerError),
     #[error("authorization failed: {0}")]
     Authz(#[from] AuthzError),
+    #[error("AP2 verification failed: {0}")]
+    Ap2Verification(#[from] Ap2VerificationError),
 }

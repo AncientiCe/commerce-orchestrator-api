@@ -9,7 +9,7 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use orchestrator_api::redact_checkout_request;
+use orchestrator_api::{normalize_a2a_cart_envelope, normalize_a2a_checkout_envelope, redact_checkout_request};
 use orchestrator_core::contract::{CartCommand, CartId, CheckoutRequest};
 use std::str::FromStr;
 use uuid::Uuid;
@@ -18,6 +18,8 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/cart/commands", post(dispatch_cart_command))
         .route("/checkout/execute", post(execute_checkout))
+        .route("/a2a/checkout", post(a2a_execute_checkout))
+        .route("/a2a/cart", post(a2a_dispatch_cart_command))
         .route("/payments/capture", post(capture_payment))
         .route("/payments/void", post(void_payment))
         .route("/payments/refund", post(refund_payment))
@@ -57,6 +59,33 @@ async fn execute_checkout(
         .execute_checkout_authorized(&auth_ctx, request)
         .await?;
     Ok(Json(result.into()))
+}
+
+/// POST /api/v1/a2a/checkout — A2A envelope: { "capability": "...", "payload": { CheckoutRequest } }. Same authz and idempotency as REST.
+async fn a2a_execute_checkout(
+    AuthContextExtractor(auth_ctx): AuthContextExtractor,
+    State(state): State<AppState>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<TransactionResultDto>, ApiError> {
+    let request = normalize_a2a_checkout_envelope(&body).map_err(ApiError::BadRequest)?;
+    let redacted = redact_checkout_request(&request);
+    tracing::info!(checkout_request = ?redacted, "a2a checkout execute");
+    let result = state
+        .facade
+        .execute_checkout_authorized(&auth_ctx, request)
+        .await?;
+    Ok(Json(result.into()))
+}
+
+/// POST /api/v1/a2a/cart — A2A envelope: { "capability": "...", "payload": { "command": { "kind": "...", ... }, "cart_id": "..."? } }. Same policy as REST.
+async fn a2a_dispatch_cart_command(
+    AuthContextExtractor(_auth): AuthContextExtractor,
+    State(state): State<AppState>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<CartProjectionDto>, ApiError> {
+    let (cmd, cart_id) = normalize_a2a_cart_envelope(&body).map_err(ApiError::BadRequest)?;
+    let projection = state.facade.dispatch_cart_command(cmd, cart_id).await?;
+    Ok(Json(projection.into()))
 }
 
 async fn capture_payment(

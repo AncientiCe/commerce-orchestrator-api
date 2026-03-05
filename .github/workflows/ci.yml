@@ -28,6 +28,11 @@ jobs:
       - name: Tests
         run: cargo test --workspace
 
+      - name: Conformance (discovery, A2A, AP2)
+        run: |
+          cargo test -p orchestrator-http --test discovery_test
+          cargo test -p orchestrator-api --test authz_and_adapters
+
   release-gate:
     name: Release gate (acceptance)
     runs-on: ubuntu-latest

@@ -79,10 +79,11 @@ impl IntoResponse for ApiError {
 }
 
 fn orchestrator_error_to_http(e: &FacadeError) -> (StatusCode, &'static str) {
-    use orchestrator_api::FacadeError::{Authz, Runner};
+    use orchestrator_api::FacadeError::{Ap2Verification, Authz, Runner};
     use orchestrator_runtime::RunnerError;
     match e {
         Authz(_) => (StatusCode::FORBIDDEN, "AUTHZ_ERROR"),
+        Ap2Verification(_) => (StatusCode::BAD_REQUEST, "AP2_VERIFICATION_ERROR"),
         Runner(r) => match r {
             RunnerError::Store(_) => (StatusCode::INTERNAL_SERVER_ERROR, "STORE_ERROR"),
             RunnerError::Payment(_) => (StatusCode::UNPROCESSABLE_ENTITY, "PAYMENT_ERROR"),

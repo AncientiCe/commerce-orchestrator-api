@@ -99,6 +99,64 @@ fn extracts_ap2_metadata() {
 }
 
 #[tokio::test]
+async fn ap2_strict_rejects_missing_consent_and_handler() {
+    let catalog = MockCatalogProvider::new();
+    catalog.add_item(CatalogItem {
+        id: "item_1".to_string(),
+        title: "Sample".to_string(),
+        price_minor: 100,
+    });
+    let facade = OrchestratorFacade::new(
+        Arc::new(catalog),
+        Arc::new(MockPricingProvider),
+        Arc::new(MockTaxProvider),
+        Arc::new(MockGeoProvider),
+        Arc::new(MockPaymentProvider),
+        Arc::new(MockReceiptProvider),
+        PolicyEngine::default(),
+    )
+    .with_ap2_strict(true);
+    let created = facade
+        .dispatch_cart_command(
+            CartCommand::CreateCart(CreateCartPayload {
+                merchant_id: "m".to_string(),
+                currency: "USD".to_string(),
+            }),
+            None,
+        )
+        .await
+        .expect("create cart");
+    let ready = facade
+        .dispatch_cart_command(
+            CartCommand::StartCheckout(StartCheckoutPayload {
+                cart_id: created.cart_id,
+                cart_version: created.version,
+            }),
+            None,
+        )
+        .await
+        .expect("start checkout");
+    let request = CheckoutRequest {
+        tenant_id: "t".to_string(),
+        merchant_id: "m".to_string(),
+        cart_id: ready.cart_id,
+        cart_version: ready.version,
+        currency: "USD".to_string(),
+        customer: None,
+        location: None,
+        payment_intent: PaymentIntent {
+            amount_minor: ready.total_minor,
+            token_or_reference: "tok".to_string(),
+            ap2_consent_proof: None,
+            payment_handler_id: None,
+        },
+        idempotency_key: "key-ap2".to_string(),
+    };
+    let err = facade.execute_checkout(request).await.expect_err("must fail with AP2 strict");
+    assert!(matches!(err, FacadeError::Ap2Verification(_)));
+}
+
+#[tokio::test]
 async fn authorized_checkout_succeeds_for_matching_tenant() {
     let catalog = MockCatalogProvider::new();
     catalog.add_item(CatalogItem {

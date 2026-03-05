@@ -16,12 +16,20 @@ See [consumer-integration.md](consumer-integration.md) for the high-level integr
 
 ## Endpoints
 
+### Discovery (UCP-style)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/.well-known/ucp` | Capability discovery: returns JSON manifest with version, services, capabilities, and `rest_endpoint` (orchestrator base URL). No auth required. |
+
 ### Cart and checkout
 
 | Method | Path | Description |
 |--------|------|-------------|
 | `POST` | `/api/v1/cart/commands` | Dispatch a cart command (create, add item, update qty, remove item, apply adjustment, get cart, start checkout). Body: `CartCommandRequest` (see request shapes). |
 | `POST` | `/api/v1/checkout/execute` | Execute checkout for a cart. Body: `CheckoutRequestDto`. Requires auth in production. |
+| `POST` | `/api/v1/a2a/checkout` | A2A envelope: `{ "capability": "dev.ucp.shopping.checkout", "payload": CheckoutRequestDto }`. Same authz and idempotency as REST. |
+| `POST` | `/api/v1/a2a/cart` | A2A envelope: `{ "capability": "...", "payload": { "command": { "kind": "...", ... }, "cart_id": "..."? } }`. Same policy as REST. |
 
 ### Payments
 
