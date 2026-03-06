@@ -73,6 +73,7 @@ Configure the server with these (see also [Consumption guide – Config referenc
 | Variable | Required (production) | Description | Example |
 |----------|------------------------|-------------|---------|
 | `ENV` | Yes | `production` enables auth and real adapters. | `production` |
+| `PUBLIC_BASE_URL` | Yes | Public base URL advertised in `/.well-known/ucp`; required in production to avoid localhost discovery output. | `https://orchestrator.example.com` |
 | `PERSISTENCE_PATH` | Yes | Directory for file-backed stores. Must be writable; use a mounted volume in K8s. | `/data` |
 | `AUTH_BEARER_TOKEN` | Yes (prod) | Secret token; clients send `Authorization: Bearer <token>`. | (secret) |
 | `CATALOG_BASE_URL` | Yes | Catalog service base URL, no trailing slash. | `http://catalog-service:8080` |
@@ -85,11 +86,13 @@ Configure the server with these (see also [Consumption guide – Config referenc
 | `RUST_LOG` | No | Log level. | `info` |
 | `AUTH_TENANT_ID` | No | Default tenant for auth context. | `prod` |
 | `AUTH_CALLER_ID` | No | Default caller id. | `prod` |
+| `AP2_TRUSTED_ISSUERS` | No | Comma-separated allowlist for strict AP2 issuer checks. | `issuer.example` |
 
 Example `.env` for local runs (replace with your stub or real URLs):
 
 ```bash
 ENV=production
+PUBLIC_BASE_URL=https://orchestrator.example.com
 PERSISTENCE_PATH=./data
 AUTH_BEARER_TOKEN=dev-token-change-in-prod
 CATALOG_BASE_URL=http://localhost:9001
@@ -138,8 +141,8 @@ RECEIPT_BASE_URL=http://localhost:9006
 
 1. **Build image** (from repo root):
    ```bash
-   docker build -t your-registry/orchestrator-api:0.1.0 .
-   docker push your-registry/orchestrator-api:0.1.0
+  docker build -t your-registry/orchestrator-api:0.2.0 .
+  docker push your-registry/orchestrator-api:0.2.0
    ```
 2. **Edit manifests** under `deploy/kubernetes/`:
    - `configmap.yaml`: Set all six `*_BASE_URL` to your staging service URLs; set `PERSISTENCE_PATH` (e.g. `/data`).
@@ -150,9 +153,10 @@ RECEIPT_BASE_URL=http://localhost:9006
    ```
 4. **Override image** if not in manifest:
    ```bash
-   kubectl set image deployment/orchestrator-api orchestrator-server=your-registry/orchestrator-api:0.1.0
+  kubectl set image deployment/orchestrator-api orchestrator-server=your-registry/orchestrator-api:0.2.0
    ```
 5. **Mount durable storage** for production: Add a PVC and mount it at `PERSISTENCE_PATH` in the Deployment (see [Deployment](deploy/README.md) and persistence notes in the main README).
+6. **Keep replicas aligned with storage mode**: The shipped manifests default to one replica because the provided PVC uses `ReadWriteOnce`. Only scale beyond one replica when your storage and locking model support shared writes safely.
 
 ## 5. Post-Deploy Validation Checklist
 

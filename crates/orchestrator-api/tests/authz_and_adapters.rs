@@ -15,6 +15,20 @@ use provider_mocks::{
 };
 use std::sync::Arc;
 
+fn ap2_consent_proof(handler_id: &str, expires_at: i64) -> String {
+    serde_json::json!({
+        "issuer": "issuer.example",
+        "subject": "agent_1",
+        "mandate_id": "mandate_123",
+        "payment_handler_id": handler_id,
+        "issued_at": 1_735_689_600_i64,
+        "expires_at": expires_at,
+        "signature": "sig_abc123",
+        "nonce": "nonce_1"
+    })
+    .to_string()
+}
+
 #[test]
 fn rejects_missing_scope() {
     let context = AuthContext {
@@ -157,6 +171,151 @@ async fn ap2_strict_rejects_missing_consent_and_handler() {
         .await
         .expect_err("must fail with AP2 strict");
     assert!(matches!(err, FacadeError::Ap2Verification(_)));
+}
+
+#[tokio::test]
+async fn ap2_strict_accepts_structured_consent_proof() {
+    let catalog = MockCatalogProvider::new();
+    catalog.add_item(CatalogItem {
+        id: "item_1".to_string(),
+        title: "Sample".to_string(),
+        price_minor: 100,
+    });
+    let facade = OrchestratorFacade::new(
+        Arc::new(catalog),
+        Arc::new(MockPricingProvider),
+        Arc::new(MockTaxProvider),
+        Arc::new(MockGeoProvider),
+        Arc::new(MockPaymentProvider),
+        Arc::new(MockReceiptProvider),
+        PolicyEngine::default(),
+    )
+    .with_ap2_strict(true);
+    let created = facade
+        .dispatch_cart_command(
+            CartCommand::CreateCart(CreateCartPayload {
+                merchant_id: "m".to_string(),
+                currency: "USD".to_string(),
+            }),
+            None,
+        )
+        .await
+        .expect("create cart");
+    let ready = facade
+        .dispatch_cart_command(
+            CartCommand::StartCheckout(StartCheckoutPayload {
+                cart_id: created.cart_id,
+                cart_version: created.version,
+            }),
+            None,
+        )
+        .await
+        .expect("start checkout");
+    let result = facade
+        .execute_checkout(CheckoutRequest {
+            tenant_id: "t".to_string(),
+            merchant_id: "m".to_string(),
+            cart_id: ready.cart_id,
+            cart_version: ready.version,
+            currency: "USD".to_string(),
+            customer: None,
+            location: None,
+            payment_intent: PaymentIntent {
+                amount_minor: ready.total_minor,
+                token_or_reference: "tok".to_string(),
+                ap2_consent_proof: Some(ap2_consent_proof("mock", 4_102_444_800)),
+                payment_handler_id: Some("mock".to_string()),
+            },
+            idempotency_key: "key-ap2-valid".to_string(),
+        })
+        .await
+        .expect("structured proof should pass");
+    assert_eq!(
+        result.payment_reference.as_deref(),
+        Some("mock_key-ap2-valid")
+    );
+}
+
+#[tokio::test]
+async fn ap2_strict_rejects_expired_or_mismatched_consent_proof() {
+    let catalog = MockCatalogProvider::new();
+    catalog.add_item(CatalogItem {
+        id: "item_1".to_string(),
+        title: "Sample".to_string(),
+        price_minor: 100,
+    });
+    let facade = OrchestratorFacade::new(
+        Arc::new(catalog),
+        Arc::new(MockPricingProvider),
+        Arc::new(MockTaxProvider),
+        Arc::new(MockGeoProvider),
+        Arc::new(MockPaymentProvider),
+        Arc::new(MockReceiptProvider),
+        PolicyEngine::default(),
+    )
+    .with_ap2_strict(true);
+    let created = facade
+        .dispatch_cart_command(
+            CartCommand::CreateCart(CreateCartPayload {
+                merchant_id: "m".to_string(),
+                currency: "USD".to_string(),
+            }),
+            None,
+        )
+        .await
+        .expect("create cart");
+    let ready = facade
+        .dispatch_cart_command(
+            CartCommand::StartCheckout(StartCheckoutPayload {
+                cart_id: created.cart_id,
+                cart_version: created.version,
+            }),
+            None,
+        )
+        .await
+        .expect("start checkout");
+
+    let expired_err = facade
+        .execute_checkout(CheckoutRequest {
+            tenant_id: "t".to_string(),
+            merchant_id: "m".to_string(),
+            cart_id: ready.cart_id,
+            cart_version: ready.version,
+            currency: "USD".to_string(),
+            customer: None,
+            location: None,
+            payment_intent: PaymentIntent {
+                amount_minor: ready.total_minor,
+                token_or_reference: "tok".to_string(),
+                ap2_consent_proof: Some(ap2_consent_proof("mock", 1_700_000_000)),
+                payment_handler_id: Some("mock".to_string()),
+            },
+            idempotency_key: "key-ap2-expired".to_string(),
+        })
+        .await
+        .expect_err("expired proof must fail");
+    assert!(matches!(expired_err, FacadeError::Ap2Verification(_)));
+
+    let handler_err = facade
+        .execute_checkout(CheckoutRequest {
+            tenant_id: "t".to_string(),
+            merchant_id: "m".to_string(),
+            cart_id: ready.cart_id,
+            cart_version: ready.version,
+            currency: "USD".to_string(),
+            customer: None,
+            location: None,
+            payment_intent: PaymentIntent {
+                amount_minor: ready.total_minor,
+                token_or_reference: "tok".to_string(),
+                ap2_consent_proof: Some(ap2_consent_proof("handler_a", 4_102_444_800)),
+                payment_handler_id: Some("handler_b".to_string()),
+            },
+            idempotency_key: "key-ap2-handler".to_string(),
+        })
+        .await
+        .expect_err("mismatched handler must fail");
+    assert!(matches!(handler_err, FacadeError::Ap2Verification(_)));
 }
 
 #[tokio::test]

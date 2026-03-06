@@ -5,7 +5,7 @@
 [![Rust](https://img.shields.io/badge/Rust-stable-orange?logo=rust&logoColor=white)](https://www.rust-lang.org/)
 [![Kubernetes-ready](https://img.shields.io/badge/Kubernetes-ready-326CE5?logo=kubernetes&logoColor=white)](deploy/README.md)
 [![Protocol Conformance](https://img.shields.io/badge/Protocols-UCP%20%7C%20A2A%20%7C%20AP2%20%7C%20MCP-blueviolet)](docs/standards/conformance-matrix.md)
-[![v0.1.0](https://img.shields.io/badge/version-0.1.0-blue)](CHANGELOG.md)
+[![v0.2.0](https://img.shields.io/badge/version-0.2.0-blue)](CHANGELOG.md)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20%2F%20Apache--2.0-green)](LICENSE-MIT)
 [![CI](https://img.shields.io/github/actions/workflow/status/AncientiCe/commerce-orchestrator/ci.yml?branch=main&label=CI)](https://github.com/AncientiCe/commerce-orchestrator/actions)
 
@@ -68,7 +68,7 @@ cargo run -p happy_path
 cargo run -p orchestrator-server
 ```
 
-Then call the API (see [Consumption guide](docs/consumption-guide.md)). For production, set `ENV=production`, `PERSISTENCE_PATH`, `AUTH_BEARER_TOKEN`, and all six `*_BASE_URL` variables; see [Deployment](deploy/README.md).
+Then call the API (see [Consumption guide](docs/consumption-guide.md)). For production, set `ENV=production`, `PUBLIC_BASE_URL`, `PERSISTENCE_PATH`, `AUTH_BEARER_TOKEN`, and all six `*_BASE_URL` variables; see [Deployment](deploy/README.md).
 
 ## Plug Your APIs
 
@@ -81,7 +81,7 @@ Full walkthrough: [Plug and deploy](docs/plug-and-deploy.md), [Consumer integrat
 
 ## Deploy
 
-- **Kubernetes:** Apply manifests under `deploy/kubernetes/` (ConfigMap, Secret, Deployment, Service, HPA, PDB, NetworkPolicy). Override image and set real secrets before use.
+- **Kubernetes:** Apply manifests under `deploy/kubernetes/` (ConfigMap, Secret, Deployment, Service, HPA, PDB, NetworkPolicy). The default manifests assume a single replica for file-backed persistence; only scale beyond one replica with compatible shared storage. Override image and set real secrets before use.
 - **Docker:** Build from repo root; see `Dockerfile`. Set `PERSISTENCE_PATH` and mount durable storage for production.
 
 Details: [deploy/README.md](deploy/README.md).
@@ -94,7 +94,7 @@ Details: [deploy/README.md](deploy/README.md).
 
 ## Security
 
-- Production mode (`ENV=production`) requires Bearer token; use `AUTH_BEARER_TOKEN` and never log tokens or raw payment data.
+- Production mode (`ENV=production`) requires `PUBLIC_BASE_URL` and a Bearer token; use `AUTH_BEARER_TOKEN` and never log tokens or raw payment data.
 - Use [redaction helpers](SECURITY.md) for any logging of checkout/payment payloads.
 - Report vulnerabilities privately; see [SECURITY.md](SECURITY.md).
 
@@ -138,7 +138,7 @@ This service implements protocol-aligned behavior for agentic commerce:
 - **Discovery:** `GET /.well-known/ucp` returns a capability manifest (UCP-style) with `rest_endpoint`; advertised capabilities map to implemented routes (see [conformance matrix](docs/standards/conformance-matrix.md)).
 - **REST:** Cart, checkout, and payment endpoints match the [consumption guide](docs/consumption-guide.md); auth and tenant isolation are enforced.
 - **A2A:** `POST /api/v1/a2a/checkout` and `POST /api/v1/a2a/cart` accept A2A-style envelopes; requests are normalized to the same domain types and policy as REST.
-- **AP2:** Payment intent supports `ap2_consent_proof` and `payment_handler_id`. With `AP2_STRICT=1`, checkout requires both and fails closed if missing; see [SECURITY.md](SECURITY.md).
+- **AP2:** Payment intent supports `ap2_consent_proof` and `payment_handler_id`. With `AP2_STRICT=1`, checkout requires a structured consent proof whose issuer, signature, expiry, and payment handler binding validate before execution; see [SECURITY.md](SECURITY.md).
 
 Conformance is asserted by CI (discovery, A2A, and AP2 tests). Target protocol versions and required/optional items are in the [conformance matrix](docs/standards/conformance-matrix.md).
 

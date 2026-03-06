@@ -433,6 +433,9 @@ impl Runner {
             self.idempotency
                 .complete(idempotency_key, result.clone())
                 .await?;
+            self.payment_state_store
+                .put(result.transaction_id.clone(), result.payment_state)
+                .await;
             return Ok(result);
         }
 
@@ -458,6 +461,9 @@ impl Runner {
             self.idempotency
                 .complete(idempotency_key, failed.clone())
                 .await?;
+            self.payment_state_store
+                .put(failed.transaction_id.clone(), failed.payment_state)
+                .await;
             return Ok(failed);
         }
 
@@ -682,6 +688,11 @@ impl Runner {
             }
         }
         ReconciliationReport { mismatches }
+    }
+
+    /// Read our stored payment state for one transaction.
+    pub async fn get_payment_state(&self, transaction_id: &str) -> Option<PaymentState> {
+        self.payment_state_store.get(transaction_id).await
     }
 
     async fn mutate_and_recalculate(

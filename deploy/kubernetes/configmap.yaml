@@ -10,6 +10,7 @@ data:
   ENV: "production"
   BIND_ADDR: "0.0.0.0:8080"
   RUST_LOG: "info"
+  PUBLIC_BASE_URL: "https://orchestrator.example.com"
   # Persistence path inside the container (e.g. emptyDir or PVC mount).
   PERSISTENCE_PATH: "/data"
   # Downstream component API base URLs (no trailing slash). Replace with your service URLs.

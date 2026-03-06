@@ -10,8 +10,9 @@
 
 ## AP2 (Agent Payments Protocol) strict mode
 
-- Set `AP2_STRICT=1` (or `true`/`yes`) to require valid AP2 artifacts on checkout: `ap2_consent_proof` and `payment_handler_id` must be present and non-empty. When strict mode is on, checkout fails with `AP2_VERIFICATION_ERROR` if either is missing (fail closed).
-- You can plug in a custom verifier via `orchestrator_api::Ap2MandateVerifier` for signature, issuer trust, and expiry checks when integrating a full AP2 credential stack.
+- Set `AP2_STRICT=1` (or `true`/`yes`) to require valid AP2 artifacts on checkout. In `v0.2.0`, strict mode expects `ap2_consent_proof` to be a JSON string with `issuer`, `subject`, `mandate_id`, `payment_handler_id`, `issued_at`, `expires_at`, and `signature`, and it verifies expiry plus handler binding before checkout proceeds.
+- Optionally set `AP2_TRUSTED_ISSUERS=issuer-a,issuer-b` to restrict which consent proof issuers are accepted in strict mode.
+- You can still plug in a custom verifier via `orchestrator_api::Ap2MandateVerifier` when integrating a fuller AP2 credential stack with real signature validation and replay protection.
 
 ## PII and sensitive data
 

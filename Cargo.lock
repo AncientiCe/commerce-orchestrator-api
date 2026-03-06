@@ -249,7 +249,7 @@ dependencies = [
 
 [[package]]
 name = "consumer_example"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "orchestrator-api",
@@ -557,7 +557,7 @@ dependencies = [
 
 [[package]]
 name = "happy_path"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "orchestrator-api",
  "orchestrator-core",
@@ -915,7 +915,7 @@ dependencies = [
 
 [[package]]
 name = "integration-adapters"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "orchestrator-core",
@@ -1098,7 +1098,7 @@ checksum = "42f5e15c9953c5e4ccceeb2e7382a716482c34515315f7b03532b8b4e8393d2d"
 
 [[package]]
 name = "orchestrator-api"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "orchestrator-core",
@@ -1116,7 +1116,7 @@ dependencies = [
 
 [[package]]
 name = "orchestrator-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "chrono",
  "serde",
@@ -1126,7 +1126,7 @@ dependencies = [
 
 [[package]]
 name = "orchestrator-http"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "axum",
  "axum-test",
@@ -1152,7 +1152,7 @@ dependencies = [
 
 [[package]]
 name = "orchestrator-observability"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "chrono",
  "orchestrator-core",
@@ -1164,7 +1164,7 @@ dependencies = [
 
 [[package]]
 name = "orchestrator-runtime"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -1301,7 +1301,7 @@ dependencies = [
 
 [[package]]
 name = "provider-contracts"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "orchestrator-core",
@@ -1311,7 +1311,7 @@ dependencies = [
 
 [[package]]
 name = "provider-mocks"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "orchestrator-core",

@@ -5,19 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.0] - 2026-03-06
 
-### Added (API layer – v0.1.0 production)
+### Added
 
-- **REST API service** (`orchestrator-http`): Deployable HTTP server exposing `/api/v1` for cart commands, checkout execute, payment capture/void/refund, incoming events, and operational endpoints (outbox, dead-letter, reconciliation). Strict request/response DTOs at the transport boundary; health at `/health/live` and `/health/ready`, metrics at `/metrics`.
-- **Auth and security**: Bearer token auth via `AuthContextExtractor`; when `AuthnResolver` is configured, checkout and payment endpoints require valid token and enforce tenant match; PII-safe logging using `redact_checkout_request` for checkout requests.
-- **Integration adapters** (`integration-adapters`): Resilient HTTP client (timeouts, retries with backoff); `CatalogHttpAdapter` for catalog component API; error normalization from HTTP/client failures to provider contract errors; wiremock-based tests for catalog adapter.
-- **Kubernetes**: `Dockerfile` for `orchestrator-server`; `deploy/kubernetes/` with Deployment, Service, HorizontalPodAutoscaler (CPU/memory), PodDisruptionBudget, ServiceAccount, and NetworkPolicy for shared-cluster deployment.
-- **Observability**: Request ID middleware (`X-Request-ID` on response and span); simple `/metrics` with request count; tracing via `TraceLayer`.
+- **Durable payment state verification**: Persistent facade tests now verify that checkout and payment lifecycle state survive restart, and the facade exposes stored payment state for reconciliation and operational diagnostics.
+- **Production config hardening**: Production startup now requires `PUBLIC_BASE_URL`, preventing discovery from advertising a localhost fallback in released deployments.
+- **AP2 strict validation**: Strict mode now validates a structured JSON consent proof with issuer, subject, mandate ID, payment handler match, signature presence, and expiry checks. Optional `AP2_TRUSTED_ISSUERS` support lets operators restrict accepted issuers.
 
-### Migration (library vs API)
+### Changed
 
-- Consumers can integrate via **library** (depend on `orchestrator-api` and implement provider traits) or **API** (call the deployed orchestrator HTTP service). See [Consumer integration](docs/consumer-integration.md).
+- **Deployment defaults**: Kubernetes manifests now default to a single replica to match the documented `ReadWriteOnce` persistence topology; scale-out requires compatible shared storage or a different persistence strategy.
+- **Payment state tracking**: Failed and policy-rejected checkout outcomes are now recorded in the payment-state store in addition to successful lifecycle transitions.
+- **Release and operator docs**: Deployment, reconciliation, AP2 conformance, and release checklist docs now reflect the stricter production requirements and `v0.2.0` acceptance gates.
+
+### Fixed
+
+- **Discovery safety**: Production mode no longer silently falls back to `http://127.0.0.1:<port>` for the discovery manifest.
+- **Release documentation drift**: The changelog and deployment guidance no longer claim that payment state is in-memory only.
+
+### Known limitations
+
+- File-backed persistence remains directory-based JSON and is still not suitable for high concurrency without external locking or shared-write storage support.
+- AP2 replay protection remains deferred; strict mode validates proof structure, issuer, handler binding, and expiry but does not yet deduplicate mandate reuse.
 
 ## [0.1.0] - 2025-03-04
 
@@ -36,7 +46,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Known limitations
 
-- Payment state store is in-memory only (not persisted across restarts with persistent runner).
 - File-backed persistence is directory-based JSON; not suitable for high concurrency without external locking.
 
+[0.2.0]: https://github.com/your-org/commerce-orchestrator/releases/tag/v0.2.0
 [0.1.0]: https://github.com/your-org/commerce-orchestrator/releases/tag/v0.1.0

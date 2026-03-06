@@ -23,7 +23,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let server_config = config::ServerConfig::load(config::default_config_path().as_deref())
         .map_err(|e| format!("config: {}", e))?;
 
-    let (facade, authn, allow_dev_auth) = if profile.is_production() {
+    let (facade, authn, allow_dev_auth, discovery_base_url) = if profile.is_production() {
         let prod = server_config
             .require_production()
             .map_err(|e| format!("production config: {}", e))?;
@@ -93,7 +93,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             prod.auth_tenant_id,
             prod.auth_caller_id,
         ));
-        (facade, Some(authn), false)
+        (facade, Some(authn), false, prod.public_base_url)
     } else {
         let catalog = Arc::new(MockCatalogProvider::default());
         let pricing = Arc::new(MockPricingProvider);
@@ -110,23 +110,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             catalog, pricing, tax, geo, payment, receipt, policy,
         )
         .with_ap2_strict(ap2_strict);
-        (facade, None, true)
+        let discovery_base_url = server_config
+            .server
+            .public_base_url
+            .clone()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| {
+                let port = server_config
+                    .server
+                    .bind_addr
+                    .rsplit(':')
+                    .next()
+                    .unwrap_or("8080");
+                format!("http://127.0.0.1:{}", port)
+            });
+        (facade, None, true, discovery_base_url)
     };
-
-    let discovery_base_url = server_config
-        .server
-        .public_base_url
-        .clone()
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| {
-            let port = server_config
-                .server
-                .bind_addr
-                .rsplit(':')
-                .next()
-                .unwrap_or("8080");
-            format!("http://127.0.0.1:{}", port)
-        });
     let state = AppState::new(facade)
         .production_mode(profile.is_production())
         .with_discovery_base_url(discovery_base_url);

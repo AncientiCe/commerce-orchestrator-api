@@ -281,8 +281,16 @@ impl ServerConfig {
         self.components.apply_env_overrides();
     }
 
-    /// Validate for production: persistence path, auth token, and all six component URLs required.
+    /// Validate for production: public base URL, persistence path, auth token, and all six
+    /// component URLs required.
     pub fn require_production(&self) -> Result<ProductionConfig, String> {
+        let public_base_url = self
+            .server
+            .public_base_url
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .ok_or("PUBLIC_BASE_URL (or server.public_base_url) required in production")?
+            .to_string();
         let persistence_path = self
             .persistence
             .path
@@ -299,6 +307,7 @@ impl ServerConfig {
             .to_string();
         let components = self.components.require_all()?;
         Ok(ProductionConfig {
+            public_base_url,
             persistence_path,
             auth_token,
             auth_tenant_id: self
@@ -320,6 +329,7 @@ impl ServerConfig {
 /// Validated production config: all required fields present.
 #[derive(Clone, Debug)]
 pub struct ProductionConfig {
+    pub public_base_url: String,
     pub persistence_path: String,
     pub auth_token: String,
     pub auth_tenant_id: String,
@@ -346,6 +356,7 @@ mod tests {
 
     fn production_ready_config() -> ServerConfig {
         let mut config = ServerConfig::default();
+        config.server.public_base_url = Some("https://orchestrator.example.com".into());
         config.persistence.path = Some("/data".into());
         config.auth.bearer_token = Some("token".into());
         config.components.catalog_base_url = Some("http://catalog:8080".into());
@@ -361,6 +372,7 @@ mod tests {
     fn require_production_succeeds_when_all_component_urls_set() {
         let config = production_ready_config();
         let prod = config.require_production().unwrap();
+        assert_eq!(prod.public_base_url, "https://orchestrator.example.com");
         assert_eq!(prod.persistence_path, "/data");
         assert_eq!(prod.auth_token, "token");
         assert_eq!(prod.components.catalog_base_url, "http://catalog:8080");
@@ -389,5 +401,13 @@ mod tests {
         config.auth.bearer_token = None;
         let err = config.require_production().unwrap_err();
         assert!(err.contains("AUTH_BEARER_TOKEN") || err.contains("bearer_token"));
+    }
+
+    #[test]
+    fn require_production_fails_when_public_base_url_missing() {
+        let mut config = production_ready_config();
+        config.server.public_base_url = None;
+        let err = config.require_production().unwrap_err();
+        assert!(err.contains("PUBLIC_BASE_URL") || err.contains("public_base_url"));
     }
 }

@@ -5,7 +5,7 @@ metadata:
   labels:
     app: orchestrator-api
 spec:
-  replicas: 2
+  replicas: 1
   strategy:
     type: RollingUpdate
     rollingUpdate:
@@ -34,7 +34,7 @@ spec:
             claimName: orchestrator-api-data
       containers:
         - name: orchestrator-server
-          image: orchestrator-api:0.1.0
+          image: orchestrator-api:0.2.0
           imagePullPolicy: IfNotPresent
           volumeMounts:
             - name: data

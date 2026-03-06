@@ -19,7 +19,7 @@ Status values: **required** (must pass for claimed alignment), **optional** (sup
 
 | Capability | Status | Acceptance Criteria | Evidence |
 |-------------|--------|---------------------|----------|
-| Well-known discovery endpoint | required | `GET /.well-known/ucp` returns JSON manifest with version, services, capabilities, rest_endpoint | `orchestrator_http::discovery` tests |
+| Well-known discovery endpoint | required | `GET /.well-known/ucp` returns JSON manifest with version, services, capabilities, and a non-localhost production `rest_endpoint` | `orchestrator_http::discovery` tests, production config tests |
 | Capability IDs | required | Manifest advertises `dev.ucp.shopping.checkout` and `dev.ucp.shopping.discount` with version and extends | Same |
 | Advertised capabilities map to implemented routes | required | Every capability in manifest has a corresponding executable operation (cart/checkout, payments) | Conformance test: capability_route_parity |
 
@@ -46,15 +46,15 @@ Status values: **required** (must pass for claimed alignment), **optional** (sup
 |-------------|--------|---------------------|----------|
 | Payment intent fields | required | CheckoutRequest.payment_intent accepts payment_handler_id and ap2_consent_proof; validation rejects empty handler_id when provided | contract.rs, validation.rs, authz_and_adapters |
 | AP2 metadata extraction | required | extract_ap2_metadata(request) returns handler_id and consent_proof for logging/audit without PII | adapters.rs, pii.rs, authz_and_adapters |
-| Mandate/credential verification (strict mode) | required when AP2 mode enabled | When AP2_STRICT=1 or equivalent: verify mandate/VDC signature, issuer trust, expiry; reject on invalid or missing required artifacts | ap2_verification tests |
-| Replay protection for mandates | optional | Nonce or mandate-id deduplication to prevent replay | Future |
+| Mandate/credential verification (strict mode) | required when AP2 mode enabled | When AP2_STRICT=1 or equivalent: verify structured consent proof fields, signature presence, issuer trust policy, expiry, and payment_handler binding; reject on invalid or missing required artifacts | ap2_verification tests |
+| Replay protection for mandates | optional | Nonce or mandate-id deduplication to prevent replay | Deferred; not yet implemented |
 
 ## Acceptance Criteria (Summary)
 
 1. **Discovery**: A client can GET `/.well-known/ucp` and learn the orchestrator's capabilities and REST base URL; every advertised capability is implemented.
 2. **REST**: All documented cart, checkout, and payment endpoints behave as in the consumption guide; auth and tenant checks enforced.
 3. **A2A/MCP**: Adapter layer converts A2A (and optionally MCP) requests into domain types and executes via the same facade; policy and idempotency unchanged.
-4. **AP2**: Payment intent carries AP2-related fields; when strict AP2 mode is on, mandate/credential verification runs and fails closed on invalid or missing artifacts.
+4. **AP2**: Payment intent carries AP2-related fields; when strict AP2 mode is on, structured consent proof verification runs and fails closed on invalid, expired, untrusted, or mismatched artifacts.
 
 ## Machine-Readable Conformance (for CI)
 

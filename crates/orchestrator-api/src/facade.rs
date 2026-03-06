@@ -3,7 +3,7 @@
 use crate::ap2_verification::{verify_ap2_strict, Ap2VerificationError};
 use crate::authz::{authorize_checkout, AuthContext, AuthzError};
 use orchestrator_core::contract::{
-    CartCommand, CartId, CartProjection, CheckoutRequest, PaymentLifecycleRequest,
+    CartCommand, CartId, CartProjection, CheckoutRequest, PaymentLifecycleRequest, PaymentState,
     TransactionResult,
 };
 use orchestrator_core::policy::PolicyEngine;
@@ -46,7 +46,8 @@ impl OrchestratorFacade {
         }
     }
 
-    /// Enable AP2 strict mode: checkout will fail with Ap2Verification error if ap2_consent_proof or payment_handler_id is missing.
+    /// Enable AP2 strict mode: checkout will fail if the request is missing a payment handler
+    /// or if the consent proof is missing, malformed, expired, or bound to a different handler.
     pub fn with_ap2_strict(mut self, strict: bool) -> Self {
         self.ap2_strict = strict;
         self
@@ -151,6 +152,11 @@ impl OrchestratorFacade {
         transaction_ids: &[String],
     ) -> orchestrator_runtime::ReconciliationReport {
         self.runner.run_reconciliation(transaction_ids).await
+    }
+
+    /// Read our stored payment state for one transaction.
+    pub async fn get_payment_state(&self, transaction_id: &str) -> Option<PaymentState> {
+        self.runner.get_payment_state(transaction_id).await
     }
 
     /// Process one outbox message; after max_attempts failures it is moved to dead-letter.

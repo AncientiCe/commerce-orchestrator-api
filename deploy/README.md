@@ -15,17 +15,17 @@ Files:
 - `configmap.yaml` – non-sensitive config (ENV, BIND_ADDR, RUST_LOG, PERSISTENCE_PATH, and all six component base URLs).
 - `secret.yaml` – sensitive values (AUTH_BEARER_TOKEN, AUTH_TENANT_ID, AUTH_CALLER_ID). Replace placeholder before apply or create the secret manually.
 - `serviceaccount.yaml` – ServiceAccount for the deployment.
-- `pvc.yaml` – PersistentVolumeClaim for `/data` (PERSISTENCE_PATH). Apply before the Deployment. Uses ReadWriteOnce; for multiple replicas use a ReadWriteMany storage class or run a single replica.
+- `pvc.yaml` – PersistentVolumeClaim for `/data` (PERSISTENCE_PATH). Apply before the Deployment. Uses ReadWriteOnce; the shipped manifests assume a single replica unless you swap in shared-write storage.
 - `deployment.yaml` – Deployment; env from ConfigMap and Secret via `envFrom`; mounts PVC at `/data`.
 - `service.yaml` – ClusterIP Service.
-- `hpa.yaml` – HorizontalPodAutoscaler.
+- `hpa.yaml` – HorizontalPodAutoscaler. Defaults to `minReplicas: 1` so autoscaling does not violate the default persistence topology.
 - `pdb.yaml` – PodDisruptionBudget.
 - `network-policy.yaml` – NetworkPolicy (ingress/egress rules).
 
 Override image:
 
 ```bash
-kubectl set image deployment/orchestrator-api orchestrator-server=your-registry/orchestrator-api:0.1.0
+kubectl set image deployment/orchestrator-api orchestrator-server=your-registry/orchestrator-api:0.2.0
 ```
 
 ## Environment
@@ -37,6 +37,7 @@ kubectl set image deployment/orchestrator-api orchestrator-server=your-registry/
 
 Set `ENV=production` and provide (all required in production):
 
+- `PUBLIC_BASE_URL`: Public HTTPS base URL advertised in `/.well-known/ucp` discovery (for example `https://orchestrator.example.com`).
 - `PERSISTENCE_PATH` or `DATA_DIR`: Directory for file-backed stores (mount a PVC).
 - `AUTH_BEARER_TOKEN`: Secret token for API auth; clients must send `Authorization: Bearer <token>`.
 - All six downstream component base URLs (no trailing slash):
@@ -47,7 +48,7 @@ Set `ENV=production` and provide (all required in production):
   - `PAYMENT_BASE_URL` – payment service.
   - `RECEIPT_BASE_URL` – receipt service.
 
-Optional: `AUTH_TENANT_ID`, `AUTH_CALLER_ID` (default `prod`).
+Optional: `AUTH_TENANT_ID`, `AUTH_CALLER_ID` (default `prod`), `AP2_TRUSTED_ISSUERS` (comma-separated allowlist for strict AP2 issuer checks).
 
 Config is loaded from the ConfigMap and Secret in Kubernetes (see `configmap.yaml` and `secret.yaml`). Edit the ConfigMap to point each `*_BASE_URL` to your actual service endpoints.
 
@@ -86,7 +87,7 @@ kubectl rollout undo deployment/orchestrator-api
 kubectl rollout status deployment/orchestrator-api
 ```
 
-For a canary, deploy a second Deployment with a different image tag and selector, then shift traffic (e.g. via Service selector or ingress weights) before promoting.
+For a canary, deploy a second Deployment with a different image tag and selector, then shift traffic (e.g. via Service selector or ingress weights) before promoting. Keep the persistent store topology consistent during canaries; do not run two writers against the default `ReadWriteOnce` volume.
 
 ## Persistence, backup and restore
 

@@ -112,6 +112,7 @@ The orchestrator is a middleware API layer. Operators configure where each downs
 | Variable | Description |
 |----------|-------------|
 | `ENV` | `production` to enable auth and real adapters. |
+| `PUBLIC_BASE_URL` | Public base URL advertised in discovery (e.g. `https://orchestrator.example.com`). |
 | `PERSISTENCE_PATH` | Directory for file-backed stores (e.g. `/data`). |
 | `AUTH_BEARER_TOKEN` | Secret token; clients send `Authorization: Bearer <token>`. |
 | `CATALOG_BASE_URL` | Catalog service base URL (e.g. `http://catalog-service:8080`). |
@@ -121,9 +122,9 @@ The orchestrator is a middleware API layer. Operators configure where each downs
 | `PAYMENT_BASE_URL` | Payment service base URL. |
 | `RECEIPT_BASE_URL` | Receipt service base URL. |
 
-Optional: `AUTH_TENANT_ID`, `AUTH_CALLER_ID` (default `prod`). Config can be loaded from a file (`CONFIG_FILE` or `config.yaml`) with env overrides.
+Optional: `AUTH_TENANT_ID`, `AUTH_CALLER_ID` (default `prod`), `AP2_TRUSTED_ISSUERS` (comma-separated allowlist for strict AP2 issuer checks). Config can be loaded from a file (`CONFIG_FILE` or `config.yaml`) with env overrides.
 
 ## Next steps
 
 - Deploy the orchestrator using [deploy/README.md](../deploy/README.md) and configure all six component base URLs so the service can call your catalog, pricing, tax, geo, payment, and receipt APIs.
-- In production, set `ENV=production`, `PERSISTENCE_PATH`, `AUTH_BEARER_TOKEN`, and use that token in the `Authorization` header from your clients.
+- In production, set `ENV=production`, `PUBLIC_BASE_URL`, `PERSISTENCE_PATH`, `AUTH_BEARER_TOKEN`, and use that token in the `Authorization` header from your clients.

@@ -2,13 +2,14 @@
 
 ## Overview
 
-Reconciliation compares the orchestrator’s view of payment state (per transaction) with the payment provider’s view (when the provider implements `get_payment_state`). Use it to detect drift (e.g. captured in our store but voided at the provider).
+Reconciliation compares the orchestrator’s durable view of payment state (per transaction) with the payment provider’s view (when the provider implements `get_payment_state`). In `v0.2.0`, the persistent facade keeps payment state across restart for checkout outcomes and lifecycle transitions. Use reconciliation to detect drift (e.g. captured in our store but voided at the provider).
 
 ## Running reconciliation
 
 1. Collect transaction IDs to reconcile (e.g. from your orders or time window).
 2. Call `facade.run_reconciliation(&transaction_ids).await`.
 3. Inspect `report.mismatches`: each entry has `transaction_id`, `our_state`, and `provider_state` (if the provider returned a state).
+4. If you need to inspect one transaction directly, read the stored state through the facade before or after a restart and compare it with provider telemetry.
 
 ## Handling mismatches
 
