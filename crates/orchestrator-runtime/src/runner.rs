@@ -1,7 +1,7 @@
 //! Orchestration runner: cart lifecycle + checkout execution.
 
 use crate::commit::InMemoryCommitStore;
-use crate::effects::{DeadLetter, InboxDedupe, Outbox, OutboxMessage};
+use crate::effects::{DeadLetter, InMemoryMandateDedupeStore, InboxDedupe, Outbox, OutboxMessage};
 use crate::events::CartStreamEvent;
 use crate::idempotency::{IdempotencyKey, IdempotencyState, InMemoryIdempotencyStore};
 use crate::inventory::InMemoryReservationStore;
@@ -114,6 +114,7 @@ pub struct Runner {
     dead_letter: Arc<dyn DeadLetterStore>,
     order_store: Arc<dyn OrderStore>,
     payment_state_store: Arc<dyn PaymentStateStore>,
+    mandate_dedupe_store: Arc<dyn MandateDedupeStore>,
     policy: PolicyEngine,
     outbox_deliverer: Option<Arc<dyn OutboxDeliverer>>,
 }
@@ -133,6 +134,7 @@ impl Runner {
             Arc::new(DeadLetter::default()),
             Arc::new(InMemoryOrderStore::default()),
             Arc::new(InMemoryPaymentStateStore::default()),
+            Arc::new(InMemoryMandateDedupeStore::default()),
             None,
         )
     }
@@ -155,6 +157,31 @@ impl Runner {
             dead_letter: stores.dead_letter(),
             order_store: stores.order_store(),
             payment_state_store: stores.payment_state_store(),
+            mandate_dedupe_store: stores.mandate_dedupe_store(),
+            policy,
+            outbox_deliverer: None,
+        })
+    }
+
+    /// Create a runner with persistent PostgreSQL-backed stores.
+    pub async fn new_postgres(
+        providers: ProviderSet,
+        policy: PolicyEngine,
+        database_url: &str,
+    ) -> Result<Self, std::io::Error> {
+        let stores = persistence::open_postgres_stores(database_url).await?;
+        Ok(Self {
+            providers,
+            event_store: stores.event_store(),
+            idempotency: stores.idempotency(),
+            commit_store: stores.commit_store(),
+            reservation_store: stores.reservation_store(),
+            outbox: stores.outbox(),
+            inbox: stores.inbox(),
+            dead_letter: stores.dead_letter(),
+            order_store: stores.order_store(),
+            payment_state_store: stores.payment_state_store(),
+            mandate_dedupe_store: stores.mandate_dedupe_store(),
             policy,
             outbox_deliverer: None,
         })
@@ -173,6 +200,7 @@ impl Runner {
         dead_letter: Arc<dyn DeadLetterStore>,
         order_store: Arc<dyn OrderStore>,
         payment_state_store: Arc<dyn PaymentStateStore>,
+        mandate_dedupe_store: Arc<dyn MandateDedupeStore>,
         outbox_deliverer: Option<Arc<dyn OutboxDeliverer>>,
     ) -> Self {
         Self {
@@ -186,6 +214,7 @@ impl Runner {
             dead_letter,
             order_store,
             payment_state_store,
+            mandate_dedupe_store,
             policy,
             outbox_deliverer,
         }
@@ -309,18 +338,19 @@ impl Runner {
             }
             CartCommand::ApplyAdjustment(payload) => {
                 let id = cart_id.ok_or(RunnerError::MissingCartId)?;
-                let projection = self
+                let mut projection = self
                     .event_store
                     .get_cart_snapshot(&id)
                     .await
                     .ok_or(RunnerError::CartNotFound)?;
-                self.event_store
-                    .append_cart_event(
-                        id,
-                        CartStreamEvent::AdjustmentApplied { code: payload.code },
-                    )
-                    .await?;
-                Ok(projection)
+                self.validate_adjustment(&payload.code).await?;
+                projection.version += 1;
+                self.mutate_and_recalculate(
+                    id,
+                    projection,
+                    CartStreamEvent::AdjustmentApplied { code: payload.code },
+                )
+                .await
             }
             CartCommand::GetCart(payload) => self
                 .event_store
@@ -695,6 +725,18 @@ impl Runner {
         self.payment_state_store.get(transaction_id).await
     }
 
+    /// Record an AP2 mandate id as seen until expiry. Returns false on replay.
+    pub async fn record_mandate(
+        &self,
+        mandate_id: &str,
+        expires_at: i64,
+    ) -> Result<bool, RunnerError> {
+        Ok(self
+            .mandate_dedupe_store
+            .record_mandate(mandate_id, expires_at)
+            .await?)
+    }
+
     async fn mutate_and_recalculate(
         &self,
         cart_id: CartId,
@@ -788,6 +830,18 @@ impl Runner {
             .ok_or(RunnerError::CartNotFound)?;
         let next = next_cart_state(current, event).ok_or(RunnerError::InvalidStateTransition)?;
         self.event_store.set_cart_state(cart_id, next).await?;
+        Ok(())
+    }
+
+    async fn validate_adjustment(&self, code: &str) -> Result<(), RunnerError> {
+        // Item-level discount codes are encoded as `item:<item_id>:<campaign>`.
+        if let Some(item_id) = code
+            .strip_prefix("item:")
+            .and_then(|rest| rest.split(':').next())
+            .filter(|item| !item.is_empty())
+        {
+            self.providers.catalog.get_item(item_id).await?;
+        }
         Ok(())
     }
 }

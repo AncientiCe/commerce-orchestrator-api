@@ -1,0 +1,4 @@
+CREATE TABLE IF NOT EXISTS commits (
+  cart_id TEXT PRIMARY KEY,
+  record JSONB NOT NULL
+);

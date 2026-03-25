@@ -47,7 +47,7 @@ Status values: **required** (must pass for claimed alignment), **optional** (sup
 | Payment intent fields | required | CheckoutRequest.payment_intent accepts payment_handler_id and ap2_consent_proof; validation rejects empty handler_id when provided | contract.rs, validation.rs, authz_and_adapters |
 | AP2 metadata extraction | required | extract_ap2_metadata(request) returns handler_id and consent_proof for logging/audit without PII | adapters.rs, pii.rs, authz_and_adapters |
 | Mandate/credential verification (strict mode) | required when AP2 mode enabled | When AP2_STRICT=1 or equivalent: verify structured consent proof fields, signature presence, issuer trust policy, expiry, and payment_handler binding; reject on invalid or missing required artifacts | ap2_verification tests |
-| Replay protection for mandates | optional | Nonce or mandate-id deduplication to prevent replay | Deferred; not yet implemented |
+| Replay protection for mandates | required | Mandate ID deduplication prevents AP2 consent proof replay until mandate expiry | `authz_and_adapters` replay test; runtime `MandateDedupeStore` |
 
 ## Acceptance Criteria (Summary)
 

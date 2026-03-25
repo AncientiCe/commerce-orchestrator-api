@@ -76,8 +76,21 @@ async fn metrics_returns_request_count() {
     let _ = server.get("/health/live").await;
     let response = server.get("/metrics").await;
     response.assert_status_ok();
+    let body = response.text();
+    assert!(body.contains("orchestrator_events_total"));
+    assert!(body.contains("http_requests_total"));
+}
+
+#[tokio::test]
+async fn openapi_endpoint_returns_json_document() {
+    let state = test_state();
+    let app = app::app().with_state(state);
+    let server = TestServer::new(app).unwrap();
+
+    let response = server.get("/api/v1/openapi.json").await;
+    response.assert_status_ok();
     let json: serde_json::Value = response.json();
-    assert!(json.get("http_requests_total").is_some());
+    assert_eq!(json.get("openapi").and_then(|v| v.as_str()), Some("3.1.0"));
 }
 
 #[tokio::test]

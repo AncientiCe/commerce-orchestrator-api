@@ -1,8 +1,5 @@
 //! Tracing span and metrics helpers.
 
-use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::Mutex;
 use tracing::Span;
 
 /// Attach correlation ID to current span.
@@ -11,17 +8,23 @@ pub fn set_correlation_id(span: &Span, correlation_id: uuid::Uuid) {
 }
 
 #[derive(Clone, Default)]
-pub struct Metrics {
-    counts: Arc<Mutex<HashMap<String, u64>>>,
-}
+pub struct Metrics;
 
 impl Metrics {
     pub async fn incr(&self, name: &str) {
-        let mut guard = self.counts.lock().await;
-        *guard.entry(name.to_string()).or_insert(0) += 1;
+        crate::metrics::incr(name);
     }
 
-    pub async fn snapshot(&self) -> HashMap<String, u64> {
-        self.counts.lock().await.clone()
+    pub async fn snapshot(&self) -> std::collections::HashMap<String, u64> {
+        let mut map = std::collections::HashMap::new();
+        map.insert(
+            "http_requests_total".to_string(),
+            crate::metrics::get_count("http_requests_total"),
+        );
+        map.insert(
+            "http_errors_total".to_string(),
+            crate::metrics::get_count("http_errors_total"),
+        );
+        map
     }
 }

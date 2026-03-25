@@ -59,6 +59,7 @@ pub struct PersistentStores {
     dead_letter: std::sync::Arc<dyn DeadLetterStore>,
     order_store: std::sync::Arc<dyn OrderStore>,
     payment_state_store: std::sync::Arc<dyn PaymentStateStore>,
+    mandate_dedupe_store: std::sync::Arc<dyn MandateDedupeStore>,
 }
 
 impl PersistentStores {
@@ -89,6 +90,9 @@ impl PersistentStores {
     pub fn payment_state_store(&self) -> std::sync::Arc<dyn PaymentStateStore> {
         std::sync::Arc::clone(&self.payment_state_store)
     }
+    pub fn mandate_dedupe_store(&self) -> std::sync::Arc<dyn MandateDedupeStore> {
+        std::sync::Arc::clone(&self.mandate_dedupe_store)
+    }
 }
 
 /// Open or create persistent stores at the given directory.
@@ -117,6 +121,8 @@ pub async fn open_persistent_stores(
     let payment_state_store: std::sync::Arc<dyn PaymentStateStore> = std::sync::Arc::new(
         FileBackedPaymentStateStore::open(base.join("payment_state.json")).await?,
     );
+    let mandate_dedupe_store: std::sync::Arc<dyn MandateDedupeStore> =
+        std::sync::Arc::new(FileBackedMandateDedupeStore::open(base.join("mandates.json")).await?);
     Ok(PersistentStores {
         base,
         event_store,
@@ -128,6 +134,7 @@ pub async fn open_persistent_stores(
         dead_letter,
         order_store,
         payment_state_store,
+        mandate_dedupe_store,
     })
 }
 
@@ -665,11 +672,54 @@ impl PaymentStateStore for FileBackedPaymentStateStore {
         let mut guard = self.inner.write().await;
         guard.insert(transaction_id, state);
         drop(guard);
-        let _ = self.save().await;
+        if let Err(error) = self.save().await {
+            eprintln!("failed to persist payment state: {}", error);
+        }
     }
     async fn get(&self, transaction_id: &str) -> Option<PaymentState> {
         let guard = self.inner.read().await;
         guard.get(transaction_id).copied()
+    }
+}
+
+// --- FileBackedMandateDedupeStore ---
+
+#[derive(Clone)]
+struct FileBackedMandateDedupeStore {
+    path: std::path::PathBuf,
+    seen: std::sync::Arc<tokio::sync::RwLock<std::collections::HashMap<String, i64>>>,
+}
+
+impl FileBackedMandateDedupeStore {
+    async fn open(path: std::path::PathBuf) -> Result<Self, std::io::Error> {
+        let seen = load_json::<std::collections::HashMap<String, i64>>(&path)
+            .await
+            .unwrap_or_default();
+        Ok(Self {
+            path,
+            seen: std::sync::Arc::new(tokio::sync::RwLock::new(seen)),
+        })
+    }
+
+    async fn save(&self) -> Result<(), std::io::Error> {
+        let guard = self.seen.read().await;
+        save_json(&self.path, &*guard).await
+    }
+}
+
+#[async_trait]
+impl MandateDedupeStore for FileBackedMandateDedupeStore {
+    async fn record_mandate(&self, mandate_id: &str, expires_at: i64) -> Result<bool, StoreError> {
+        let mut guard = self.seen.write().await;
+        let now = chrono::Utc::now().timestamp();
+        guard.retain(|_, expiry| *expiry > now);
+        if guard.contains_key(mandate_id) {
+            return Ok(false);
+        }
+        guard.insert(mandate_id.to_string(), expires_at);
+        drop(guard);
+        self.save().await?;
+        Ok(true)
     }
 }
 

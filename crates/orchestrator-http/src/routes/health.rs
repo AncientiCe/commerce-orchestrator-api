@@ -15,22 +15,28 @@ pub struct ReadyResponse {
     pub status: &'static str,
 }
 
-#[derive(Serialize)]
-pub struct MetricsResponse {
-    pub http_requests_total: u64,
-    pub http_errors_total: u64,
-}
-
-/// GET /metrics - request count and error count for basic RED-style monitoring.
+/// GET /metrics - Prometheus text exposition format.
 pub async fn metrics() -> impl IntoResponse {
-    use crate::observability::{get_error_count, get_request_count};
-    (
-        axum::http::StatusCode::OK,
-        axum::Json(MetricsResponse {
-            http_requests_total: get_request_count(),
-            http_errors_total: get_error_count(),
-        }),
-    )
+    match orchestrator_observability::render_prometheus() {
+        Ok(body) => (
+            StatusCode::OK,
+            [(
+                axum::http::header::CONTENT_TYPE,
+                "text/plain; version=0.0.4",
+            )],
+            body,
+        )
+            .into_response(),
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            [(
+                axum::http::header::CONTENT_TYPE,
+                "text/plain; charset=utf-8",
+            )],
+            format!("metrics render failed: {}", error),
+        )
+            .into_response(),
+    }
 }
 
 /// GET /health/live - liveness probe (process is running).

@@ -206,7 +206,10 @@ fn default_log_level() -> String {
 
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct AuthSection {
+    pub mode: Option<String>,
     pub bearer_token: Option<String>,
+    pub jwt_hs256_secret: Option<String>,
+    pub trusted_issuers: Option<String>,
     pub tenant_id: Option<String>,
     pub caller_id: Option<String>,
 }
@@ -214,6 +217,7 @@ pub struct AuthSection {
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct PersistenceSection {
     pub path: Option<String>,
+    pub database_url: Option<String>,
 }
 
 impl ServerConfig {
@@ -260,10 +264,34 @@ impl ServerConfig {
                 self.persistence.path = Some(t);
             }
         }
+        if let Ok(v) = std::env::var("DATABASE_URL") {
+            let t = v.trim().to_string();
+            if !t.is_empty() {
+                self.persistence.database_url = Some(t);
+            }
+        }
         if let Ok(v) = std::env::var("AUTH_BEARER_TOKEN") {
             let t = v.trim().to_string();
             if !t.is_empty() {
                 self.auth.bearer_token = Some(t);
+            }
+        }
+        if let Ok(v) = std::env::var("AUTH_MODE") {
+            let t = v.trim().to_string();
+            if !t.is_empty() {
+                self.auth.mode = Some(t);
+            }
+        }
+        if let Ok(v) = std::env::var("AUTH_JWT_HS256_SECRET") {
+            let t = v.trim().to_string();
+            if !t.is_empty() {
+                self.auth.jwt_hs256_secret = Some(t);
+            }
+        }
+        if let Ok(v) = std::env::var("AP2_TRUSTED_ISSUERS") {
+            let t = v.trim().to_string();
+            if !t.is_empty() {
+                self.auth.trusted_issuers = Some(t);
             }
         }
         if let Ok(v) = std::env::var("AUTH_TENANT_ID") {
@@ -281,7 +309,7 @@ impl ServerConfig {
         self.components.apply_env_overrides();
     }
 
-    /// Validate for production: public base URL, persistence path, auth token, and all six
+    /// Validate for production: public base URL, database URL, auth token, and all six
     /// component URLs required.
     pub fn require_production(&self) -> Result<ProductionConfig, String> {
         let public_base_url = self
@@ -291,25 +319,41 @@ impl ServerConfig {
             .filter(|s| !s.is_empty())
             .ok_or("PUBLIC_BASE_URL (or server.public_base_url) required in production")?
             .to_string();
-        let persistence_path = self
+        let database_url = self
             .persistence
-            .path
+            .database_url
             .as_deref()
             .filter(|s| !s.is_empty())
-            .ok_or("PERSISTENCE_PATH or DATA_DIR (or persistence.path) required in production")?
+            .ok_or("DATABASE_URL (or persistence.database_url) required in production")?
             .to_string();
-        let auth_token = self
+        let auth_mode = self
             .auth
-            .bearer_token
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .ok_or("AUTH_BEARER_TOKEN (or auth.bearer_token) required in production")?
-            .to_string();
+            .mode
+            .clone()
+            .unwrap_or_else(|| "static".to_string())
+            .to_lowercase();
+        let auth_token = if auth_mode == "jwt" {
+            self.auth
+                .jwt_hs256_secret
+                .as_deref()
+                .filter(|s| !s.is_empty())
+                .ok_or("AUTH_JWT_HS256_SECRET (or auth.jwt_hs256_secret) required in production when AUTH_MODE=jwt")?
+                .to_string()
+        } else {
+            self.auth
+                .bearer_token
+                .as_deref()
+                .filter(|s| !s.is_empty())
+                .ok_or("AUTH_BEARER_TOKEN (or auth.bearer_token) required in production")?
+                .to_string()
+        };
         let components = self.components.require_all()?;
         Ok(ProductionConfig {
             public_base_url,
-            persistence_path,
+            database_url,
+            auth_mode,
             auth_token,
+            trusted_issuers: self.auth.trusted_issuers.clone().unwrap_or_default(),
             auth_tenant_id: self
                 .auth
                 .tenant_id
@@ -330,8 +374,10 @@ impl ServerConfig {
 #[derive(Clone, Debug)]
 pub struct ProductionConfig {
     pub public_base_url: String,
-    pub persistence_path: String,
+    pub database_url: String,
+    pub auth_mode: String,
     pub auth_token: String,
+    pub trusted_issuers: String,
     pub auth_tenant_id: String,
     pub auth_caller_id: String,
     pub components: ResolvedComponents,
@@ -357,7 +403,8 @@ mod tests {
     fn production_ready_config() -> ServerConfig {
         let mut config = ServerConfig::default();
         config.server.public_base_url = Some("https://orchestrator.example.com".into());
-        config.persistence.path = Some("/data".into());
+        config.persistence.database_url =
+            Some("postgres://orchestrator:secret@localhost:5432/orchestrator".into());
         config.auth.bearer_token = Some("token".into());
         config.components.catalog_base_url = Some("http://catalog:8080".into());
         config.components.pricing_base_url = Some("http://pricing:8080".into());
@@ -373,7 +420,11 @@ mod tests {
         let config = production_ready_config();
         let prod = config.require_production().unwrap();
         assert_eq!(prod.public_base_url, "https://orchestrator.example.com");
-        assert_eq!(prod.persistence_path, "/data");
+        assert_eq!(
+            prod.database_url,
+            "postgres://orchestrator:secret@localhost:5432/orchestrator"
+        );
+        assert_eq!(prod.auth_mode, "static");
         assert_eq!(prod.auth_token, "token");
         assert_eq!(prod.components.catalog_base_url, "http://catalog:8080");
         assert_eq!(prod.components.receipt_base_url, "http://receipt:8080");
@@ -390,9 +441,9 @@ mod tests {
     #[test]
     fn require_production_fails_when_persistence_missing() {
         let mut config = production_ready_config();
-        config.persistence.path = None;
+        config.persistence.database_url = None;
         let err = config.require_production().unwrap_err();
-        assert!(err.contains("PERSISTENCE_PATH") || err.contains("persistence"));
+        assert!(err.contains("DATABASE_URL") || err.contains("database_url"));
     }
 
     #[test]
@@ -401,6 +452,17 @@ mod tests {
         config.auth.bearer_token = None;
         let err = config.require_production().unwrap_err();
         assert!(err.contains("AUTH_BEARER_TOKEN") || err.contains("bearer_token"));
+    }
+
+    #[test]
+    fn require_production_uses_jwt_secret_when_mode_is_jwt() {
+        let mut config = production_ready_config();
+        config.auth.mode = Some("jwt".into());
+        config.auth.jwt_hs256_secret = Some("secret".into());
+        config.auth.bearer_token = None;
+        let prod = config.require_production().unwrap();
+        assert_eq!(prod.auth_mode, "jwt");
+        assert_eq!(prod.auth_token, "secret");
     }
 
     #[test]

@@ -1,6 +1,8 @@
 //! Library facade: single entrypoint for agents/apps.
 
-use crate::ap2_verification::{verify_ap2_strict, Ap2VerificationError};
+use crate::ap2_verification::{
+    extract_ap2_mandate_record, verify_ap2_strict, Ap2VerificationError,
+};
 use crate::authz::{authorize_checkout, AuthContext, AuthzError};
 use orchestrator_core::contract::{
     CartCommand, CartId, CartProjection, CheckoutRequest, PaymentLifecycleRequest, PaymentState,
@@ -80,6 +82,33 @@ impl OrchestratorFacade {
         })
     }
 
+    /// Create a facade with PostgreSQL-backed stores (for production).
+    #[allow(clippy::too_many_arguments)]
+    pub async fn new_postgres(
+        catalog: Arc<dyn CatalogProvider>,
+        pricing: Arc<dyn PricingProvider>,
+        tax: Arc<dyn TaxProvider>,
+        geo: Arc<dyn GeoProvider>,
+        payment: Arc<dyn PaymentProvider>,
+        receipt: Arc<dyn ReceiptProvider>,
+        policy: PolicyEngine,
+        database_url: &str,
+    ) -> Result<Self, std::io::Error> {
+        let providers = ProviderSet {
+            catalog,
+            pricing,
+            tax,
+            geo,
+            payment,
+            receipt,
+        };
+        let runner = Runner::new_postgres(providers, policy, database_url).await?;
+        Ok(Self {
+            runner,
+            ap2_strict: false,
+        })
+    }
+
     /// Dispatch a cart command.
     pub async fn dispatch_cart_command(
         &self,
@@ -99,6 +128,18 @@ impl OrchestratorFacade {
     ) -> Result<TransactionResult, FacadeError> {
         if self.ap2_strict {
             verify_ap2_strict(&request).map_err(FacadeError::Ap2Verification)?;
+            let record =
+                extract_ap2_mandate_record(&request).map_err(FacadeError::Ap2Verification)?;
+            let accepted = self
+                .runner
+                .record_mandate(&record.mandate_id, record.expires_at)
+                .await
+                .map_err(FacadeError::Runner)?;
+            if !accepted {
+                return Err(FacadeError::Ap2Verification(Ap2VerificationError(
+                    "AP2 strict mode: mandate replay detected".to_string(),
+                )));
+            }
         }
         self.runner
             .execute_checkout(request)

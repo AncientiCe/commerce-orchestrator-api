@@ -1,7 +1,7 @@
 //! Binary entrypoint for the orchestrator HTTP server.
 //!
 //! Config: file-first (CONFIG_FILE or config.yaml) with env overrides.
-//! Production: ENV=production and all required vars (PERSISTENCE_PATH, AUTH_BEARER_TOKEN, and all six component base URLs).
+//! Production: ENV=production and all required vars (DATABASE_URL, AUTH_BEARER_TOKEN, and all six component base URLs).
 //! Development: default; uses mocks and allows unauthenticated dev context.
 
 use std::net::SocketAddr;
@@ -75,7 +75,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             std::env::var("AP2_STRICT").as_deref(),
             Ok("1") | Ok("true") | Ok("yes")
         );
-        let facade = orchestrator_api::OrchestratorFacade::new_persistent(
+        let facade = orchestrator_api::OrchestratorFacade::new_postgres(
             catalog,
             pricing,
             tax,
@@ -83,16 +83,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             payment,
             receipt,
             policy,
-            &prod.persistence_path,
+            &prod.database_url,
         )
         .await
-        .map_err(|e| format!("persistent facade: {}", e))?
+        .map_err(|e| format!("postgres facade: {}", e))?
         .with_ap2_strict(ap2_strict);
-        let authn = Arc::new(StaticTokenAuthnResolver::new(
-            prod.auth_token,
-            prod.auth_tenant_id,
-            prod.auth_caller_id,
-        ));
+        let authn: Arc<dyn orchestrator_api::AuthnResolver> = if prod.auth_mode == "jwt" {
+            let trusted_issuers = prod
+                .trusted_issuers
+                .split(',')
+                .filter_map(|issuer| {
+                    let trimmed = issuer.trim();
+                    (!trimmed.is_empty()).then(|| trimmed.to_string())
+                })
+                .collect::<Vec<_>>();
+            Arc::new(orchestrator_api::JwtAuthnResolver::new_hs256(
+                &prod.auth_token,
+                trusted_issuers,
+            ))
+        } else {
+            Arc::new(StaticTokenAuthnResolver::new(
+                prod.auth_token,
+                prod.auth_tenant_id,
+                prod.auth_caller_id,
+            ))
+        };
         (facade, Some(authn), false, prod.public_base_url)
     } else {
         let catalog = Arc::new(MockCatalogProvider::default());

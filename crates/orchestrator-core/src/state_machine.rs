@@ -38,7 +38,9 @@ pub fn next_cart_state(current: CartState, event: CartEvent) -> Option<CartState
         | (S::Repriced, E::MarkCheckoutReady)
         | (S::Retaxed, E::MarkCheckoutReady) => Some(S::CheckoutReady),
         (S::GeoChecked, E::MarkCheckoutReady) => Some(S::CheckoutReady),
-        (S::CheckoutReady, E::ItemChanged) => Some(S::ItemsMutated),
+        (S::GeoChecked, E::ItemChanged) | (S::CheckoutReady, E::ItemChanged) => {
+            Some(S::ItemsMutated)
+        }
         _ => None,
     }
 }

@@ -6,14 +6,10 @@ use axum::{
     middleware::Next,
     response::Response,
 };
-use std::sync::atomic::{AtomicU64, Ordering};
 use tracing::Span;
 use uuid::Uuid;
 
 const X_REQUEST_ID: &str = "x-request-id";
-
-static REQUEST_COUNT: AtomicU64 = AtomicU64::new(0);
-static ERROR_COUNT: AtomicU64 = AtomicU64::new(0);
 
 /// Middleware that sets or propagates X-Request-ID and records it on the tracing span.
 pub async fn request_id_middleware(request: Request, next: Next) -> Response {
@@ -24,9 +20,11 @@ pub async fn request_id_middleware(request: Request, next: Next) -> Response {
         .map(String::from)
         .unwrap_or_else(|| Uuid::new_v4().to_string());
     Span::current().record("request_id", tracing::field::display(&request_id));
-    REQUEST_COUNT.fetch_add(1, Ordering::Relaxed);
+    orchestrator_observability::incr("http_requests_total");
 
-    let mut response = next.run(request).await;
+    let mut response =
+        orchestrator_observability::with_correlation_id(request_id.clone(), next.run(request))
+            .await;
     if let Ok(v) = HeaderValue::try_from(request_id.as_str()) {
         response
             .headers_mut()
@@ -35,17 +33,7 @@ pub async fn request_id_middleware(request: Request, next: Next) -> Response {
     response
 }
 
-/// Returns total request count for the /metrics endpoint.
-pub fn get_request_count() -> u64 {
-    REQUEST_COUNT.load(Ordering::Relaxed)
-}
-
 /// Increment the error counter (call from error handler for 4xx/5xx responses).
 pub fn increment_error_count() {
-    ERROR_COUNT.fetch_add(1, Ordering::Relaxed);
-}
-
-/// Returns total error response count for the /metrics endpoint.
-pub fn get_error_count() -> u64 {
-    ERROR_COUNT.load(Ordering::Relaxed)
+    orchestrator_observability::incr("http_errors_total");
 }

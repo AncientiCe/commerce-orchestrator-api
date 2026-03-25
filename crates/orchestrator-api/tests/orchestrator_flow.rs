@@ -1,7 +1,7 @@
 use orchestrator_api::OrchestratorFacade;
 use orchestrator_core::contract::{
-    AddItemPayload, CartCommand, CheckoutRequest, CreateCartPayload, PaymentIntent,
-    PaymentLifecycleRequest, StartCheckoutPayload, TransactionStatus,
+    AddItemPayload, ApplyAdjustmentPayload, CartCommand, CheckoutRequest, CreateCartPayload,
+    PaymentIntent, PaymentLifecycleRequest, StartCheckoutPayload, TransactionStatus,
 };
 use orchestrator_core::policy::PolicyEngine;
 use provider_contracts::CatalogItem;
@@ -361,4 +361,65 @@ async fn dead_letter_replay_roundtrip() {
     assert!(replayed);
     let dl_after = facade.list_dead_letter().await;
     assert!(dl_after.is_empty(), "replay removes from dead-letter");
+}
+
+#[tokio::test]
+async fn apply_adjustment_reprices_and_updates_cart_version() {
+    let facade = build_facade();
+    let created = facade
+        .dispatch_cart_command(
+            CartCommand::CreateCart(CreateCartPayload {
+                merchant_id: "merchant_1".to_string(),
+                currency: "USD".to_string(),
+            }),
+            None,
+        )
+        .await
+        .expect("create cart");
+    let with_item = facade
+        .dispatch_cart_command(
+            CartCommand::AddItem(AddItemPayload {
+                item_id: "item_1".to_string(),
+                quantity: 1,
+            }),
+            Some(created.cart_id),
+        )
+        .await
+        .expect("add item");
+    let adjusted = facade
+        .dispatch_cart_command(
+            CartCommand::ApplyAdjustment(ApplyAdjustmentPayload {
+                code: "order:promo10".to_string(),
+            }),
+            Some(with_item.cart_id),
+        )
+        .await
+        .expect("apply adjustment");
+    assert_eq!(adjusted.version, with_item.version + 1);
+    assert!(adjusted.total_minor >= 0);
+}
+
+#[tokio::test]
+async fn apply_item_adjustment_rejects_unknown_item() {
+    let facade = build_facade();
+    let created = facade
+        .dispatch_cart_command(
+            CartCommand::CreateCart(CreateCartPayload {
+                merchant_id: "merchant_1".to_string(),
+                currency: "USD".to_string(),
+            }),
+            None,
+        )
+        .await
+        .expect("create cart");
+    let err = facade
+        .dispatch_cart_command(
+            CartCommand::ApplyAdjustment(ApplyAdjustmentPayload {
+                code: "item:does-not-exist:promo".to_string(),
+            }),
+            Some(created.cart_id),
+        )
+        .await
+        .expect_err("unknown item-level adjustment must fail");
+    assert!(format!("{}", err).contains("catalog"));
 }

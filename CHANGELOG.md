@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-03-25
+
+### Added
+
+- **PostgreSQL durability backend**: Added a PostgreSQL-backed runtime store implementation with migration scripts for event, idempotency, commit, reservation, outbox, inbox, dead-letter, order, payment-state, and AP2 mandate-dedupe data.
+- **Local database bootstrap**: Added root-level `docker-compose.yml` and `.env.example` to run a standalone local Postgres container for development and smoke tests.
+- **AP2 replay protection**: Added mandate replay deduplication through `MandateDedupeStore`; strict AP2 mode now rejects repeated use of the same mandate ID until expiry.
+- **JWT auth mode**: Added `AUTH_MODE=jwt` with HS256 verification (`AUTH_JWT_HS256_SECRET`) and optional issuer allow-list checks.
+- **OpenAPI endpoint**: Added `GET /api/v1/openapi.json` and schema generation for primary API DTOs.
+- **Prometheus metrics export**: `/metrics` now returns Prometheus text format and includes provider call count/latency metrics.
+
+### Changed
+
+- **Production persistence contract**: Production startup now requires `DATABASE_URL` instead of file-backed `PERSISTENCE_PATH`.
+- **Auth configuration**: Production auth now supports both static token and JWT mode via `AUTH_MODE`, while preserving static-token behavior as default.
+- **Cart adjustment flow**: `apply_adjustment` now re-runs pricing/tax/geo recalculation and validates item-scoped adjustment codes against catalog availability.
+- **Correlation propagation**: Request correlation IDs are now propagated through task-local context into downstream HTTP adapter headers.
+
+### Fixed
+
+- **Payment state persistence warning**: File-backed payment state store no longer silently swallows persistence failures.
+- **Operational docs drift**: Consumption and deployment docs now align with Postgres persistence, metrics format, and auth mode behavior.
+
 ## [0.2.0] - 2026-03-06
 
 ### Added
@@ -50,3 +73,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 [0.2.0]: https://github.com/your-org/commerce-orchestrator/releases/tag/v0.2.0
 [0.1.0]: https://github.com/your-org/commerce-orchestrator/releases/tag/v0.1.0
+[0.3.0]: https://github.com/your-org/commerce-orchestrator/releases/tag/v0.3.0

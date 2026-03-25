@@ -74,8 +74,10 @@ Configure the server with these (see also [Consumption guide – Config referenc
 |----------|------------------------|-------------|---------|
 | `ENV` | Yes | `production` enables auth and real adapters. | `production` |
 | `PUBLIC_BASE_URL` | Yes | Public base URL advertised in `/.well-known/ucp`; required in production to avoid localhost discovery output. | `https://orchestrator.example.com` |
-| `PERSISTENCE_PATH` | Yes | Directory for file-backed stores. Must be writable; use a mounted volume in K8s. | `/data` |
-| `AUTH_BEARER_TOKEN` | Yes (prod) | Secret token; clients send `Authorization: Bearer <token>`. | (secret) |
+| `DATABASE_URL` | Yes | PostgreSQL connection string for durable runtime state. | `postgres://orchestrator:secret@postgres:5432/orchestrator` |
+| `AUTH_MODE` | Yes | `static` or `jwt`. | `static` |
+| `AUTH_BEARER_TOKEN` | Yes (when `AUTH_MODE=static`) | Secret token; clients send `Authorization: Bearer <token>`. | (secret) |
+| `AUTH_JWT_HS256_SECRET` | Yes (when `AUTH_MODE=jwt`) | HS256 secret used to verify JWT tokens. | (secret) |
 | `CATALOG_BASE_URL` | Yes | Catalog service base URL, no trailing slash. | `http://catalog-service:8080` |
 | `PRICING_BASE_URL` | Yes | Pricing service base URL. | `http://pricing-service:8080` |
 | `TAX_BASE_URL` | Yes | Tax service base URL. | `http://tax-service:8080` |
@@ -93,7 +95,8 @@ Example `.env` for local runs (replace with your stub or real URLs):
 ```bash
 ENV=production
 PUBLIC_BASE_URL=https://orchestrator.example.com
-PERSISTENCE_PATH=./data
+DATABASE_URL=postgres://orchestrator:secret@localhost:5432/orchestrator
+AUTH_MODE=static
 AUTH_BEARER_TOKEN=dev-token-change-in-prod
 CATALOG_BASE_URL=http://localhost:9001
 PRICING_BASE_URL=http://localhost:9002
@@ -106,7 +109,10 @@ RECEIPT_BASE_URL=http://localhost:9006
 ## 3. Local Smoke Test (no deployment)
 
 1. **Start your six downstream services** (or stubs) so they listen on the URLs you set in step 2.
-2. **Create persistence directory** (e.g. `mkdir -p ./data`).
+2. **Start local Postgres (or point to an existing instance):**
+   ```bash
+   docker compose up -d postgres
+   ```
 3. **Start the orchestrator:**
    ```bash
    cargo run -p orchestrator-server
@@ -145,8 +151,8 @@ RECEIPT_BASE_URL=http://localhost:9006
   docker push your-registry/orchestrator-api:0.2.0
    ```
 2. **Edit manifests** under `deploy/kubernetes/`:
-   - `configmap.yaml`: Set all six `*_BASE_URL` to your staging service URLs; set `PERSISTENCE_PATH` (e.g. `/data`).
-   - `secret.yaml` or create secret manually: Set `AUTH_BEARER_TOKEN` (and optional `AUTH_TENANT_ID`, `AUTH_CALLER_ID`).
+   - `configmap.yaml`: Set all six `*_BASE_URL` to your staging service URLs; set `DATABASE_URL`.
+   - `secret.yaml` or create secret manually: Set auth variables based on `AUTH_MODE` (`AUTH_BEARER_TOKEN` or `AUTH_JWT_HS256_SECRET`) and optional `AUTH_TENANT_ID`, `AUTH_CALLER_ID`.
 3. **Apply** (ensure namespace exists):
    ```bash
    kubectl apply -f deploy/kubernetes/
@@ -155,8 +161,8 @@ RECEIPT_BASE_URL=http://localhost:9006
    ```bash
   kubectl set image deployment/orchestrator-api orchestrator-server=your-registry/orchestrator-api:0.2.0
    ```
-5. **Mount durable storage** for production: Add a PVC and mount it at `PERSISTENCE_PATH` in the Deployment (see [Deployment](deploy/README.md) and persistence notes in the main README).
-6. **Keep replicas aligned with storage mode**: The shipped manifests default to one replica because the provided PVC uses `ReadWriteOnce`. Only scale beyond one replica when your storage and locking model support shared writes safely.
+5. **Ensure database reachability** from the orchestrator pod (network policy, DNS, credentials, and TLS as required by your platform).
+6. **Scale safely**: Postgres-backed persistence supports multi-replica orchestrator deployments when connection pool sizing and DB capacity are tuned.
 
 ## 5. Post-Deploy Validation Checklist
 

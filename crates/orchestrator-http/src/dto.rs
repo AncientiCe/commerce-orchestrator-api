@@ -8,18 +8,19 @@ use orchestrator_core::contract::{
 };
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
+use utoipa::ToSchema;
 use uuid::Uuid;
 
 // ---- Cart command request ----
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct CartCommandRequest {
     pub command: CartCommandDto,
     #[serde(default)]
     pub cart_id: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum CartCommandDto {
     CreateCart {
@@ -93,7 +94,7 @@ fn parse_cart_id(s: &str) -> Result<CartId, String> {
 
 // ---- Cart projection response ----
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct CartProjectionDto {
     pub cart_id: String,
     pub version: u64,
@@ -106,7 +107,7 @@ pub struct CartProjectionDto {
     pub status: CartStatusDto,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct CartLineProjectionDto {
     pub line_id: String,
     pub item_id: String,
@@ -116,7 +117,7 @@ pub struct CartLineProjectionDto {
     pub total_minor: i64,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum CartStatusDto {
     Draft,
@@ -162,7 +163,7 @@ impl From<CartLineProjection> for CartLineProjectionDto {
 
 // ---- Checkout request ----
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct CheckoutRequestDto {
     pub tenant_id: String,
     pub merchant_id: String,
@@ -175,20 +176,20 @@ pub struct CheckoutRequestDto {
     pub idempotency_key: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct CustomerHintDto {
     pub email: Option<String>,
     pub full_name: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct LocationHintDto {
     pub country_code: Option<String>,
     pub region: Option<String>,
     pub postal_code: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct PaymentIntentDto {
     pub amount_minor: i64,
     pub token_or_reference: String,
@@ -228,7 +229,7 @@ impl TryFrom<CheckoutRequestDto> for CheckoutRequest {
 
 // ---- Transaction result response ----
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct TransactionResultDto {
     pub transaction_id: String,
     pub status: TransactionStatusDto,
@@ -241,7 +242,7 @@ pub struct TransactionResultDto {
     pub order_id: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TransactionStatusDto {
     Completed,
@@ -251,7 +252,7 @@ pub enum TransactionStatusDto {
     TimedOut,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct TotalsBreakdownDto {
     pub subtotal_minor: i64,
     pub tax_minor: i64,
@@ -259,7 +260,7 @@ pub struct TotalsBreakdownDto {
     pub total_minor: i64,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PaymentStateDto {
     Authorized,
@@ -310,7 +311,7 @@ impl From<TransactionResult> for TransactionResultDto {
 
 // ---- Payment lifecycle request ----
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct PaymentLifecycleRequestDto {
     pub tenant_id: String,
     pub merchant_id: String,
@@ -333,7 +334,7 @@ impl From<PaymentLifecycleRequestDto> for PaymentLifecycleRequest {
 
 // ---- Payment operation result (from provider) ----
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct PaymentOperationResultDto {
     pub success: bool,
     pub reference: String,
@@ -341,24 +342,24 @@ pub struct PaymentOperationResultDto {
 
 // ---- Incoming event (idempotent) ----
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct IncomingEventRequestDto {
     pub message_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct IncomingEventResponseDto {
     pub accepted: bool,
 }
 
 // ---- Outbox / dead-letter / reconciliation ----
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ProcessOutboxRequestDto {
     pub max_attempts: u32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct DeadLetterEntryDto {
     pub id: String,
     pub topic: String,
@@ -366,29 +367,29 @@ pub struct DeadLetterEntryDto {
     pub attempts: u32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ReplayDeadLetterRequestDto {
     pub message_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ReplayDeadLetterResponseDto {
     pub replayed: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ReconciliationRequestDto {
     pub transaction_ids: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct PaymentMismatchDto {
     pub transaction_id: String,
     pub our_state: String,
     pub provider_state: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ReconciliationReportDto {
     pub mismatches: Vec<PaymentMismatchDto>,
 }

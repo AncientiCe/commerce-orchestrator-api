@@ -40,15 +40,20 @@ pub async fn get_with_retry(
     correlation_id: Option<&str>,
     config: &ClientConfig,
 ) -> Result<reqwest::Response, AdapterError> {
+    let effective_correlation_id = correlation_id
+        .map(str::to_string)
+        .or_else(orchestrator_observability::current_correlation_id);
     let mut last_err = None;
     for attempt in 0..=config.max_retries {
+        let started = std::time::Instant::now();
         let mut req = client.get(url);
-        if let Some(cid) = correlation_id {
+        if let Some(cid) = effective_correlation_id.as_deref() {
             req = req.header("X-Correlation-ID", cid);
         }
         match req.send().await {
             Ok(resp) => {
                 let status = resp.status();
+                observe_call("GET", url, status.as_u16(), started.elapsed().as_secs_f64());
                 if status.is_success() {
                     return Ok(resp);
                 }
@@ -56,6 +61,12 @@ pub async fn get_with_retry(
                 last_err = Some(AdapterError::Status(status.as_u16(), body));
             }
             Err(e) => {
+                observe_call(
+                    "GET",
+                    url,
+                    if e.is_timeout() { 408 } else { 599 },
+                    started.elapsed().as_secs_f64(),
+                );
                 if e.is_timeout() {
                     last_err = Some(AdapterError::Timeout(config.timeout));
                 } else {
@@ -80,15 +91,25 @@ pub async fn post_json_with_retry<T: serde::Serialize + Send>(
     correlation_id: Option<&str>,
     config: &ClientConfig,
 ) -> Result<reqwest::Response, AdapterError> {
+    let effective_correlation_id = correlation_id
+        .map(str::to_string)
+        .or_else(orchestrator_observability::current_correlation_id);
     let mut last_err = None;
     for attempt in 0..=config.max_retries {
+        let started = std::time::Instant::now();
         let mut req = client.post(url).json(body);
-        if let Some(cid) = correlation_id {
+        if let Some(cid) = effective_correlation_id.as_deref() {
             req = req.header("X-Correlation-ID", cid);
         }
         match req.send().await {
             Ok(resp) => {
                 let status = resp.status();
+                observe_call(
+                    "POST",
+                    url,
+                    status.as_u16(),
+                    started.elapsed().as_secs_f64(),
+                );
                 if status.is_success() {
                     return Ok(resp);
                 }
@@ -96,6 +117,12 @@ pub async fn post_json_with_retry<T: serde::Serialize + Send>(
                 last_err = Some(AdapterError::Status(status.as_u16(), body));
             }
             Err(e) => {
+                observe_call(
+                    "POST",
+                    url,
+                    if e.is_timeout() { 408 } else { 599 },
+                    started.elapsed().as_secs_f64(),
+                );
                 if e.is_timeout() {
                     last_err = Some(AdapterError::Timeout(config.timeout));
                 } else {
@@ -110,4 +137,21 @@ pub async fn post_json_with_retry<T: serde::Serialize + Send>(
         }
     }
     Err(last_err.unwrap_or_else(|| AdapterError::Config("no response".into())))
+}
+
+fn provider_from_url(url: &str) -> String {
+    url::Url::parse(url)
+        .ok()
+        .and_then(|u| u.host_str().map(str::to_string))
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
+fn observe_call(method: &str, url: &str, status: u16, latency_seconds: f64) {
+    let provider = provider_from_url(url);
+    orchestrator_observability::observe_provider_http_call(
+        method,
+        &provider,
+        &status.to_string(),
+        latency_seconds,
+    );
 }

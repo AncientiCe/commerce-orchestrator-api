@@ -28,6 +28,12 @@ struct ConsentProof {
     nonce: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+pub struct Ap2MandateRecord {
+    pub mandate_id: String,
+    pub expires_at: i64,
+}
+
 impl ConsentProof {
     fn parse(raw: &str) -> Result<Self, Ap2VerificationError> {
         serde_json::from_str(raw).map_err(|_| {
@@ -170,4 +176,23 @@ impl Ap2MandateVerifier for StrictAp2Verifier {
 /// Call this before execute_checkout when AP2 strict mode is enabled.
 pub fn verify_ap2_strict(request: &CheckoutRequest) -> Result<(), Ap2VerificationError> {
     StrictAp2Verifier.verify(request)
+}
+
+/// Extract mandate replay metadata from strict AP2 consent proof.
+pub fn extract_ap2_mandate_record(
+    request: &CheckoutRequest,
+) -> Result<Ap2MandateRecord, Ap2VerificationError> {
+    let proof = request
+        .payment_intent
+        .ap2_consent_proof
+        .as_deref()
+        .filter(|s| !s.trim().is_empty())
+        .ok_or_else(|| {
+            Ap2VerificationError("AP2 strict mode: ap2_consent_proof is required".to_string())
+        })?;
+    let parsed = ConsentProof::parse(proof)?;
+    Ok(Ap2MandateRecord {
+        mandate_id: parsed.mandate_id,
+        expires_at: parsed.expires_at,
+    })
 }

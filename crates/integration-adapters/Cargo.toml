@@ -7,6 +7,7 @@ description = "HTTP-based adapters for external component APIs (catalog, payment
 [dependencies]
 orchestrator-core = { path = "../orchestrator-core" }
 provider-contracts = { path = "../provider-contracts" }
+orchestrator-observability = { path = "../orchestrator-observability" }
 async-trait = "0.1"
 reqwest = { version = "0.12", features = ["json"], default-features = false }
 tokio = { version = "1", features = ["time", "sync"] }

@@ -125,3 +125,11 @@ pub trait OrderStore: Send + Sync {
         status: OrderStatus,
     ) -> Result<Option<OrderRecord>, StoreError>;
 }
+
+/// Deduplication store for AP2 mandate replay protection.
+#[async_trait]
+pub trait MandateDedupeStore: Send + Sync {
+    /// Records a mandate identifier until its expiry epoch seconds.
+    /// Returns true when inserted for the first time, false when already seen.
+    async fn record_mandate(&self, mandate_id: &str, expires_at: i64) -> Result<bool, StoreError>;
+}

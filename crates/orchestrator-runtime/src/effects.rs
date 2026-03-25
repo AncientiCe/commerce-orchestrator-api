@@ -1,7 +1,7 @@
 //! Reliable external effects: outbox + inbox dedupe primitives.
 
 use crate::store_error::StoreError;
-use crate::store_traits::{DeadLetterStore, InboxStore, OutboxStore};
+use crate::store_traits::{DeadLetterStore, InboxStore, MandateDedupeStore, OutboxStore};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
@@ -56,6 +56,11 @@ pub struct DeadLetter {
     records: Arc<Mutex<HashMap<String, OutboxMessage>>>,
 }
 
+#[derive(Clone, Default)]
+pub struct InMemoryMandateDedupeStore {
+    seen: Arc<Mutex<HashMap<String, i64>>>,
+}
+
 impl DeadLetter {
     pub async fn put(&self, message: OutboxMessage) {
         self.records
@@ -70,6 +75,20 @@ impl DeadLetter {
 
     pub async fn is_empty(&self) -> bool {
         self.records.lock().await.is_empty()
+    }
+}
+
+#[async_trait::async_trait]
+impl MandateDedupeStore for InMemoryMandateDedupeStore {
+    async fn record_mandate(&self, mandate_id: &str, expires_at: i64) -> Result<bool, StoreError> {
+        let mut guard = self.seen.lock().await;
+        let now = chrono::Utc::now().timestamp();
+        guard.retain(|_, expiry| *expiry > now);
+        if guard.contains_key(mandate_id) {
+            return Ok(false);
+        }
+        guard.insert(mandate_id.to_string(), expires_at);
+        Ok(true)
     }
 }
 

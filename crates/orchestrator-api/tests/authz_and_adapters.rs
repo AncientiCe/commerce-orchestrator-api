@@ -319,6 +319,111 @@ async fn ap2_strict_rejects_expired_or_mismatched_consent_proof() {
 }
 
 #[tokio::test]
+async fn ap2_strict_rejects_mandate_replay() {
+    let catalog = MockCatalogProvider::new();
+    catalog.add_item(CatalogItem {
+        id: "item_1".to_string(),
+        title: "Sample".to_string(),
+        price_minor: 100,
+    });
+    let facade = OrchestratorFacade::new(
+        Arc::new(catalog),
+        Arc::new(MockPricingProvider),
+        Arc::new(MockTaxProvider),
+        Arc::new(MockGeoProvider),
+        Arc::new(MockPaymentProvider),
+        Arc::new(MockReceiptProvider),
+        PolicyEngine::default(),
+    )
+    .with_ap2_strict(true);
+
+    let created_a = facade
+        .dispatch_cart_command(
+            CartCommand::CreateCart(CreateCartPayload {
+                merchant_id: "m".to_string(),
+                currency: "USD".to_string(),
+            }),
+            None,
+        )
+        .await
+        .expect("create cart a");
+    let ready_a = facade
+        .dispatch_cart_command(
+            CartCommand::StartCheckout(StartCheckoutPayload {
+                cart_id: created_a.cart_id,
+                cart_version: created_a.version,
+            }),
+            None,
+        )
+        .await
+        .expect("start checkout a");
+
+    let created_b = facade
+        .dispatch_cart_command(
+            CartCommand::CreateCart(CreateCartPayload {
+                merchant_id: "m".to_string(),
+                currency: "USD".to_string(),
+            }),
+            None,
+        )
+        .await
+        .expect("create cart b");
+    let ready_b = facade
+        .dispatch_cart_command(
+            CartCommand::StartCheckout(StartCheckoutPayload {
+                cart_id: created_b.cart_id,
+                cart_version: created_b.version,
+            }),
+            None,
+        )
+        .await
+        .expect("start checkout b");
+
+    let proof = ap2_consent_proof("mock", 4_102_444_800);
+
+    let first = facade
+        .execute_checkout(CheckoutRequest {
+            tenant_id: "t".to_string(),
+            merchant_id: "m".to_string(),
+            cart_id: ready_a.cart_id,
+            cart_version: ready_a.version,
+            currency: "USD".to_string(),
+            customer: None,
+            location: None,
+            payment_intent: PaymentIntent {
+                amount_minor: ready_a.total_minor,
+                token_or_reference: "tok".to_string(),
+                ap2_consent_proof: Some(proof.clone()),
+                payment_handler_id: Some("mock".to_string()),
+            },
+            idempotency_key: "key-ap2-replay-1".to_string(),
+        })
+        .await;
+    assert!(first.is_ok(), "first use of mandate should be accepted");
+
+    let replay = facade
+        .execute_checkout(CheckoutRequest {
+            tenant_id: "t".to_string(),
+            merchant_id: "m".to_string(),
+            cart_id: ready_b.cart_id,
+            cart_version: ready_b.version,
+            currency: "USD".to_string(),
+            customer: None,
+            location: None,
+            payment_intent: PaymentIntent {
+                amount_minor: ready_b.total_minor,
+                token_or_reference: "tok".to_string(),
+                ap2_consent_proof: Some(proof),
+                payment_handler_id: Some("mock".to_string()),
+            },
+            idempotency_key: "key-ap2-replay-2".to_string(),
+        })
+        .await
+        .expect_err("second use of mandate should be rejected");
+    assert!(matches!(replay, FacadeError::Ap2Verification(_)));
+}
+
+#[tokio::test]
 async fn authorized_checkout_succeeds_for_matching_tenant() {
     let catalog = MockCatalogProvider::new();
     catalog.add_item(CatalogItem {
