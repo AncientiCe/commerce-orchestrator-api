@@ -81,6 +81,18 @@ Fix any failure before marking the task complete.
 
 ---
 
+## 8. Release Version Sync (Required)
+
+- **When a release version changes, update all version references in the same task.**
+- At minimum, keep these in sync:
+  - Root workspace version in `Cargo.toml`
+  - `CHANGELOG.md` release heading and link reference
+  - README version badge
+  - Any docs that explicitly mention a pinned release/tag example
+- Do not mark a release/version bump task complete until these references are consistent.
+
+---
+
 ## Quick Reference
 
 | Rule | Action |
@@ -91,4 +103,5 @@ Fix any failure before marking the task complete.
 | No plan files | No `.md` for plans; only real documentation |
 | Observability | New feature → add metrics via `orchestrator-observability`; touched code without metrics → add them |
 | No dead code | No unused variables, dead code, or `#[allow(dead_code)]` |
+| Version sync | Version bump/release changes must update `Cargo.toml`, `CHANGELOG.md`, README badge, and pinned-version docs |
 | System impact | Consider REST/A2A, provider contracts, adapters, outbox, idempotency, observability |
