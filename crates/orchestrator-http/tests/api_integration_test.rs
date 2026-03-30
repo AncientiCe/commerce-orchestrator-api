@@ -178,3 +178,37 @@ async fn protected_route_succeeds_with_valid_token() {
         .await;
     response.assert_status_ok();
 }
+
+#[tokio::test]
+async fn a2a_identity_link_returns_link_result_envelope() {
+    let state = test_state();
+    let app = app::app().with_state(state);
+    let server = TestServer::new(app).unwrap();
+
+    let body = serde_json::json!({
+        "capability": "dev.ucp.identity.linking",
+        "payload": {
+            "tenant_id": "tenant-1",
+            "merchant_id": "m1",
+            "agent_id": "agent-1",
+            "link_token": "tok_123",
+            "user_reference": "user-42"
+        }
+    });
+    let response = server.post("/api/v1/a2a/identity/link").json(&body).await;
+    response.assert_status_ok();
+    let json: serde_json::Value = response.json();
+    assert_eq!(json.get("status").and_then(|v| v.as_str()), Some("linked"));
+    assert_eq!(
+        json.get("ucp")
+            .and_then(|v| v.get("version"))
+            .and_then(|v| v.as_str()),
+        Some("2026-01-23")
+    );
+    assert!(
+        json.get("link_id")
+            .and_then(|v| v.as_str())
+            .is_some_and(|v| !v.is_empty()),
+        "link_id should be generated"
+    );
+}

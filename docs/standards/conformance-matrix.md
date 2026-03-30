@@ -6,8 +6,8 @@ This document records target protocol versions and the Commerce Orchestrator's c
 
 | Protocol | Target Version | Spec / Reference |
 |----------|----------------|------------------|
-| UCP-style discovery | 2026-01-11 (orchestrator profile) | Capability manifest format; `/.well-known` discovery |
-| A2A (Agent-to-Agent) | 1.0 (handoff profile) | Delegated capability handoff; envelope normalization |
+| UCP-style discovery | 2026-01-23 (with `2026-01-11` compatibility) | Capability manifest format; `/.well-known` discovery; additive compatibility metadata |
+| A2A (Agent-to-Agent) | 0.3.0 (with 1.0 compatibility mapping) | Delegated capability handoff; envelope normalization |
 | MCP (Model Context Protocol) | As used by tool/context consumers | Tool discovery and invocation mapping |
 | AP2 (Agent Payments Protocol) | 0.1 | [AP2 spec](https://ap2-protocol.org/); Payment/Cart/Intent mandates, VDCs |
 
@@ -19,8 +19,9 @@ Status values: **required** (must pass for claimed alignment), **optional** (sup
 
 | Capability | Status | Acceptance Criteria | Evidence |
 |-------------|--------|---------------------|----------|
-| Well-known discovery endpoint | required | `GET /.well-known/ucp` returns JSON manifest with version, services, capabilities, and a non-localhost production `rest_endpoint` | `orchestrator_http::discovery` tests, production config tests |
-| Capability IDs | required | Manifest advertises `dev.ucp.shopping.checkout` and `dev.ucp.shopping.discount` with version and extends | Same |
+| Well-known discovery endpoint | required | `GET /.well-known/ucp` returns JSON manifest with negotiated `version`, `supported_versions`, services, capabilities, and a non-localhost production `rest_endpoint` | `orchestrator_http::discovery` tests, production config tests |
+| Capability IDs | required | Manifest advertises `dev.ucp.shopping.checkout`, `dev.ucp.shopping.discount`, and `dev.ucp.identity.linking` with version and extends where applicable | Same |
+| Capability flags for staged rollout | required | Discovery includes capability flags for staged features (e.g. multi-item cart and catalog lookup) | discovery tests |
 | Advertised capabilities map to implemented routes | required | Every capability in manifest has a corresponding executable operation (cart/checkout, payments) | Conformance test: capability_route_parity |
 
 ### Transport: REST
@@ -37,8 +38,9 @@ Status values: **required** (must pass for claimed alignment), **optional** (sup
 | Capability | Status | Acceptance Criteria | Evidence |
 |-------------|--------|---------------------|----------|
 | A2A envelope normalization | required | Incoming A2A envelope (capability + payload) normalizes to CheckoutRequest / CartCommand; same authz and idempotency rules apply | a2a_adapter tests |
+| Identity-linking envelope normalization | required | Incoming identity-linking envelope normalizes into identity-link request and rejects unsupported capabilities | `authz_and_adapters` |
 | MCP tool mapping | optional | Cart and checkout operations exposed as MCP tools; invocation maps to facade calls | mcp_adapter tests (when added) |
-| Delegated capability in handoff | optional | A2AHandoffProfile carries protocol, version, delegated_capability for downstream agents | adapters.rs, authz_and_adapters |
+| Delegated capability in handoff | optional | A2AHandoffProfile carries protocol, selected profile version, delegated_capability, and supported profile versions | adapters.rs, authz_and_adapters |
 
 ### AP2 (Agent Payments Protocol)
 
@@ -51,9 +53,9 @@ Status values: **required** (must pass for claimed alignment), **optional** (sup
 
 ## Acceptance Criteria (Summary)
 
-1. **Discovery**: A client can GET `/.well-known/ucp` and learn the orchestrator's capabilities and REST base URL; every advertised capability is implemented.
+1. **Discovery**: A client can GET `/.well-known/ucp` and learn the orchestrator's capabilities, supported profile versions, and REST base URL; every advertised capability is implemented.
 2. **REST**: All documented cart, checkout, and payment endpoints behave as in the consumption guide; auth and tenant checks enforced.
-3. **A2A/MCP**: Adapter layer converts A2A (and optionally MCP) requests into domain types and executes via the same facade; policy and idempotency unchanged.
+3. **A2A/MCP**: Adapter layer converts A2A (and optionally MCP) requests into domain types and executes via the same facade; policy and idempotency unchanged. Identity-linking envelopes are normalized and handled by the same API layer.
 4. **AP2**: Payment intent carries AP2-related fields; when strict AP2 mode is on, structured consent proof verification runs and fails closed on invalid, expired, untrusted, or mismatched artifacts.
 
 ## Machine-Readable Conformance (for CI)

@@ -25,11 +25,19 @@ struct ProviderLatencyLabels {
     provider: String,
 }
 
+#[derive(Clone, Debug, Hash, PartialEq, Eq, prometheus_client::encoding::EncodeLabelSet)]
+struct OperationLabels {
+    operation: String,
+    status: String,
+}
+
 struct MetricsRegistry {
     registry: Registry,
     event_counts: Family<EventLabels, Counter>,
     provider_calls: Family<ProviderCallLabels, Counter>,
     provider_latency: Family<ProviderLatencyLabels, Histogram>,
+    operation_calls: Family<OperationLabels, Counter>,
+    operation_latency: Family<OperationLabels, Histogram>,
 }
 
 impl MetricsRegistry {
@@ -41,6 +49,10 @@ impl MetricsRegistry {
             Family::<ProviderLatencyLabels, Histogram>::new_with_constructor(|| {
                 Histogram::new(exponential_buckets(0.005, 2.0, 16))
             });
+        let operation_calls: Family<OperationLabels, Counter> = Family::default();
+        let operation_latency = Family::<OperationLabels, Histogram>::new_with_constructor(|| {
+            Histogram::new(exponential_buckets(0.005, 2.0, 16))
+        });
         registry.register(
             "orchestrator_events_total",
             "Counter for orchestrator events",
@@ -56,11 +68,23 @@ impl MetricsRegistry {
             "Downstream provider HTTP latency in seconds",
             provider_latency.clone(),
         );
+        registry.register(
+            "orchestrator_operation_calls_total",
+            "Operation calls by operation and status",
+            operation_calls.clone(),
+        );
+        registry.register(
+            "orchestrator_operation_latency_seconds",
+            "Operation latency in seconds by operation and status",
+            operation_latency.clone(),
+        );
         Self {
             registry,
             event_counts,
             provider_calls,
             provider_latency,
+            operation_calls,
+            operation_latency,
         }
     }
 }
@@ -101,6 +125,24 @@ pub fn observe_provider_http_call(method: &str, provider: &str, status: &str, se
         .get_or_create(&ProviderLatencyLabels {
             method: method.to_string(),
             provider: provider.to_string(),
+        })
+        .observe(seconds);
+}
+
+pub fn observe_operation(operation: &str, status: &str, seconds: f64) {
+    let guard = METRICS.lock().expect("metrics lock");
+    guard
+        .operation_calls
+        .get_or_create(&OperationLabels {
+            operation: operation.to_string(),
+            status: status.to_string(),
+        })
+        .inc();
+    guard
+        .operation_latency
+        .get_or_create(&OperationLabels {
+            operation: operation.to_string(),
+            status: status.to_string(),
         })
         .observe(seconds);
 }

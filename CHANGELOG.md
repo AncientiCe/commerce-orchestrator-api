@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2026-03-30
+
+### Added
+
+- **UCP compatibility metadata**: Discovery now advertises `supported_versions` and `capability_flags` to enable standards negotiation and staged capability rollout.
+- **Identity linking capability path**: Added `dev.ucp.identity.linking` to discovery plus `POST /api/v1/a2a/identity/link` with A2A envelope normalization and response envelope.
+- **Operation latency metrics**: Added operation-level call/latency metrics (`orchestrator_operation_calls_total`, `orchestrator_operation_latency_seconds`) and instrumented identity-linking flow.
+
+### Changed
+
+- **Protocol baseline refresh**: UCP discovery baseline moved to `2026-01-23` while retaining backward compatibility for `2026-01-11`.
+- **A2A profile metadata**: Adapter profile constants now align to `0.3.0` with compatibility mapping for legacy `1.0` handoff metadata.
+- **Conformance coverage**: Discovery and adapter tests now assert compatibility metadata and identity-linking capability behavior.
+
 ## [0.3.0] - 2026-03-25
 
 ### Added
@@ -74,3 +88,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [0.2.0]: https://github.com/your-org/commerce-orchestrator/releases/tag/v0.2.0
 [0.1.0]: https://github.com/your-org/commerce-orchestrator/releases/tag/v0.1.0
 [0.3.0]: https://github.com/your-org/commerce-orchestrator/releases/tag/v0.3.0
+[0.3.1]: https://github.com/your-org/commerce-orchestrator/releases/tag/v0.3.1

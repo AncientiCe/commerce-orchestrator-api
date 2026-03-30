@@ -22,7 +22,7 @@ See [consumer-integration.md](consumer-integration.md) for the high-level integr
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/.well-known/ucp` | Capability discovery: returns JSON manifest with version, services, capabilities, and `rest_endpoint` (orchestrator base URL). No auth required. |
+| `GET` | `/.well-known/ucp` | Capability discovery: returns JSON manifest with selected `version`, `supported_versions`, services, capabilities, `capability_flags`, and `rest_endpoint` (orchestrator base URL). No auth required. |
 
 ### Cart and checkout
 
@@ -32,6 +32,7 @@ See [consumer-integration.md](consumer-integration.md) for the high-level integr
 | `POST` | `/api/v1/checkout/execute` | Execute checkout for a cart. Body: `CheckoutRequestDto`. Requires auth in production. |
 | `POST` | `/api/v1/a2a/checkout` | A2A envelope: `{ "capability": "dev.ucp.shopping.checkout", "payload": CheckoutRequestDto }`. Same authz and idempotency as REST. |
 | `POST` | `/api/v1/a2a/cart` | A2A envelope: `{ "capability": "...", "payload": { "command": { "kind": "...", ... }, "cart_id": "..."? } }`. Same policy as REST. |
+| `POST` | `/api/v1/a2a/identity/link` | A2A envelope: `{ "capability": "dev.ucp.identity.linking", "payload": { "tenant_id": "...", "merchant_id": "...", "agent_id": "...", "link_token": "...", "user_reference": "..."? } }`. Returns identity-link result envelope with UCP metadata. |
 
 ### Payments
 
@@ -88,6 +89,15 @@ Command kinds and their fields:
 
 **Response (success):** Transaction result with `transaction_id`, `status`, `totals_breakdown`, `payment_reference`, `receipt_payload`, `correlation_id`, `payment_state`, `order_id`.
 
+### Identity linking (POST /api/v1/a2a/identity/link)
+
+**Request:** A2A envelope with `capability` and `payload`:
+
+- `capability`: `dev.ucp.identity.linking`
+- `payload`: `tenant_id`, `merchant_id`, `agent_id`, `link_token`, optional `user_reference`
+
+**Response (success):** `{ "ucp": { "version": "...", "supported_versions": [...] }, "link_id": "...", "status": "linked" }`.
+
 ### Payment lifecycle (capture / void / refund)
 
 **Request:** `tenant_id`, `merchant_id`, `transaction_id`, `amount_minor`, `idempotency_key` (and any other fields required by the DTO).
@@ -128,6 +138,8 @@ The orchestrator is a middleware API layer. Operators configure where each downs
 | `RECEIPT_BASE_URL` | Receipt service base URL. |
 
 Optional: `AUTH_TENANT_ID`, `AUTH_CALLER_ID` (default `prod` for static mode), `AP2_TRUSTED_ISSUERS` (comma-separated allowlist for strict AP2 issuer checks and JWT issuer checks). Config can be loaded from a file (`CONFIG_FILE` or `config.yaml`) with env overrides.
+
+AP2 note: this release aligns with AP2 `v0.1` strict validation behavior; roadmap expansion to AP2 `v1.x` capabilities remains forward-compatible and additive.
 
 ## Next steps
 

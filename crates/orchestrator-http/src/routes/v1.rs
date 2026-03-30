@@ -10,7 +10,8 @@ use axum::{
     Json, Router,
 };
 use orchestrator_api::{
-    normalize_a2a_cart_envelope, normalize_a2a_checkout_envelope, redact_checkout_request,
+    normalize_a2a_cart_envelope, normalize_a2a_checkout_envelope,
+    normalize_a2a_identity_link_envelope, redact_checkout_request,
 };
 use orchestrator_core::contract::{CartCommand, CartId, CheckoutRequest};
 use std::str::FromStr;
@@ -22,6 +23,7 @@ pub fn routes() -> Router<AppState> {
         .route("/checkout/execute", post(execute_checkout))
         .route("/a2a/checkout", post(a2a_execute_checkout))
         .route("/a2a/cart", post(a2a_dispatch_cart_command))
+        .route("/a2a/identity/link", post(a2a_link_identity))
         .route("/payments/capture", post(capture_payment))
         .route("/payments/void", post(void_payment))
         .route("/payments/refund", post(refund_payment))
@@ -88,6 +90,18 @@ async fn a2a_dispatch_cart_command(
     let (cmd, cart_id) = normalize_a2a_cart_envelope(&body).map_err(ApiError::BadRequest)?;
     let projection = state.facade.dispatch_cart_command(cmd, cart_id).await?;
     Ok(Json(projection.into()))
+}
+
+/// POST /api/v1/a2a/identity/link — A2A envelope:
+/// `{ "capability": "dev.ucp.identity.linking", "payload": { ... } }`.
+async fn a2a_link_identity(
+    AuthContextExtractor(_auth): AuthContextExtractor,
+    State(state): State<AppState>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<IdentityLinkResultDto>, ApiError> {
+    let request = normalize_a2a_identity_link_envelope(&body).map_err(ApiError::BadRequest)?;
+    let result = state.facade.link_identity(request).await?;
+    Ok(Json(result.into()))
 }
 
 async fn capture_payment(

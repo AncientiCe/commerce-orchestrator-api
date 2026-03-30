@@ -6,6 +6,7 @@ use orchestrator_core::contract::{
     LocationHint, PaymentIntent, PaymentLifecycleRequest, PaymentState, RemoveItemPayload,
     StartCheckoutPayload, TransactionResult, TransactionStatus, UpdateItemQtyPayload,
 };
+use orchestrator_core::{UCP_LATEST_VERSION, UCP_SUPPORTED_VERSIONS};
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 use utoipa::ToSchema;
@@ -392,4 +393,43 @@ pub struct PaymentMismatchDto {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ReconciliationReportDto {
     pub mismatches: Vec<PaymentMismatchDto>,
+}
+
+// ---- Identity linking (A2A envelope response) ----
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct UcpMetadataDto {
+    pub version: String,
+    pub supported_versions: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct IdentityLinkResultDto {
+    pub ucp: UcpMetadataDto,
+    pub link_id: String,
+    pub status: String,
+}
+
+impl From<orchestrator_api::IdentityLinkResult> for IdentityLinkResultDto {
+    fn from(result: orchestrator_api::IdentityLinkResult) -> Self {
+        Self {
+            ucp: UcpMetadataDto {
+                version: if result.ucp_version.is_empty() {
+                    UCP_LATEST_VERSION.to_string()
+                } else {
+                    result.ucp_version
+                },
+                supported_versions: if result.supported_versions.is_empty() {
+                    UCP_SUPPORTED_VERSIONS
+                        .iter()
+                        .map(|v| (*v).to_string())
+                        .collect()
+                } else {
+                    result.supported_versions
+                },
+            },
+            link_id: result.link_id,
+            status: result.status,
+        }
+    }
 }

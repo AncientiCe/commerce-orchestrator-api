@@ -1,6 +1,7 @@
 use orchestrator_api::{
-    authorize_checkout, extract_ap2_metadata, redact_checkout_request, A2AHandoffProfile,
-    AuthContext, FacadeError, OrchestratorFacade, UcpCheckoutEnvelope,
+    authorize_checkout, build_well_known_manifest_with_version, extract_ap2_metadata,
+    normalize_a2a_identity_link_envelope, redact_checkout_request, A2AHandoffProfile, AuthContext,
+    FacadeError, OrchestratorFacade, UcpCheckoutEnvelope, A2A_PROFILE_VERSION,
 };
 use orchestrator_core::contract::{
     AddItemPayload, CartCommand, CartId, CheckoutRequest, CreateCartPayload, CustomerHint,
@@ -105,11 +106,60 @@ fn extracts_ap2_metadata() {
     };
     let _handoff = A2AHandoffProfile {
         protocol: "a2a".to_string(),
-        version: "1.0".to_string(),
+        version: A2A_PROFILE_VERSION.to_string(),
         delegated_capability: "checkout".to_string(),
+        supported_versions: vec!["0.3.0".to_string(), "1.0".to_string()],
     };
     let ap2 = extract_ap2_metadata(&req);
     assert_eq!(ap2.handler_id.as_deref(), Some("handler"));
+}
+
+#[test]
+fn normalizes_identity_linking_a2a_envelope() {
+    let envelope = serde_json::json!({
+        "capability": "dev.ucp.identity.linking",
+        "payload": {
+            "tenant_id": "tenant_a",
+            "merchant_id": "merchant_a",
+            "agent_id": "agent_1",
+            "link_token": "link-token",
+            "user_reference": "user-1"
+        }
+    });
+    let normalized = normalize_a2a_identity_link_envelope(&envelope).expect("normalize");
+    assert_eq!(normalized.tenant_id, "tenant_a");
+    assert_eq!(normalized.merchant_id, "merchant_a");
+    assert_eq!(normalized.agent_id, "agent_1");
+    assert_eq!(normalized.user_reference.as_deref(), Some("user-1"));
+}
+
+#[test]
+fn rejects_unsupported_identity_linking_capability() {
+    let envelope = serde_json::json!({
+        "capability": "dev.ucp.shopping.checkout",
+        "payload": {
+            "tenant_id": "tenant_a",
+            "merchant_id": "merchant_a",
+            "agent_id": "agent_1",
+            "link_token": "link-token"
+        }
+    });
+    let err = normalize_a2a_identity_link_envelope(&envelope).expect_err("unsupported capability");
+    assert!(
+        err.contains("unsupported identity linking capability"),
+        "error should mention unsupported capability, got {}",
+        err
+    );
+}
+
+#[test]
+fn selects_supported_ucp_version_when_requested() {
+    let manifest = build_well_known_manifest_with_version(
+        "https://orchestrator.example.com",
+        Some("2026-01-11"),
+    );
+    assert_eq!(manifest.ucp.version, "2026-01-11");
+    assert_eq!(manifest.ucp.manifest.version, "2026-01-11");
 }
 
 #[tokio::test]

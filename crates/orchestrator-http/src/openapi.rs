@@ -8,7 +8,7 @@ use crate::dto::*;
 #[openapi(
     info(
         title = "Commerce Orchestrator API",
-        version = "0.3.0",
+        version = "0.3.1",
         description = "REST API surface for cart orchestration and checkout."
     ),
     components(schemas(
@@ -35,7 +35,9 @@ use crate::dto::*;
         ReplayDeadLetterResponseDto,
         ReconciliationRequestDto,
         PaymentMismatchDto,
-        ReconciliationReportDto
+        ReconciliationReportDto,
+        UcpMetadataDto,
+        IdentityLinkResultDto
     ))
 )]
 pub struct ApiDoc;

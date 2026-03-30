@@ -32,7 +32,23 @@ async fn well_known_ucp_returns_200_and_manifest() {
     response.assert_status_ok();
     let json: serde_json::Value = response.json();
     let ucp = json.get("ucp").expect("response has ucp");
-    assert!(ucp.get("version").is_some());
+    assert_eq!(
+        ucp.get("version").and_then(|v| v.as_str()),
+        Some("2026-01-23")
+    );
+    let supported = ucp
+        .get("supported_versions")
+        .and_then(|v| v.as_array())
+        .expect("supported_versions array");
+    let supported_values: Vec<&str> = supported.iter().filter_map(|v| v.as_str()).collect();
+    assert!(
+        supported_values.contains(&"2026-01-23"),
+        "latest version should be listed"
+    );
+    assert!(
+        supported_values.contains(&"2026-01-11"),
+        "prior compatible version should be listed"
+    );
     assert!(ucp.get("manifest").is_some(), "manifest present");
     let manifest = ucp.get("manifest").unwrap();
     assert!(manifest.get("capabilities").is_some());
@@ -73,6 +89,27 @@ async fn well_known_ucp_advertises_checkout_and_discount_capabilities() {
         "discount capability advertised, got {:?}",
         ids
     );
+    assert!(
+        ids.contains(&"dev.ucp.identity.linking".to_string()),
+        "identity linking capability advertised, got {:?}",
+        ids
+    );
+
+    let flags = json["ucp"]["capability_flags"]
+        .as_object()
+        .expect("capability_flags object");
+    assert_eq!(
+        flags
+            .get("dev.ucp.shopping.cart.multi_item")
+            .and_then(|v| v.as_bool()),
+        Some(false)
+    );
+    assert_eq!(
+        flags
+            .get("dev.ucp.shopping.catalog.lookup")
+            .and_then(|v| v.as_bool()),
+        Some(false)
+    );
 }
 
 #[tokio::test]
@@ -80,6 +117,7 @@ async fn advertised_capabilities_have_implemented_routes() {
     // Conformance: capabilities advertised in discovery must map to existing API routes.
     // dev.ucp.shopping.checkout -> POST /api/v1/checkout/execute and /api/v1/cart/commands
     // dev.ucp.shopping.discount -> apply_adjustment via /api/v1/cart/commands
+    // dev.ucp.identity.linking -> POST /api/v1/a2a/identity/link
     let state = test_state_with_base_url("http://localhost:8080");
     let app = app::app().with_state(state);
     let server = TestServer::new(app).unwrap();
@@ -112,6 +150,25 @@ async fn advertised_capabilities_have_implemented_routes() {
         r_checkout.status_code().as_u16(),
         404,
         "checkout/execute route must exist (dev.ucp.shopping.checkout)"
+    );
+
+    let identity_envelope = serde_json::json!({
+        "capability": "dev.ucp.identity.linking",
+        "payload": {
+            "tenant_id": "t",
+            "merchant_id": "m",
+            "agent_id": "agent-1",
+            "link_token": "link-token"
+        }
+    });
+    let r_identity = server
+        .post("/api/v1/a2a/identity/link")
+        .json(&identity_envelope)
+        .await;
+    assert_ne!(
+        r_identity.status_code().as_u16(),
+        404,
+        "identity link route must exist (dev.ucp.identity.linking)"
     );
 }
 

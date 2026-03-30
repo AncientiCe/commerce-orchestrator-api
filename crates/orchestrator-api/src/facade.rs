@@ -1,5 +1,6 @@
 //! Library facade: single entrypoint for agents/apps.
 
+use crate::adapters::IdentityLinkRequest;
 use crate::ap2_verification::{
     extract_ap2_mandate_record, verify_ap2_strict, Ap2VerificationError,
 };
@@ -9,12 +10,14 @@ use orchestrator_core::contract::{
     TransactionResult,
 };
 use orchestrator_core::policy::PolicyEngine;
+use orchestrator_core::{UCP_LATEST_VERSION, UCP_SUPPORTED_VERSIONS};
 use orchestrator_runtime::{ProviderSet, Runner, RunnerError};
 use provider_contracts::{
     CatalogProvider, GeoProvider, PaymentOperationResult, PaymentProvider, PricingProvider,
     ReceiptProvider, TaxProvider,
 };
 use std::sync::Arc;
+use std::time::Instant;
 
 /// Orchestrator facade: cart commands and checkout execution.
 #[derive(Clone)]
@@ -228,6 +231,57 @@ impl OrchestratorFacade {
             .await
             .map_err(FacadeError::Runner)
     }
+
+    /// Link a platform identity to an agent-facing commerce context.
+    /// This lightweight endpoint keeps compatibility while exposing standardized identity-linking.
+    pub async fn link_identity(
+        &self,
+        request: IdentityLinkRequest,
+    ) -> Result<IdentityLinkResult, FacadeError> {
+        let started = Instant::now();
+        orchestrator_observability::incr("identity_link_requests_total");
+
+        if request.tenant_id.trim().is_empty()
+            || request.merchant_id.trim().is_empty()
+            || request.agent_id.trim().is_empty()
+            || request.link_token.trim().is_empty()
+        {
+            orchestrator_observability::incr("identity_link_errors_total");
+            orchestrator_observability::observe_operation(
+                "identity_link",
+                "error",
+                started.elapsed().as_secs_f64(),
+            );
+            return Err(FacadeError::IdentityLink(
+                "tenant_id, merchant_id, agent_id, and link_token are required".to_string(),
+            ));
+        }
+
+        let result = IdentityLinkResult {
+            ucp_version: UCP_LATEST_VERSION.to_string(),
+            supported_versions: UCP_SUPPORTED_VERSIONS
+                .iter()
+                .map(|v| (*v).to_string())
+                .collect(),
+            link_id: format!("idlink_{}", uuid::Uuid::new_v4()),
+            status: "linked".to_string(),
+        };
+        orchestrator_observability::incr("identity_link_success_total");
+        orchestrator_observability::observe_operation(
+            "identity_link",
+            "success",
+            started.elapsed().as_secs_f64(),
+        );
+        Ok(result)
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct IdentityLinkResult {
+    pub ucp_version: String,
+    pub supported_versions: Vec<String>,
+    pub link_id: String,
+    pub status: String,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -238,4 +292,6 @@ pub enum FacadeError {
     Authz(#[from] AuthzError),
     #[error("AP2 verification failed: {0}")]
     Ap2Verification(#[from] Ap2VerificationError),
+    #[error("identity linking failed: {0}")]
+    IdentityLink(String),
 }

@@ -17,12 +17,33 @@ pub struct A2AHandoffProfile {
     pub protocol: String,
     pub version: String,
     pub delegated_capability: String,
+    #[serde(default)]
+    pub supported_versions: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Ap2PaymentMetadata {
     pub handler_id: Option<String>,
     pub consent_proof: Option<String>,
+}
+
+pub const A2A_PROFILE_VERSION: &str = "0.3.0";
+pub const A2A_SUPPORTED_PROFILE_VERSIONS: &[&str] = &[A2A_PROFILE_VERSION, "1.0"];
+
+pub fn is_supported_a2a_profile_version(version: &str) -> bool {
+    A2A_SUPPORTED_PROFILE_VERSIONS.contains(&version)
+}
+
+pub fn default_a2a_handoff_profile(delegated_capability: impl Into<String>) -> A2AHandoffProfile {
+    A2AHandoffProfile {
+        protocol: "a2a".to_string(),
+        version: A2A_PROFILE_VERSION.to_string(),
+        delegated_capability: delegated_capability.into(),
+        supported_versions: A2A_SUPPORTED_PROFILE_VERSIONS
+            .iter()
+            .map(|v| (*v).to_string())
+            .collect(),
+    }
 }
 
 pub fn extract_ap2_metadata(request: &CheckoutRequest) -> Ap2PaymentMetadata {
@@ -46,6 +67,24 @@ const CART_CAPABILITIES: &[&str] = &[
     "ucp.shopping.cart",
     "cart",
 ];
+
+/// Identity-linking capability IDs accepted for identity-linking operations.
+const IDENTITY_LINKING_CAPABILITIES: &[&str] = &[
+    "dev.ucp.identity.linking",
+    "dev.ucp.identity.link",
+    "identity.linking",
+    "identity_linking",
+];
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IdentityLinkRequest {
+    pub tenant_id: String,
+    pub merchant_id: String,
+    pub agent_id: String,
+    pub link_token: String,
+    #[serde(default)]
+    pub user_reference: Option<String>,
+}
 
 /// Normalize an A2A-style checkout envelope (JSON) into a CheckoutRequest.
 /// Expects `{ "capability": "<id>", "payload": { ... CheckoutRequest shape ... } }`.
@@ -114,6 +153,33 @@ pub fn normalize_a2a_cart_envelope(
         .ok_or_else(|| "missing command".to_string())?;
     let cmd = cart_value_to_command(cmd_value)?;
     Ok((cmd, cart_id))
+}
+
+/// Normalize an A2A-style identity-linking envelope into IdentityLinkRequest.
+/// Expects `{ "capability": "<id>", "payload": { ... IdentityLinkRequest shape ... } }`.
+pub fn normalize_a2a_identity_link_envelope(
+    value: &serde_json::Value,
+) -> Result<IdentityLinkRequest, String> {
+    let obj = value
+        .as_object()
+        .ok_or_else(|| "A2A envelope must be a JSON object".to_string())?;
+    let capability = obj
+        .get("capability")
+        .and_then(|c| c.as_str())
+        .ok_or_else(|| "missing or invalid capability".to_string())?;
+    if !IDENTITY_LINKING_CAPABILITIES.contains(&capability)
+        && !capability.contains("identity")
+        && !capability.contains("link")
+    {
+        return Err(format!(
+            "unsupported identity linking capability: {}",
+            capability
+        ));
+    }
+    let payload = obj
+        .get("payload")
+        .ok_or_else(|| "missing payload".to_string())?;
+    serde_json::from_value(payload.clone()).map_err(|e| format!("invalid identity payload: {}", e))
 }
 
 fn cart_value_to_command(v: &serde_json::Value) -> Result<CartCommand, String> {
