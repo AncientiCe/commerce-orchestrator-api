@@ -105,6 +105,9 @@ async fn outbox_delivery_success_consumes_message() {
                 token_or_reference: "tok".to_string(),
                 ap2_consent_proof: None,
                 payment_handler_id: None,
+                payment_method_type: None,
+                mpp_method: None,
+                mpp_intent: None,
             },
             idempotency_key: "key".to_string(),
         })
@@ -174,6 +177,9 @@ async fn outbox_delivery_failure_increments_attempts_then_dead_letter() {
                 token_or_reference: "tok".to_string(),
                 ap2_consent_proof: None,
                 payment_handler_id: None,
+                payment_method_type: None,
+                mpp_method: None,
+                mpp_intent: None,
             },
             idempotency_key: "key".to_string(),
         })

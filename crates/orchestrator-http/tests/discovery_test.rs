@@ -110,6 +110,10 @@ async fn well_known_ucp_advertises_checkout_and_discount_capabilities() {
             .and_then(|v| v.as_bool()),
         Some(false)
     );
+    assert_eq!(
+        flags.get("dev.ucp.payments.mpp").and_then(|v| v.as_bool()),
+        Some(false)
+    );
 }
 
 #[tokio::test]

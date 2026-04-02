@@ -91,6 +91,9 @@ pub async fn run_happy_path_checkout(
                 token_or_reference: "tok_123".to_string(),
                 ap2_consent_proof: Some("proof_abc".to_string()),
                 payment_handler_id: Some("mock_handler".to_string()),
+                payment_method_type: None,
+                mpp_method: None,
+                mpp_intent: None,
             },
             idempotency_key: "idem_1".to_string(),
         })

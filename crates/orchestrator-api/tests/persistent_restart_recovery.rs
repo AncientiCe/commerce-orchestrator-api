@@ -87,6 +87,9 @@ async fn persistent_runner_restart_returns_same_idempotent_result() {
             token_or_reference: "tok_x".to_string(),
             ap2_consent_proof: Some("proof_1".to_string()),
             payment_handler_id: Some("mock".to_string()),
+            payment_method_type: None,
+            mpp_method: None,
+            mpp_intent: None,
         },
         idempotency_key: "idem_restart_test".to_string(),
     };
@@ -197,6 +200,9 @@ async fn payment_lifecycle_state_survives_restart() {
                 token_or_reference: "tok_x".to_string(),
                 ap2_consent_proof: Some("proof_2".to_string()),
                 payment_handler_id: Some("mock".to_string()),
+                payment_method_type: None,
+                mpp_method: None,
+                mpp_intent: None,
             },
             idempotency_key: "idem_lifecycle_restart".to_string(),
         })

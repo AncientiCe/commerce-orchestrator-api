@@ -27,6 +27,12 @@ pub struct Ap2PaymentMetadata {
     pub consent_proof: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MppPaymentMetadata {
+    pub method: Option<String>,
+    pub intent: Option<String>,
+}
+
 pub const A2A_PROFILE_VERSION: &str = "0.3.0";
 pub const A2A_SUPPORTED_PROFILE_VERSIONS: &[&str] = &[A2A_PROFILE_VERSION, "1.0"];
 
@@ -50,6 +56,13 @@ pub fn extract_ap2_metadata(request: &CheckoutRequest) -> Ap2PaymentMetadata {
     Ap2PaymentMetadata {
         handler_id: request.payment_intent.payment_handler_id.clone(),
         consent_proof: request.payment_intent.ap2_consent_proof.clone(),
+    }
+}
+
+pub fn extract_mpp_metadata(request: &CheckoutRequest) -> MppPaymentMetadata {
+    MppPaymentMetadata {
+        method: request.payment_intent.mpp_method.clone(),
+        intent: request.payment_intent.mpp_intent.clone(),
     }
 }
 

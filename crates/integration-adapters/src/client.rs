@@ -91,6 +91,18 @@ pub async fn post_json_with_retry<T: serde::Serialize + Send>(
     correlation_id: Option<&str>,
     config: &ClientConfig,
 ) -> Result<reqwest::Response, AdapterError> {
+    post_json_with_retry_with_headers(client, url, body, correlation_id, config, &[]).await
+}
+
+/// Execute a POST request with JSON body, retries, and optional extra headers.
+pub async fn post_json_with_retry_with_headers<T: serde::Serialize + Send>(
+    client: &Client,
+    url: &str,
+    body: &T,
+    correlation_id: Option<&str>,
+    config: &ClientConfig,
+    extra_headers: &[(String, String)],
+) -> Result<reqwest::Response, AdapterError> {
     let effective_correlation_id = correlation_id
         .map(str::to_string)
         .or_else(orchestrator_observability::current_correlation_id);
@@ -100,6 +112,9 @@ pub async fn post_json_with_retry<T: serde::Serialize + Send>(
         let mut req = client.post(url).json(body);
         if let Some(cid) = effective_correlation_id.as_deref() {
             req = req.header("X-Correlation-ID", cid);
+        }
+        for (name, value) in extra_headers {
+            req = req.header(name, value);
         }
         match req.send().await {
             Ok(resp) => {

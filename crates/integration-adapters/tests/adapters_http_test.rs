@@ -6,12 +6,13 @@ use integration_adapters::{
 };
 use orchestrator_core::contract::{
     CartId, CartLineProjection, CartProjection, CartStatus, CheckoutRequest, PaymentIntent,
-    PaymentLifecycleRequest, PaymentState, TotalsBreakdown, TransactionResult, TransactionStatus,
+    PaymentLifecycleRequest, PaymentMethodType, PaymentState, TotalsBreakdown, TransactionResult,
+    TransactionStatus,
 };
 use provider_contracts::{
     GeoProvider, PaymentProvider, PricingProvider, ReceiptProvider, TaxProvider,
 };
-use wiremock::matchers::{method, path};
+use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 fn minimal_cart() -> CartProjection {
@@ -105,6 +106,9 @@ async fn geo_check_returns_allowed() {
             token_or_reference: "tok".to_string(),
             ap2_consent_proof: None,
             payment_handler_id: None,
+            payment_method_type: None,
+            mpp_method: None,
+            mpp_intent: None,
         },
         idempotency_key: "key".to_string(),
     };
@@ -139,12 +143,57 @@ async fn payment_authorize_returns_auth_result() {
             token_or_reference: "tok".to_string(),
             ap2_consent_proof: None,
             payment_handler_id: None,
+            payment_method_type: None,
+            mpp_method: None,
+            mpp_intent: None,
         },
         idempotency_key: "key".to_string(),
     };
     let result = adapter.authorize(&request).await.unwrap();
     assert!(result.authorized);
     assert_eq!(result.reference, "ref-123");
+}
+
+#[tokio::test]
+async fn payment_authorize_forwards_mpp_headers() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/authorize"))
+        .and(header("X-Payment-Method", "mpp"))
+        .and(header("X-Mpp-Method", "stripe"))
+        .and(header("X-Mpp-Intent", "charge"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "authorized": true,
+            "reference": "ref-mpp"
+        })))
+        .mount(&server)
+        .await;
+
+    let config = ClientConfig::default();
+    let adapter = PaymentHttpAdapter::new(server.uri(), config).unwrap();
+    let request = CheckoutRequest {
+        tenant_id: "t1".to_string(),
+        merchant_id: "m1".to_string(),
+        cart_id: CartId::new(),
+        cart_version: 1,
+        currency: "USD".to_string(),
+        customer: None,
+        location: None,
+        payment_intent: PaymentIntent {
+            amount_minor: 1000,
+            token_or_reference: "mpp_credential".to_string(),
+            ap2_consent_proof: None,
+            payment_handler_id: None,
+            payment_method_type: Some(PaymentMethodType::Mpp),
+            mpp_method: Some("stripe".to_string()),
+            mpp_intent: Some("charge".to_string()),
+        },
+        idempotency_key: "key-mpp".to_string(),
+    };
+
+    let result = adapter.authorize(&request).await.unwrap();
+    assert!(result.authorized);
+    assert_eq!(result.reference, "ref-mpp");
 }
 
 #[tokio::test]

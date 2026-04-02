@@ -1,6 +1,6 @@
 //! Schema validation and policy prechecks for cart commands and checkout.
 
-use crate::contract::{CartCommand, CheckoutRequest, PaymentIntent};
+use crate::contract::{CartCommand, CheckoutRequest, PaymentIntent, PaymentMethodType};
 
 #[derive(Debug, Clone)]
 pub struct ValidationResult {
@@ -112,5 +112,102 @@ fn validate_payment_intent(intent: &PaymentIntent, errors: &mut Vec<String>) {
         .is_some_and(|handler| handler.is_empty())
     {
         errors.push("payment_handler_id cannot be empty".to_string());
+    }
+    if intent
+        .mpp_method
+        .as_ref()
+        .is_some_and(|method| method.is_empty())
+    {
+        errors.push("mpp_method cannot be empty".to_string());
+    }
+    if intent
+        .mpp_intent
+        .as_ref()
+        .is_some_and(|intent_value| intent_value.is_empty())
+    {
+        errors.push("mpp_intent cannot be empty".to_string());
+    }
+
+    if intent.payment_method_type == Some(PaymentMethodType::Mpp) {
+        if intent.mpp_method.is_none() {
+            errors.push("mpp_method required for payment_method_type=mpp".to_string());
+        }
+        if intent.mpp_intent.is_none() {
+            errors.push("mpp_intent required for payment_method_type=mpp".to_string());
+        }
+        if intent.ap2_consent_proof.is_some() || intent.payment_handler_id.is_some() {
+            errors.push(
+                "ap2_consent_proof and payment_handler_id are not allowed for payment_method_type=mpp"
+                    .to_string(),
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::contract::{CartId, CheckoutRequest, PaymentMethodType};
+
+    #[test]
+    fn rejects_mpp_without_method_and_intent() {
+        let req = CheckoutRequest {
+            tenant_id: "tenant_a".to_string(),
+            merchant_id: "merchant_a".to_string(),
+            cart_id: CartId::new(),
+            cart_version: 1,
+            currency: "USD".to_string(),
+            customer: None,
+            location: None,
+            payment_intent: PaymentIntent {
+                amount_minor: 100,
+                token_or_reference: "mpp_credential".to_string(),
+                ap2_consent_proof: None,
+                payment_handler_id: None,
+                payment_method_type: Some(PaymentMethodType::Mpp),
+                mpp_method: None,
+                mpp_intent: None,
+            },
+            idempotency_key: "idem".to_string(),
+        };
+
+        let result = validate_checkout_request(&req);
+        assert!(!result.valid);
+        assert!(result
+            .errors
+            .contains(&"mpp_method required for payment_method_type=mpp".to_string()));
+        assert!(result
+            .errors
+            .contains(&"mpp_intent required for payment_method_type=mpp".to_string()));
+    }
+
+    #[test]
+    fn rejects_mpp_when_ap2_fields_are_present() {
+        let req = CheckoutRequest {
+            tenant_id: "tenant_a".to_string(),
+            merchant_id: "merchant_a".to_string(),
+            cart_id: CartId::new(),
+            cart_version: 1,
+            currency: "USD".to_string(),
+            customer: None,
+            location: None,
+            payment_intent: PaymentIntent {
+                amount_minor: 100,
+                token_or_reference: "mpp_credential".to_string(),
+                ap2_consent_proof: Some("ap2-proof".to_string()),
+                payment_handler_id: Some("handler".to_string()),
+                payment_method_type: Some(PaymentMethodType::Mpp),
+                mpp_method: Some("stripe".to_string()),
+                mpp_intent: Some("charge".to_string()),
+            },
+            idempotency_key: "idem".to_string(),
+        };
+
+        let result = validate_checkout_request(&req);
+        assert!(!result.valid);
+        assert!(result.errors.contains(
+            &"ap2_consent_proof and payment_handler_id are not allowed for payment_method_type=mpp"
+                .to_string()
+        ));
     }
 }

@@ -1,11 +1,12 @@
 use orchestrator_api::{
     authorize_checkout, build_well_known_manifest_with_version, extract_ap2_metadata,
-    normalize_a2a_identity_link_envelope, redact_checkout_request, A2AHandoffProfile, AuthContext,
-    FacadeError, OrchestratorFacade, UcpCheckoutEnvelope, A2A_PROFILE_VERSION,
+    extract_mpp_metadata, normalize_a2a_checkout_envelope, normalize_a2a_identity_link_envelope,
+    redact_checkout_request, A2AHandoffProfile, AuthContext, FacadeError, OrchestratorFacade,
+    UcpCheckoutEnvelope, A2A_PROFILE_VERSION,
 };
 use orchestrator_core::contract::{
     AddItemPayload, CartCommand, CartId, CheckoutRequest, CreateCartPayload, CustomerHint,
-    PaymentIntent, StartCheckoutPayload,
+    PaymentIntent, PaymentMethodType, StartCheckoutPayload,
 };
 use orchestrator_core::policy::PolicyEngine;
 use orchestrator_runtime::RunnerError;
@@ -50,6 +51,9 @@ fn rejects_missing_scope() {
             token_or_reference: "tok".to_string(),
             ap2_consent_proof: None,
             payment_handler_id: None,
+            payment_method_type: None,
+            mpp_method: None,
+            mpp_intent: None,
         },
         idempotency_key: "k".to_string(),
     };
@@ -76,6 +80,9 @@ fn rejects_tenant_mismatch() {
             token_or_reference: "tok".to_string(),
             ap2_consent_proof: None,
             payment_handler_id: None,
+            payment_method_type: None,
+            mpp_method: None,
+            mpp_intent: None,
         },
         idempotency_key: "k".to_string(),
     };
@@ -97,6 +104,9 @@ fn extracts_ap2_metadata() {
             token_or_reference: "tok".to_string(),
             ap2_consent_proof: Some("proof".to_string()),
             payment_handler_id: Some("handler".to_string()),
+            payment_method_type: None,
+            mpp_method: None,
+            mpp_intent: None,
         },
         idempotency_key: "k".to_string(),
     };
@@ -112,6 +122,61 @@ fn extracts_ap2_metadata() {
     };
     let ap2 = extract_ap2_metadata(&req);
     assert_eq!(ap2.handler_id.as_deref(), Some("handler"));
+}
+
+#[test]
+fn extracts_mpp_metadata() {
+    let req = CheckoutRequest {
+        tenant_id: "tenant_a".to_string(),
+        merchant_id: "m".to_string(),
+        cart_id: CartId::new(),
+        cart_version: 1,
+        currency: "USD".to_string(),
+        customer: None,
+        location: None,
+        payment_intent: PaymentIntent {
+            amount_minor: 100,
+            token_or_reference: "mpp_credential".to_string(),
+            ap2_consent_proof: None,
+            payment_handler_id: None,
+            payment_method_type: Some(PaymentMethodType::Mpp),
+            mpp_method: Some("stripe".to_string()),
+            mpp_intent: Some("charge".to_string()),
+        },
+        idempotency_key: "k".to_string(),
+    };
+    let mpp = extract_mpp_metadata(&req);
+    assert_eq!(mpp.method.as_deref(), Some("stripe"));
+    assert_eq!(mpp.intent.as_deref(), Some("charge"));
+}
+
+#[test]
+fn normalizes_a2a_checkout_envelope_with_mpp_payment_intent() {
+    let envelope = serde_json::json!({
+        "capability": "dev.ucp.shopping.checkout",
+        "payload": {
+            "tenant_id": "tenant_a",
+            "merchant_id": "m",
+            "cart_id": "00000000-0000-0000-0000-000000000001",
+            "cart_version": 1,
+            "currency": "USD",
+            "payment_intent": {
+                "amount_minor": 100,
+                "token_or_reference": "mpp_credential",
+                "payment_method_type": "mpp",
+                "mpp_method": "stripe",
+                "mpp_intent": "charge"
+            },
+            "idempotency_key": "key-a2a-mpp"
+        }
+    });
+    let req = normalize_a2a_checkout_envelope(&envelope).expect("normalize");
+    assert_eq!(
+        req.payment_intent.payment_method_type,
+        Some(PaymentMethodType::Mpp)
+    );
+    assert_eq!(req.payment_intent.mpp_method.as_deref(), Some("stripe"));
+    assert_eq!(req.payment_intent.mpp_intent.as_deref(), Some("charge"));
 }
 
 #[test]
@@ -213,6 +278,9 @@ async fn ap2_strict_rejects_missing_consent_and_handler() {
             token_or_reference: "tok".to_string(),
             ap2_consent_proof: None,
             payment_handler_id: None,
+            payment_method_type: None,
+            mpp_method: None,
+            mpp_intent: None,
         },
         idempotency_key: "key-ap2".to_string(),
     };
@@ -275,6 +343,9 @@ async fn ap2_strict_accepts_structured_consent_proof() {
                 token_or_reference: "tok".to_string(),
                 ap2_consent_proof: Some(ap2_consent_proof("mock", 4_102_444_800)),
                 payment_handler_id: Some("mock".to_string()),
+                payment_method_type: None,
+                mpp_method: None,
+                mpp_intent: None,
             },
             idempotency_key: "key-ap2-valid".to_string(),
         })
@@ -339,6 +410,9 @@ async fn ap2_strict_rejects_expired_or_mismatched_consent_proof() {
                 token_or_reference: "tok".to_string(),
                 ap2_consent_proof: Some(ap2_consent_proof("mock", 1_700_000_000)),
                 payment_handler_id: Some("mock".to_string()),
+                payment_method_type: None,
+                mpp_method: None,
+                mpp_intent: None,
             },
             idempotency_key: "key-ap2-expired".to_string(),
         })
@@ -360,6 +434,9 @@ async fn ap2_strict_rejects_expired_or_mismatched_consent_proof() {
                 token_or_reference: "tok".to_string(),
                 ap2_consent_proof: Some(ap2_consent_proof("handler_a", 4_102_444_800)),
                 payment_handler_id: Some("handler_b".to_string()),
+                payment_method_type: None,
+                mpp_method: None,
+                mpp_intent: None,
             },
             idempotency_key: "key-ap2-handler".to_string(),
         })
@@ -445,6 +522,9 @@ async fn ap2_strict_rejects_mandate_replay() {
                 token_or_reference: "tok".to_string(),
                 ap2_consent_proof: Some(proof.clone()),
                 payment_handler_id: Some("mock".to_string()),
+                payment_method_type: None,
+                mpp_method: None,
+                mpp_intent: None,
             },
             idempotency_key: "key-ap2-replay-1".to_string(),
         })
@@ -465,6 +545,9 @@ async fn ap2_strict_rejects_mandate_replay() {
                 token_or_reference: "tok".to_string(),
                 ap2_consent_proof: Some(proof),
                 payment_handler_id: Some("mock".to_string()),
+                payment_method_type: None,
+                mpp_method: None,
+                mpp_intent: None,
             },
             idempotency_key: "key-ap2-replay-2".to_string(),
         })
@@ -531,6 +614,9 @@ async fn authorized_checkout_succeeds_for_matching_tenant() {
                     token_or_reference: "tok".to_string(),
                     ap2_consent_proof: None,
                     payment_handler_id: None,
+                    payment_method_type: None,
+                    mpp_method: None,
+                    mpp_intent: None,
                 },
                 idempotency_key: "idem_authz".to_string(),
             },
@@ -557,6 +643,9 @@ fn pii_redaction_redacts_payment_and_customer() {
             token_or_reference: "pm_secret_123".to_string(),
             ap2_consent_proof: Some("proof".to_string()),
             payment_handler_id: Some("h".to_string()),
+            payment_method_type: None,
+            mpp_method: None,
+            mpp_intent: None,
         },
         idempotency_key: "k".to_string(),
     };
@@ -664,6 +753,9 @@ async fn cross_tenant_idempotency_isolation() {
                 token_or_reference: "tok".to_string(),
                 ap2_consent_proof: None,
                 payment_handler_id: None,
+                payment_method_type: None,
+                mpp_method: None,
+                mpp_intent: None,
             },
             idempotency_key: same_key.to_string(),
         })
@@ -683,6 +775,9 @@ async fn cross_tenant_idempotency_isolation() {
                 token_or_reference: "tok".to_string(),
                 ap2_consent_proof: None,
                 payment_handler_id: None,
+                payment_method_type: None,
+                mpp_method: None,
+                mpp_intent: None,
             },
             idempotency_key: same_key.to_string(),
         })
@@ -759,6 +854,9 @@ async fn execute_checkout_rejects_stale_cart_version() {
                 token_or_reference: "tok".to_string(),
                 ap2_consent_proof: None,
                 payment_handler_id: None,
+                payment_method_type: None,
+                mpp_method: None,
+                mpp_intent: None,
             },
             idempotency_key: "key".to_string(),
         })

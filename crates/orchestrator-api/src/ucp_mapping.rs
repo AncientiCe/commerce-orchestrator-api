@@ -29,6 +29,7 @@ pub fn build_well_known_manifest_with_version(
                 ("dev.ucp.shopping.cart.multi_item".to_string(), false),
                 ("dev.ucp.shopping.catalog.lookup".to_string(), false),
                 ("dev.ucp.identity.linking".to_string(), true),
+                ("dev.ucp.payments.mpp".to_string(), false),
             ]),
         },
     }

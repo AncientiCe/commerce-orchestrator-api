@@ -77,6 +77,9 @@ async fn completes_happy_path_transaction() {
                 token_or_reference: "tok_x".to_string(),
                 ap2_consent_proof: Some("proof_1".to_string()),
                 payment_handler_id: Some("mock".to_string()),
+                payment_method_type: None,
+                mpp_method: None,
+                mpp_intent: None,
             },
             idempotency_key: "idem_happy".to_string(),
         })
@@ -134,6 +137,9 @@ async fn idempotency_returns_same_terminal_outcome() {
             token_or_reference: "tok_x".to_string(),
             ap2_consent_proof: Some("proof_2".to_string()),
             payment_handler_id: Some("mock".to_string()),
+            payment_method_type: None,
+            mpp_method: None,
+            mpp_intent: None,
         },
         idempotency_key: "idem_same".to_string(),
     };
@@ -195,6 +201,9 @@ async fn capture_payment_idempotent_under_same_key() {
                 token_or_reference: "tok".to_string(),
                 ap2_consent_proof: None,
                 payment_handler_id: None,
+                payment_method_type: None,
+                mpp_method: None,
+                mpp_intent: None,
             },
             idempotency_key: "idem_cap".to_string(),
         })
@@ -260,6 +269,9 @@ async fn run_reconciliation_returns_no_mismatch_when_in_sync() {
                 token_or_reference: "tok".to_string(),
                 ap2_consent_proof: None,
                 payment_handler_id: None,
+                payment_method_type: None,
+                mpp_method: None,
+                mpp_intent: None,
             },
             idempotency_key: "idem_recon".to_string(),
         })
@@ -339,6 +351,9 @@ async fn dead_letter_replay_roundtrip() {
                 token_or_reference: "tok".to_string(),
                 ap2_consent_proof: None,
                 payment_handler_id: None,
+                payment_method_type: None,
+                mpp_method: None,
+                mpp_intent: None,
             },
             idempotency_key: "idem_dl".to_string(),
         })

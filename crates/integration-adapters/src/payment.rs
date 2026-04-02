@@ -1,10 +1,15 @@
 //! HTTP adapter for the payment component API.
 
 use async_trait::async_trait;
-use orchestrator_core::contract::{CheckoutRequest, PaymentLifecycleRequest, PaymentState};
+use orchestrator_core::contract::{
+    CheckoutRequest, PaymentLifecycleRequest, PaymentMethodType, PaymentState,
+};
 use provider_contracts::{AuthResult, PaymentError, PaymentOperationResult, PaymentProvider};
 
-use crate::client::{build_client, get_with_retry, post_json_with_retry, ClientConfig};
+use crate::client::{
+    build_client, get_with_retry, post_json_with_retry, post_json_with_retry_with_headers,
+    ClientConfig,
+};
 use crate::error::AdapterError;
 
 /// Response DTO for authorize.
@@ -80,15 +85,41 @@ impl PaymentHttpAdapter {
     fn state_url(&self, transaction_id: &str) -> String {
         format!("{}/state/{}", self.base(), transaction_id)
     }
+
+    fn mpp_headers(&self, request: &CheckoutRequest) -> Vec<(String, String)> {
+        if request.payment_intent.payment_method_type != Some(PaymentMethodType::Mpp) {
+            return Vec::new();
+        }
+        let mut headers = vec![("X-Payment-Method".to_string(), "mpp".to_string())];
+        if let Some(method) = request.payment_intent.mpp_method.as_ref() {
+            headers.push(("X-Mpp-Method".to_string(), method.clone()));
+        }
+        if let Some(intent) = request.payment_intent.mpp_intent.as_ref() {
+            headers.push(("X-Mpp-Intent".to_string(), intent.clone()));
+        }
+        headers
+    }
 }
 
 #[async_trait]
 impl PaymentProvider for PaymentHttpAdapter {
     async fn authorize(&self, request: &CheckoutRequest) -> Result<AuthResult, PaymentError> {
         let url = self.authorize_url();
-        let resp = post_json_with_retry(&self.client, &url, request, None::<&str>, &self.config)
+        let headers = self.mpp_headers(request);
+        let resp = if headers.is_empty() {
+            post_json_with_retry(&self.client, &url, request, None::<&str>, &self.config).await
+        } else {
+            post_json_with_retry_with_headers(
+                &self.client,
+                &url,
+                request,
+                None::<&str>,
+                &self.config,
+                &headers,
+            )
             .await
-            .map_err(PaymentError::from)?;
+        }
+        .map_err(PaymentError::from)?;
         let body: AuthResponse = resp
             .json()
             .await

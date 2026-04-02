@@ -104,6 +104,19 @@ pub struct PaymentIntent {
     pub token_or_reference: String,
     pub ap2_consent_proof: Option<String>,
     pub payment_handler_id: Option<String>,
+    #[serde(default)]
+    pub payment_method_type: Option<PaymentMethodType>,
+    #[serde(default)]
+    pub mpp_method: Option<String>,
+    #[serde(default)]
+    pub mpp_intent: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PaymentMethodType {
+    Ap2,
+    Mpp,
 }
 
 /// Cart projection returned from GetCart / after mutations: lines, totals, tax/geo flags.

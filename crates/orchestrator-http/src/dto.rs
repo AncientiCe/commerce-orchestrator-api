@@ -3,8 +3,9 @@
 use orchestrator_core::contract::{
     AddItemPayload, ApplyAdjustmentPayload, CartCommand, CartId, CartLineProjection,
     CartProjection, CartStatus, CheckoutRequest, CreateCartPayload, CustomerHint, GetCartPayload,
-    LocationHint, PaymentIntent, PaymentLifecycleRequest, PaymentState, RemoveItemPayload,
-    StartCheckoutPayload, TransactionResult, TransactionStatus, UpdateItemQtyPayload,
+    LocationHint, PaymentIntent, PaymentLifecycleRequest, PaymentMethodType, PaymentState,
+    RemoveItemPayload, StartCheckoutPayload, TransactionResult, TransactionStatus,
+    UpdateItemQtyPayload,
 };
 use orchestrator_core::{UCP_LATEST_VERSION, UCP_SUPPORTED_VERSIONS};
 use serde::{Deserialize, Serialize};
@@ -196,6 +197,12 @@ pub struct PaymentIntentDto {
     pub token_or_reference: String,
     pub ap2_consent_proof: Option<String>,
     pub payment_handler_id: Option<String>,
+    #[serde(default)]
+    pub payment_method_type: Option<String>,
+    #[serde(default)]
+    pub mpp_method: Option<String>,
+    #[serde(default)]
+    pub mpp_intent: Option<String>,
 }
 
 impl TryFrom<CheckoutRequestDto> for CheckoutRequest {
@@ -222,6 +229,16 @@ impl TryFrom<CheckoutRequestDto> for CheckoutRequest {
                 token_or_reference: dto.payment_intent.token_or_reference,
                 ap2_consent_proof: dto.payment_intent.ap2_consent_proof,
                 payment_handler_id: dto.payment_intent.payment_handler_id,
+                payment_method_type: match dto.payment_intent.payment_method_type.as_deref() {
+                    Some("ap2") => Some(PaymentMethodType::Ap2),
+                    Some("mpp") => Some(PaymentMethodType::Mpp),
+                    Some(other) => {
+                        return Err(format!("unsupported payment_method_type: {}", other));
+                    }
+                    None => None,
+                },
+                mpp_method: dto.payment_intent.mpp_method,
+                mpp_intent: dto.payment_intent.mpp_intent,
             },
             idempotency_key: dto.idempotency_key,
         })

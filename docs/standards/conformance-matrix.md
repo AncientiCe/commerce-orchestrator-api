@@ -10,6 +10,7 @@ This document records target protocol versions and the Commerce Orchestrator's c
 | A2A (Agent-to-Agent) | 0.3.0 (with 1.0 compatibility mapping) | Delegated capability handoff; envelope normalization |
 | MCP (Model Context Protocol) | As used by tool/context consumers | Tool discovery and invocation mapping |
 | AP2 (Agent Payments Protocol) | 0.1 | [AP2 spec](https://ap2-protocol.org/); Payment/Cart/Intent mandates, VDCs |
+| MPP (Machine Payments Protocol) | 2026 protocol stream | [MPP protocol](https://mpp.dev/protocol/); HTTP 402 challenge/credential/receipt flows and method/intent metadata |
 
 ## Conformance Matrix
 
@@ -51,12 +52,22 @@ Status values: **required** (must pass for claimed alignment), **optional** (sup
 | Mandate/credential verification (strict mode) | required when AP2 mode enabled | When AP2_STRICT=1 or equivalent: verify structured consent proof fields, signature presence, issuer trust policy, expiry, and payment_handler binding; reject on invalid or missing required artifacts | ap2_verification tests |
 | Replay protection for mandates | required | Mandate ID deduplication prevents AP2 consent proof replay until mandate expiry | `authz_and_adapters` replay test; runtime `MandateDedupeStore` |
 
+### MPP (Machine Payments Protocol)
+
+| Capability | Status | Acceptance Criteria | Evidence |
+|-------------|--------|---------------------|----------|
+| Payment intent MPP fields | required | `CheckoutRequest.payment_intent` accepts `payment_method_type="mpp"`, `mpp_method`, and `mpp_intent`; MPP credentials are supplied in `token_or_reference` | `contract.rs`, `validation.rs`, `authz_and_adapters` |
+| MPP metadata extraction for audit | required | Adapter extraction provides method/intent metadata without exposing credential payloads in logs | `adapters.rs`, `authz_and_adapters` |
+| MPP capability flag in discovery | required | Discovery capability flags include `dev.ucp.payments.mpp` for staged rollout signaling | `ucp_mapping.rs`, `discovery_test` |
+| Downstream payment adapter forwarding hints | optional | HTTP payment adapter forwards MPP context to downstream payment services (`X-Payment-Method`, `X-Mpp-Method`, `X-Mpp-Intent`) when payment method is MPP | `integration-adapters/src/payment.rs`, `adapters_http_test` |
+
 ## Acceptance Criteria (Summary)
 
 1. **Discovery**: A client can GET `/.well-known/ucp` and learn the orchestrator's capabilities, supported profile versions, and REST base URL; every advertised capability is implemented.
 2. **REST**: All documented cart, checkout, and payment endpoints behave as in the consumption guide; auth and tenant checks enforced.
 3. **A2A/MCP**: Adapter layer converts A2A (and optionally MCP) requests into domain types and executes via the same facade; policy and idempotency unchanged. Identity-linking envelopes are normalized and handled by the same API layer.
 4. **AP2**: Payment intent carries AP2-related fields; when strict AP2 mode is on, structured consent proof verification runs and fails closed on invalid, expired, untrusted, or mismatched artifacts.
+5. **MPP**: Payment intent can carry MPP method metadata for machine-payment credentials; discovery advertises MPP capability flag and payment adapters can forward MPP hints to downstream payment infrastructure.
 
 ## Machine-Readable Conformance (for CI)
 

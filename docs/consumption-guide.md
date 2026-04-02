@@ -87,6 +87,13 @@ Command kinds and their fields:
 
 **Request:** `CheckoutRequestDto` — `tenant_id`, `merchant_id`, `cart_id`, `cart_version`, `currency`, optional `customer`, optional `location`, `payment_intent` (e.g. `amount_minor`, `token_or_reference`), `idempotency_key`.
 
+MPP note:
+
+- For machine payments, set `payment_intent.payment_method_type` to `mpp`.
+- Put the machine payment credential/token in `payment_intent.token_or_reference`.
+- Include `payment_intent.mpp_method` (for example `stripe`, `tempo`) and `payment_intent.mpp_intent` (for example `charge`, `session`).
+- Do not mix AP2 fields (`ap2_consent_proof`, `payment_handler_id`) with `payment_method_type = mpp`.
+
 **Response (success):** Transaction result with `transaction_id`, `status`, `totals_breakdown`, `payment_reference`, `receipt_payload`, `correlation_id`, `payment_state`, `order_id`.
 
 ### Identity linking (POST /api/v1/a2a/identity/link)
