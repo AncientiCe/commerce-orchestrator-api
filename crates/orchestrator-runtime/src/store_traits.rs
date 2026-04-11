@@ -109,6 +109,7 @@ pub trait DeadLetterStore: Send + Sync {
 pub trait OrderStore: Send + Sync {
     async fn put(&self, record: OrderRecord) -> Result<(), StoreError>;
     async fn get(&self, order_id: &str) -> Option<OrderRecord>;
+    async fn list_by_tenant(&self, tenant_id: &str) -> Result<Vec<OrderRecord>, StoreError>;
     async fn append_event(
         &self,
         order_id: &str,

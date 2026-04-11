@@ -12,6 +12,7 @@ use crate::payment_state::{
 use crate::persistence;
 use crate::store_error::StoreError;
 use crate::store_traits::{OutboxDeliverer, *};
+use crate::webhooks::{InMemoryWebhookStore, WebhookRegistration, WebhookStore};
 use orchestrator_core::contract::{PaymentState, *};
 use orchestrator_core::policy::{PolicyCheckResult, PolicyEngine};
 use orchestrator_core::state_machine::{
@@ -115,6 +116,7 @@ pub struct Runner {
     order_store: Arc<dyn OrderStore>,
     payment_state_store: Arc<dyn PaymentStateStore>,
     mandate_dedupe_store: Arc<dyn MandateDedupeStore>,
+    webhook_store: Arc<dyn WebhookStore>,
     policy: PolicyEngine,
     outbox_deliverer: Option<Arc<dyn OutboxDeliverer>>,
 }
@@ -135,6 +137,7 @@ impl Runner {
             Arc::new(InMemoryOrderStore::default()),
             Arc::new(InMemoryPaymentStateStore::default()),
             Arc::new(InMemoryMandateDedupeStore::default()),
+            Arc::new(InMemoryWebhookStore::default()),
             None,
         )
     }
@@ -158,6 +161,7 @@ impl Runner {
             order_store: stores.order_store(),
             payment_state_store: stores.payment_state_store(),
             mandate_dedupe_store: stores.mandate_dedupe_store(),
+            webhook_store: Arc::new(InMemoryWebhookStore::default()),
             policy,
             outbox_deliverer: None,
         })
@@ -182,6 +186,7 @@ impl Runner {
             order_store: stores.order_store(),
             payment_state_store: stores.payment_state_store(),
             mandate_dedupe_store: stores.mandate_dedupe_store(),
+            webhook_store: Arc::new(InMemoryWebhookStore::default()),
             policy,
             outbox_deliverer: None,
         })
@@ -201,6 +206,7 @@ impl Runner {
         order_store: Arc<dyn OrderStore>,
         payment_state_store: Arc<dyn PaymentStateStore>,
         mandate_dedupe_store: Arc<dyn MandateDedupeStore>,
+        webhook_store: Arc<dyn WebhookStore>,
         outbox_deliverer: Option<Arc<dyn OutboxDeliverer>>,
     ) -> Self {
         Self {
@@ -215,6 +221,7 @@ impl Runner {
             order_store,
             payment_state_store,
             mandate_dedupe_store,
+            webhook_store,
             policy,
             outbox_deliverer,
         }
@@ -521,6 +528,7 @@ impl Runner {
         self.order_store
             .put(OrderRecord {
                 order_id: order_id.clone(),
+                tenant_id: request.tenant_id.clone(),
                 transaction_id: committed.transaction_id.clone(),
                 checkout_id: request.cart_id,
                 status: OrderStatus::Created,
@@ -531,6 +539,7 @@ impl Runner {
                     occurred_at: chrono::Utc::now(),
                 }],
                 adjustments: Vec::new(),
+                created_at: chrono::Utc::now(),
             })
             .await?;
 
@@ -600,6 +609,7 @@ impl Runner {
             if delivery_failed {
                 msg.attempts += 1;
                 if msg.attempts > max_attempts {
+                    orchestrator_observability::incr("outbox_dead_letter_total");
                     self.dead_letter.put(msg).await?;
                 } else {
                     self.outbox.enqueue(msg).await?;
@@ -723,6 +733,66 @@ impl Runner {
     /// Read our stored payment state for one transaction.
     pub async fn get_payment_state(&self, transaction_id: &str) -> Option<PaymentState> {
         self.payment_state_store.get(transaction_id).await
+    }
+
+    /// Retrieve an order by ID.
+    pub async fn get_order(&self, order_id: &str) -> Option<OrderRecord> {
+        self.order_store.get(order_id).await
+    }
+
+    /// List orders for a given tenant, most recent first.
+    pub async fn list_orders(&self, tenant_id: &str) -> Result<Vec<OrderRecord>, RunnerError> {
+        self.order_store
+            .list_by_tenant(tenant_id)
+            .await
+            .map_err(RunnerError::Store)
+    }
+
+    /// Register a webhook for event delivery.
+    pub async fn register_webhook(
+        &self,
+        registration: WebhookRegistration,
+    ) -> Result<(), RunnerError> {
+        self.webhook_store
+            .register(registration)
+            .await
+            .map_err(RunnerError::Store)
+    }
+
+    /// Unregister a webhook by ID. Returns true if it existed.
+    pub async fn unregister_webhook(&self, id: &str) -> Result<bool, RunnerError> {
+        self.webhook_store
+            .unregister(id)
+            .await
+            .map_err(RunnerError::Store)
+    }
+
+    /// List webhooks for a tenant.
+    pub async fn list_webhooks(
+        &self,
+        tenant_id: &str,
+    ) -> Result<Vec<WebhookRegistration>, RunnerError> {
+        self.webhook_store
+            .list_by_tenant(tenant_id)
+            .await
+            .map_err(RunnerError::Store)
+    }
+
+    /// Get the webhook store (for wiring the webhook deliverer).
+    pub fn webhook_store(&self) -> Arc<dyn WebhookStore> {
+        Arc::clone(&self.webhook_store)
+    }
+
+    /// Look up a catalog item by ID.
+    pub async fn lookup_catalog_item(
+        &self,
+        item_id: &str,
+    ) -> Result<provider_contracts::CatalogItem, RunnerError> {
+        self.providers
+            .catalog
+            .get_item(item_id)
+            .await
+            .map_err(RunnerError::Catalog)
     }
 
     /// Record an AP2 mandate id as seen until expiry. Returns false on replay.

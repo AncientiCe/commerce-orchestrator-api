@@ -16,6 +16,7 @@ pub fn build_well_known_manifest_with_version(
     let selected_version = requested_version
         .filter(|v| UCP_SUPPORTED_VERSIONS.contains(v))
         .unwrap_or(UCP_LATEST_VERSION);
+    let base = base_url.trim_end_matches('/');
     WellKnownUcp {
         ucp: UcpSection {
             version: selected_version.to_string(),
@@ -24,10 +25,11 @@ pub fn build_well_known_manifest_with_version(
                 .map(|v| (*v).to_string())
                 .collect(),
             manifest: CapabilityManifest::for_version(selected_version),
-            rest_endpoint: Some(format!("{}/", base_url.trim_end_matches('/'))),
+            rest_endpoint: Some(format!("{}/", base)),
+            mcp_endpoint: Some(format!("{}/api/v1/mcp/message", base)),
             capability_flags: BTreeMap::from([
                 ("dev.ucp.shopping.cart.multi_item".to_string(), false),
-                ("dev.ucp.shopping.catalog.lookup".to_string(), false),
+                ("dev.ucp.shopping.catalog.lookup".to_string(), true),
                 ("dev.ucp.identity.linking".to_string(), true),
                 ("dev.ucp.payments.mpp".to_string(), false),
             ]),
@@ -47,6 +49,8 @@ pub struct UcpSection {
     pub manifest: CapabilityManifest,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rest_endpoint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mcp_endpoint: Option<String>,
     pub capability_flags: BTreeMap<String, bool>,
 }
 

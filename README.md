@@ -5,7 +5,7 @@
 [![Rust](https://img.shields.io/badge/Rust-stable-orange?logo=rust&logoColor=white)](https://www.rust-lang.org/)
 [![Kubernetes-ready](https://img.shields.io/badge/Kubernetes-ready-326CE5?logo=kubernetes&logoColor=white)](deploy/README.md)
 [![Protocol Conformance](https://img.shields.io/badge/Protocols-UCP%20%7C%20A2A%20%7C%20AP2%20%7C%20MCP-blueviolet)](docs/standards/conformance-matrix.md)
-[![v0.3.1](https://img.shields.io/badge/version-0.3.1-blue)](CHANGELOG.md)
+[![v0.4.0](https://img.shields.io/badge/version-0.4.0-blue)](CHANGELOG.md)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20%2F%20Apache--2.0-green)](LICENSE-MIT)
 [![CI](https://img.shields.io/github/actions/workflow/status/AncientiCe/commerce-orchestrator/ci.yml?branch=main&label=CI)](https://github.com/AncientiCe/commerce-orchestrator/actions)
 
@@ -42,12 +42,16 @@ The Commerce Orchestrator is a middleware API layer. Your clients call its REST 
 - **Observability:** Request IDs, tracing, metrics endpoint; health probes for liveness and readiness.
 - **Deployment:** Docker image, Kubernetes manifests (Deployment, Service, HPA, PDB, NetworkPolicy, ConfigMap, Secret).
 
-## API Surface (REST)
+## API Surface (REST + MCP)
 
 | Area | Endpoints |
 |------|-----------|
 | Cart & checkout | `POST /api/v1/cart/commands`, `POST /api/v1/checkout/execute` |
+| Orders | `GET /api/v1/orders`, `GET /api/v1/orders/:id`, `POST /api/v1/a2a/orders` |
+| Catalog | `GET /api/v1/catalog/items/:id` |
 | Payments | `POST /api/v1/payments/capture`, `void`, `refund` |
+| Webhooks | `POST /api/v1/webhooks`, `GET /api/v1/webhooks`, `DELETE /api/v1/webhooks/:id` |
+| MCP | `POST /api/v1/mcp/message` (JSON-RPC 2.0) |
 | Events | `POST /api/v1/events/incoming` (idempotent) |
 | Operations | `POST /api/v1/ops/outbox/process`, `GET /api/v1/ops/dead-letter`, `POST /api/v1/ops/dead-letter/replay`, `POST /api/v1/ops/reconciliation` |
 | Health | `GET /health/live`, `GET /health/ready`, `GET /metrics` |
@@ -125,6 +129,7 @@ cargo audit
 | `crates/orchestrator-observability` | Audit sink, tracing, metrics helpers. |
 | `crates/orchestrator-api` | Stable facade API for cart commands and checkout. |
 | `crates/orchestrator-http` | HTTP server and routes. |
+| `crates/orchestrator-mcp` | MCP (Model Context Protocol) tool server for AI agent integration. |
 | `crates/integration-adapters` | HTTP clients to catalog, pricing, tax, geo, payment, receipt. |
 | `examples/happy_path` | Runnable end-to-end mock flow. |
 | `examples/consumer_example` | Template for consumer apps (wire providers, run happy-path). |
@@ -139,8 +144,9 @@ This service implements protocol-aligned behavior for agentic commerce:
 - **REST:** Cart, checkout, and payment endpoints match the [consumption guide](docs/consumption-guide.md); auth and tenant isolation are enforced.
 - **A2A:** `POST /api/v1/a2a/checkout` and `POST /api/v1/a2a/cart` accept A2A-style envelopes; requests are normalized to the same domain types and policy as REST.
 - **AP2:** Payment intent supports `ap2_consent_proof` and `payment_handler_id`. With `AP2_STRICT=1`, checkout requires a structured consent proof whose issuer, signature, expiry, and payment handler binding validate before execution; see [SECURITY.md](SECURITY.md).
+- **MCP:** `POST /api/v1/mcp/message` accepts JSON-RPC 2.0 requests; `tools/list`, `tools/call`, `resources/list`, and `resources/read` map to facade operations. Discovery advertises `mcp_endpoint`.
 
-Conformance is asserted by CI (discovery, A2A, and AP2 tests). Target protocol versions and required/optional items are in the [conformance matrix](docs/standards/conformance-matrix.md).
+Conformance is asserted by CI (discovery, A2A, AP2, and MCP tests). Target protocol versions and required/optional items are in the [conformance matrix](docs/standards/conformance-matrix.md).
 
 ## License
 

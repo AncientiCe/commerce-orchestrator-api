@@ -3,9 +3,9 @@
 use orchestrator_core::contract::{
     AddItemPayload, ApplyAdjustmentPayload, CartCommand, CartId, CartLineProjection,
     CartProjection, CartStatus, CheckoutRequest, CreateCartPayload, CustomerHint, GetCartPayload,
-    LocationHint, PaymentIntent, PaymentLifecycleRequest, PaymentMethodType, PaymentState,
-    RemoveItemPayload, StartCheckoutPayload, TransactionResult, TransactionStatus,
-    UpdateItemQtyPayload,
+    LocationHint, OrderAdjustment, OrderEvent, OrderRecord, OrderStatus, PaymentIntent,
+    PaymentLifecycleRequest, PaymentMethodType, PaymentState, RemoveItemPayload,
+    StartCheckoutPayload, TransactionResult, TransactionStatus, UpdateItemQtyPayload,
 };
 use orchestrator_core::{UCP_LATEST_VERSION, UCP_SUPPORTED_VERSIONS};
 use serde::{Deserialize, Serialize};
@@ -449,4 +449,150 @@ impl From<orchestrator_api::IdentityLinkResult> for IdentityLinkResultDto {
             status: result.status,
         }
     }
+}
+
+// ---- Order query ----
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct OrderDto {
+    pub order_id: String,
+    pub tenant_id: String,
+    pub transaction_id: String,
+    pub checkout_id: String,
+    pub status: OrderStatusDto,
+    pub events: Vec<OrderEventDto>,
+    pub adjustments: Vec<OrderAdjustmentDto>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum OrderStatusDto {
+    Created,
+    FulfillmentPending,
+    Fulfilled,
+    Cancelled,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct OrderEventDto {
+    pub id: String,
+    pub event_type: String,
+    pub description: String,
+    pub occurred_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct OrderAdjustmentDto {
+    pub id: String,
+    pub adjustment_type: String,
+    pub amount_minor: i64,
+    pub status: String,
+}
+
+impl From<OrderRecord> for OrderDto {
+    fn from(r: OrderRecord) -> Self {
+        Self {
+            order_id: r.order_id,
+            tenant_id: r.tenant_id,
+            transaction_id: r.transaction_id,
+            checkout_id: r.checkout_id.0.to_string(),
+            status: match r.status {
+                OrderStatus::Created => OrderStatusDto::Created,
+                OrderStatus::FulfillmentPending => OrderStatusDto::FulfillmentPending,
+                OrderStatus::Fulfilled => OrderStatusDto::Fulfilled,
+                OrderStatus::Cancelled => OrderStatusDto::Cancelled,
+                _ => OrderStatusDto::Created,
+            },
+            events: r.events.into_iter().map(OrderEventDto::from).collect(),
+            adjustments: r
+                .adjustments
+                .into_iter()
+                .map(OrderAdjustmentDto::from)
+                .collect(),
+            created_at: r.created_at.to_rfc3339(),
+        }
+    }
+}
+
+impl From<OrderEvent> for OrderEventDto {
+    fn from(e: OrderEvent) -> Self {
+        Self {
+            id: e.id,
+            event_type: e.event_type,
+            description: e.description,
+            occurred_at: e.occurred_at.to_rfc3339(),
+        }
+    }
+}
+
+impl From<OrderAdjustment> for OrderAdjustmentDto {
+    fn from(a: OrderAdjustment) -> Self {
+        Self {
+            id: a.id,
+            adjustment_type: a.adjustment_type,
+            amount_minor: a.amount_minor,
+            status: a.status,
+        }
+    }
+}
+
+// ---- Catalog lookup ----
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct CatalogItemDto {
+    pub id: String,
+    pub title: String,
+    pub price_minor: i64,
+}
+
+impl From<provider_contracts::CatalogItem> for CatalogItemDto {
+    fn from(item: provider_contracts::CatalogItem) -> Self {
+        Self {
+            id: item.id,
+            title: item.title,
+            price_minor: item.price_minor,
+        }
+    }
+}
+
+// ---- Webhook registration ----
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct WebhookRegistrationRequestDto {
+    pub url: String,
+    pub secret: String,
+    #[serde(default)]
+    pub event_filter: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct WebhookRegistrationDto {
+    pub id: String,
+    pub tenant_id: String,
+    pub url: String,
+    pub event_filter: Option<Vec<String>>,
+    pub active: bool,
+}
+
+impl From<orchestrator_runtime::WebhookRegistration> for WebhookRegistrationDto {
+    fn from(r: orchestrator_runtime::WebhookRegistration) -> Self {
+        Self {
+            id: r.id,
+            tenant_id: r.tenant_id,
+            url: r.url,
+            event_filter: r.event_filter,
+            active: r.active,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct WebhookUnregisterRequestDto {
+    pub id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct WebhookUnregisterResponseDto {
+    pub removed: bool,
 }

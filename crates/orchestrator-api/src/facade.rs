@@ -6,8 +6,8 @@ use crate::ap2_verification::{
 };
 use crate::authz::{authorize_checkout, AuthContext, AuthzError};
 use orchestrator_core::contract::{
-    CartCommand, CartId, CartProjection, CheckoutRequest, PaymentLifecycleRequest, PaymentState,
-    TransactionResult,
+    CartCommand, CartId, CartProjection, CheckoutRequest, OrderRecord, PaymentLifecycleRequest,
+    PaymentState, TransactionResult, TransactionStatus,
 };
 use orchestrator_core::policy::PolicyEngine;
 use orchestrator_core::{UCP_LATEST_VERSION, UCP_SUPPORTED_VERSIONS};
@@ -118,10 +118,16 @@ impl OrchestratorFacade {
         cmd: CartCommand,
         cart_id: Option<CartId>,
     ) -> Result<CartProjection, FacadeError> {
-        self.runner
+        let op = cart_command_operation(&cmd);
+        let started = Instant::now();
+        let result = self
+            .runner
             .dispatch_cart_command(cmd, cart_id)
             .await
-            .map_err(FacadeError::Runner)
+            .map_err(FacadeError::Runner);
+        let status = if result.is_ok() { "success" } else { "error" };
+        orchestrator_observability::observe_operation(op, status, started.elapsed().as_secs_f64());
+        result
     }
 
     /// Execute checkout for a cart.
@@ -129,6 +135,7 @@ impl OrchestratorFacade {
         &self,
         request: CheckoutRequest,
     ) -> Result<TransactionResult, FacadeError> {
+        let started = Instant::now();
         if self.ap2_strict {
             verify_ap2_strict(&request).map_err(FacadeError::Ap2Verification)?;
             let record =
@@ -139,15 +146,31 @@ impl OrchestratorFacade {
                 .await
                 .map_err(FacadeError::Runner)?;
             if !accepted {
+                orchestrator_observability::observe_operation(
+                    "checkout_execute",
+                    "rejected",
+                    started.elapsed().as_secs_f64(),
+                );
                 return Err(FacadeError::Ap2Verification(Ap2VerificationError(
                     "AP2 strict mode: mandate replay detected".to_string(),
                 )));
             }
         }
-        self.runner
+        let result = self
+            .runner
             .execute_checkout(request)
             .await
-            .map_err(FacadeError::Runner)
+            .map_err(FacadeError::Runner);
+        let status = match &result {
+            Ok(r) => checkout_status_label(r),
+            Err(_) => "error",
+        };
+        orchestrator_observability::observe_operation(
+            "checkout_execute",
+            status,
+            started.elapsed().as_secs_f64(),
+        );
+        result
     }
 
     /// Execute checkout with explicit authz and tenant boundary enforcement.
@@ -164,30 +187,57 @@ impl OrchestratorFacade {
         &self,
         request: &PaymentLifecycleRequest,
     ) -> Result<PaymentOperationResult, FacadeError> {
-        self.runner
+        let started = Instant::now();
+        let result = self
+            .runner
             .capture_payment(request)
             .await
-            .map_err(FacadeError::Runner)
+            .map_err(FacadeError::Runner);
+        let status = if result.is_ok() { "success" } else { "error" };
+        orchestrator_observability::observe_operation(
+            "payment_capture",
+            status,
+            started.elapsed().as_secs_f64(),
+        );
+        result
     }
 
     pub async fn void_payment(
         &self,
         request: &PaymentLifecycleRequest,
     ) -> Result<PaymentOperationResult, FacadeError> {
-        self.runner
+        let started = Instant::now();
+        let result = self
+            .runner
             .void_payment(request)
             .await
-            .map_err(FacadeError::Runner)
+            .map_err(FacadeError::Runner);
+        let status = if result.is_ok() { "success" } else { "error" };
+        orchestrator_observability::observe_operation(
+            "payment_void",
+            status,
+            started.elapsed().as_secs_f64(),
+        );
+        result
     }
 
     pub async fn refund_payment(
         &self,
         request: &PaymentLifecycleRequest,
     ) -> Result<PaymentOperationResult, FacadeError> {
-        self.runner
+        let started = Instant::now();
+        let result = self
+            .runner
             .refund_payment(request)
             .await
-            .map_err(FacadeError::Runner)
+            .map_err(FacadeError::Runner);
+        let status = if result.is_ok() { "success" } else { "error" };
+        orchestrator_observability::observe_operation(
+            "payment_refund",
+            status,
+            started.elapsed().as_secs_f64(),
+        );
+        result
     }
 
     /// Run payment reconciliation for the given transaction IDs.
@@ -195,7 +245,14 @@ impl OrchestratorFacade {
         &self,
         transaction_ids: &[String],
     ) -> orchestrator_runtime::ReconciliationReport {
-        self.runner.run_reconciliation(transaction_ids).await
+        let started = Instant::now();
+        let report = self.runner.run_reconciliation(transaction_ids).await;
+        orchestrator_observability::observe_operation(
+            "reconciliation",
+            "success",
+            started.elapsed().as_secs_f64(),
+        );
+        report
     }
 
     /// Read our stored payment state for one transaction.
@@ -203,12 +260,55 @@ impl OrchestratorFacade {
         self.runner.get_payment_state(transaction_id).await
     }
 
+    /// Retrieve an order by ID.
+    pub async fn get_order(&self, order_id: &str) -> Result<Option<OrderRecord>, FacadeError> {
+        let started = Instant::now();
+        let result = self.runner.get_order(order_id).await;
+        let status = if result.is_some() {
+            "success"
+        } else {
+            "not_found"
+        };
+        orchestrator_observability::observe_operation(
+            "order_get",
+            status,
+            started.elapsed().as_secs_f64(),
+        );
+        Ok(result)
+    }
+
+    /// List orders for a tenant, most recent first.
+    pub async fn list_orders(&self, tenant_id: &str) -> Result<Vec<OrderRecord>, FacadeError> {
+        let started = Instant::now();
+        let result = self
+            .runner
+            .list_orders(tenant_id)
+            .await
+            .map_err(FacadeError::Runner);
+        let status = if result.is_ok() { "success" } else { "error" };
+        orchestrator_observability::observe_operation(
+            "order_list",
+            status,
+            started.elapsed().as_secs_f64(),
+        );
+        result
+    }
+
     /// Process one outbox message; after max_attempts failures it is moved to dead-letter.
     pub async fn process_outbox_once(&self, max_attempts: u32) -> Result<(), FacadeError> {
-        self.runner
+        let started = Instant::now();
+        let result = self
+            .runner
             .process_outbox_once(max_attempts)
             .await
-            .map_err(FacadeError::Runner)
+            .map_err(FacadeError::Runner);
+        let status = if result.is_ok() { "success" } else { "error" };
+        orchestrator_observability::observe_operation(
+            "outbox_process",
+            status,
+            started.elapsed().as_secs_f64(),
+        );
+        result
     }
 
     /// List dead-letter entries for diagnostics (id, topic, correlation_id, attempts).
@@ -230,6 +330,56 @@ impl OrchestratorFacade {
             .accept_incoming_event_once(message_id)
             .await
             .map_err(FacadeError::Runner)
+    }
+
+    /// Register a webhook for event delivery.
+    pub async fn register_webhook(
+        &self,
+        registration: orchestrator_runtime::WebhookRegistration,
+    ) -> Result<(), FacadeError> {
+        self.runner
+            .register_webhook(registration)
+            .await
+            .map_err(FacadeError::Runner)
+    }
+
+    /// Unregister a webhook by ID.
+    pub async fn unregister_webhook(&self, id: &str) -> Result<bool, FacadeError> {
+        self.runner
+            .unregister_webhook(id)
+            .await
+            .map_err(FacadeError::Runner)
+    }
+
+    /// List webhooks for a tenant.
+    pub async fn list_webhooks(
+        &self,
+        tenant_id: &str,
+    ) -> Result<Vec<orchestrator_runtime::WebhookRegistration>, FacadeError> {
+        self.runner
+            .list_webhooks(tenant_id)
+            .await
+            .map_err(FacadeError::Runner)
+    }
+
+    /// Look up a catalog item by ID (passthrough to catalog provider).
+    pub async fn lookup_catalog_item(
+        &self,
+        item_id: &str,
+    ) -> Result<provider_contracts::CatalogItem, FacadeError> {
+        let started = Instant::now();
+        let result = self
+            .runner
+            .lookup_catalog_item(item_id)
+            .await
+            .map_err(FacadeError::Runner);
+        let status = if result.is_ok() { "success" } else { "error" };
+        orchestrator_observability::observe_operation(
+            "catalog_lookup",
+            status,
+            started.elapsed().as_secs_f64(),
+        );
+        result
     }
 
     /// Link a platform identity to an agent-facing commerce context.
@@ -294,4 +444,28 @@ pub enum FacadeError {
     Ap2Verification(#[from] Ap2VerificationError),
     #[error("identity linking failed: {0}")]
     IdentityLink(String),
+}
+
+fn cart_command_operation(cmd: &CartCommand) -> &'static str {
+    match cmd {
+        CartCommand::CreateCart(_) => "cart_create",
+        CartCommand::AddItem(_) => "cart_add_item",
+        CartCommand::UpdateItemQty(_) => "cart_update_qty",
+        CartCommand::RemoveItem(_) => "cart_remove_item",
+        CartCommand::ApplyAdjustment(_) => "cart_apply_adjustment",
+        CartCommand::GetCart(_) => "cart_get",
+        CartCommand::StartCheckout(_) => "cart_start_checkout",
+        _ => "cart_unknown",
+    }
+}
+
+fn checkout_status_label(result: &TransactionResult) -> &'static str {
+    match result.status {
+        TransactionStatus::Completed => "completed",
+        TransactionStatus::Rejected => "rejected",
+        TransactionStatus::AuthFailed => "auth_failed",
+        TransactionStatus::CommitFailed => "commit_failed",
+        TransactionStatus::TimedOut => "timed_out",
+        _ => "unknown",
+    }
 }

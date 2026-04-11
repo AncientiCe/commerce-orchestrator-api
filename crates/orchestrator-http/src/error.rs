@@ -37,6 +37,9 @@ pub enum ApiError {
     #[error("forbidden: {0}")]
     Forbidden(String),
 
+    #[error("not found: {0}")]
+    NotFound(String),
+
     #[error("orchestrator error: {0}")]
     Orchestrator(#[from] FacadeError),
 
@@ -57,6 +60,7 @@ impl IntoResponse for ApiError {
                 "Unauthorized".into(),
             ),
             ApiError::Forbidden(msg) => (StatusCode::FORBIDDEN, "FORBIDDEN".into(), msg.clone()),
+            ApiError::NotFound(msg) => (StatusCode::NOT_FOUND, "NOT_FOUND".into(), msg.clone()),
             ApiError::Orchestrator(e) => {
                 let (s, c) = orchestrator_error_to_http(e);
                 (s, c.to_string(), e.to_string())

@@ -16,6 +16,7 @@ orchestrator-runtime = { path = "../orchestrator-runtime" }
 provider-contracts = { path = "../provider-contracts" }
 provider-mocks = { path = "../provider-mocks" }
 orchestrator-observability = { path = "../orchestrator-observability" }
+orchestrator-mcp = { path = "../orchestrator-mcp" }
 axum = { version = "0.7", features = ["json", "macros", "tokio"] }
 tower = "0.4"
 tower-http = { version = "0.5", features = ["trace"] }

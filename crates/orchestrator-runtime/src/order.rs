@@ -62,6 +62,16 @@ impl OrderStore for InMemoryOrderStore {
     async fn get(&self, order_id: &str) -> Option<OrderRecord> {
         self.records.lock().await.get(order_id).cloned()
     }
+    async fn list_by_tenant(&self, tenant_id: &str) -> Result<Vec<OrderRecord>, StoreError> {
+        let guard = self.records.lock().await;
+        let mut orders: Vec<OrderRecord> = guard
+            .values()
+            .filter(|r| r.tenant_id == tenant_id)
+            .cloned()
+            .collect();
+        orders.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        Ok(orders)
+    }
     async fn append_event(
         &self,
         order_id: &str,
@@ -113,11 +123,13 @@ mod tests {
         let store = InMemoryOrderStore::default();
         let order = OrderRecord {
             order_id: "ord_1".to_string(),
+            tenant_id: "t1".to_string(),
             transaction_id: "txn_1".to_string(),
             checkout_id: CartId::new(),
             status: OrderStatus::Created,
             events: Vec::new(),
             adjustments: Vec::new(),
+            created_at: chrono::Utc::now(),
         };
         store.put(order).await;
         let updated = store.update_status("ord_1", OrderStatus::Fulfilled).await;

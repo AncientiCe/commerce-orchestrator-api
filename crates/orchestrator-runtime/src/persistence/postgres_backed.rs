@@ -651,6 +651,20 @@ impl OrderStore for PostgresOrderStore {
         row.and_then(|r| serde_json::from_value(r.get("record")).ok())
     }
 
+    async fn list_by_tenant(&self, tenant_id: &str) -> Result<Vec<OrderRecord>, StoreError> {
+        let rows = query("SELECT record FROM orders")
+            .fetch_all(&self.pool)
+            .await
+            .map_err(store_other)?;
+        let mut orders: Vec<OrderRecord> = rows
+            .into_iter()
+            .filter_map(|row| serde_json::from_value::<OrderRecord>(row.get("record")).ok())
+            .filter(|r| r.tenant_id == tenant_id)
+            .collect();
+        orders.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        Ok(orders)
+    }
+
     async fn append_event(
         &self,
         order_id: &str,

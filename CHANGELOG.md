@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-04-11
+
+### Added
+
+- **Order Query API**: `GET /api/v1/orders/:id` and `GET /api/v1/orders` for tenant-scoped order retrieval. `OrderRecord` now includes `tenant_id` and `created_at`. `OrderStore` trait gains `list_by_tenant` (implemented across InMemory, FileBacked, and Postgres stores). A2A envelope support via `POST /api/v1/a2a/orders`.
+- **Webhook Event Delivery**: New `WebhookStore` trait and `InMemoryWebhookStore` for webhook registration. `WebhookDeliverer` implements `OutboxDeliverer` with HMAC-SHA256 payload signing (`X-Webhook-Signature`). REST endpoints: `POST /api/v1/webhooks`, `GET /api/v1/webhooks`, `DELETE /api/v1/webhooks/:id`.
+- **MCP Tool Server**: New `orchestrator-mcp` crate providing a Model Context Protocol server. `POST /api/v1/mcp/message` accepts JSON-RPC 2.0 requests. 14 tool definitions covering all commerce operations (cart, checkout, orders, payments, catalog). Resource definitions for `order://{id}` and `cart://{id}`. Discovery manifest now advertises `mcp_endpoint`.
+- **Catalog Lookup Passthrough**: `GET /api/v1/catalog/items/:id` delegates to the catalog provider. Discovery flag `dev.ucp.shopping.catalog.lookup` flipped to `true`.
+- **Full Commerce Flow Metrics**: All core operations instrumented with `observe_operation` counters and histograms: cart commands (per variant), checkout (by outcome status), payment lifecycle (capture/void/refund), outbox processing, reconciliation. Dead-letter moves tracked via `outbox_dead_letter_total`.
+
+### Changed
+
+- **Conformance matrix**: MCP elevated from "optional" to "required". Added Order Query, Webhook, and Catalog Lookup conformance sections.
+- **Discovery**: UCP manifest now includes `mcp_endpoint` field for MCP tool server discovery.
+
 ## [0.3.1] - 2026-03-30
 
 ### Added
@@ -85,7 +100,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - File-backed persistence is directory-based JSON; not suitable for high concurrency without external locking.
 
+[0.4.0]: https://github.com/your-org/commerce-orchestrator/releases/tag/v0.4.0
+[0.3.1]: https://github.com/your-org/commerce-orchestrator/releases/tag/v0.3.1
+[0.3.0]: https://github.com/your-org/commerce-orchestrator/releases/tag/v0.3.0
 [0.2.0]: https://github.com/your-org/commerce-orchestrator/releases/tag/v0.2.0
 [0.1.0]: https://github.com/your-org/commerce-orchestrator/releases/tag/v0.1.0
-[0.3.0]: https://github.com/your-org/commerce-orchestrator/releases/tag/v0.3.0
-[0.3.1]: https://github.com/your-org/commerce-orchestrator/releases/tag/v0.3.1

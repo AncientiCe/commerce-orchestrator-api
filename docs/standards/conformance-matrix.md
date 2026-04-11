@@ -40,8 +40,37 @@ Status values: **required** (must pass for claimed alignment), **optional** (sup
 |-------------|--------|---------------------|----------|
 | A2A envelope normalization | required | Incoming A2A envelope (capability + payload) normalizes to CheckoutRequest / CartCommand; same authz and idempotency rules apply | a2a_adapter tests |
 | Identity-linking envelope normalization | required | Incoming identity-linking envelope normalizes into identity-link request and rejects unsupported capabilities | `authz_and_adapters` |
-| MCP tool mapping | optional | Cart and checkout operations exposed as MCP tools; invocation maps to facade calls | mcp_adapter tests (when added) |
+| A2A order query envelope | required | `POST /api/v1/a2a/orders` accepts A2A envelope with `payload.order_id` and returns order details | api_integration_test |
+| MCP tool server | required | `POST /api/v1/mcp/message` accepts JSON-RPC 2.0 requests; `initialize`, `tools/list`, `tools/call`, `resources/list`, `resources/read` map to facade operations | orchestrator-mcp tests, api_integration_test |
+| MCP tool definitions | required | All facade operations (cart, checkout, orders, payments, catalog) exposed as MCP tools with JSON Schema input definitions | orchestrator-mcp tool tests |
+| MCP resource definitions | required | `order://{id}` and `cart://{id}` resources readable via `resources/read` | orchestrator-mcp tests |
+| MCP endpoint in discovery | required | UCP discovery manifest includes `mcp_endpoint` pointing to the MCP message endpoint | discovery tests |
 | Delegated capability in handoff | optional | A2AHandoffProfile carries protocol, selected profile version, delegated_capability, and supported profile versions | adapters.rs, authz_and_adapters |
+
+### Order Query API
+
+| Capability | Status | Acceptance Criteria | Evidence |
+|-------------|--------|---------------------|----------|
+| Order retrieval by ID | required | `GET /api/v1/orders/:id` returns order with tenant isolation | api_integration_test |
+| Tenant-scoped order listing | required | `GET /api/v1/orders` returns orders for the authenticated tenant, most recent first | api_integration_test |
+| OrderStore list_by_tenant | required | All store implementations (InMemory, FileBacked, Postgres) support `list_by_tenant` | order.rs tests |
+
+### Webhook Event Delivery
+
+| Capability | Status | Acceptance Criteria | Evidence |
+|-------------|--------|---------------------|----------|
+| Webhook registration | required | `POST /api/v1/webhooks` registers a webhook with URL, secret, and optional event filter | api_integration_test |
+| Webhook listing | required | `GET /api/v1/webhooks` returns tenant-scoped webhook registrations | api_integration_test |
+| Webhook unregistration | required | `DELETE /api/v1/webhooks/:id` removes a webhook | api_integration_test |
+| HMAC-SHA256 signing | required | WebhookDeliverer signs payloads with `X-Webhook-Signature` using the registration secret | webhooks.rs HMAC test |
+| Outbox delivery via webhooks | required | `WebhookDeliverer` implements `OutboxDeliverer` and delivers to matching registrations | webhooks.rs tests |
+
+### Catalog Lookup
+
+| Capability | Status | Acceptance Criteria | Evidence |
+|-------------|--------|---------------------|----------|
+| Catalog item lookup | required | `GET /api/v1/catalog/items/:id` returns catalog item details | api_integration_test |
+| Discovery flag | required | `dev.ucp.shopping.catalog.lookup` is `true` in discovery | discovery_test |
 
 ### AP2 (Agent Payments Protocol)
 

@@ -1,11 +1,18 @@
 //! API v1 routes: cart, checkout, payments, events, operations.
 
 use crate::auth::AuthContextExtractor;
-use crate::dto::*;
+use crate::dto::{
+    CartCommandRequest, CartProjectionDto, CatalogItemDto, CheckoutRequestDto, DeadLetterEntryDto,
+    IdentityLinkResultDto, IncomingEventRequestDto, IncomingEventResponseDto, OrderDto,
+    PaymentLifecycleRequestDto, PaymentMismatchDto, PaymentOperationResultDto,
+    ProcessOutboxRequestDto, ReconciliationReportDto, ReconciliationRequestDto,
+    ReplayDeadLetterRequestDto, ReplayDeadLetterResponseDto, TransactionResultDto,
+    WebhookRegistrationDto, WebhookRegistrationRequestDto, WebhookUnregisterResponseDto,
+};
 use crate::error::ApiError;
 use crate::state::AppState;
 use axum::{
-    extract::State,
+    extract::{Path, State},
     routing::{get, post},
     Json, Router,
 };
@@ -24,9 +31,17 @@ pub fn routes() -> Router<AppState> {
         .route("/a2a/checkout", post(a2a_execute_checkout))
         .route("/a2a/cart", post(a2a_dispatch_cart_command))
         .route("/a2a/identity/link", post(a2a_link_identity))
+        .route("/a2a/orders", post(a2a_get_order))
+        .route("/orders", get(list_orders))
+        .route("/orders/:id", get(get_order))
+        .route("/catalog/items/:id", get(lookup_catalog_item))
+        .route("/webhooks", post(register_webhook))
+        .route("/webhooks", get(list_webhooks))
+        .route("/webhooks/:id", axum::routing::delete(unregister_webhook))
         .route("/payments/capture", post(capture_payment))
         .route("/payments/void", post(void_payment))
         .route("/payments/refund", post(refund_payment))
+        .route("/mcp/message", post(mcp_message))
         .route("/events/incoming", post(accept_incoming_event))
         .route("/ops/outbox/process", post(process_outbox))
         .route("/ops/dead-letter", get(list_dead_letter))
@@ -104,6 +119,105 @@ async fn a2a_link_identity(
     Ok(Json(result.into()))
 }
 
+async fn get_order(
+    AuthContextExtractor(auth_ctx): AuthContextExtractor,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<OrderDto>, ApiError> {
+    let order = state
+        .facade
+        .get_order(&id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound("order not found".to_string()))?;
+    if auth_ctx.tenant_id != order.tenant_id {
+        return Err(ApiError::Forbidden("tenant mismatch".to_string()));
+    }
+    Ok(Json(order.into()))
+}
+
+async fn list_orders(
+    AuthContextExtractor(auth_ctx): AuthContextExtractor,
+    State(state): State<AppState>,
+) -> Result<Json<Vec<OrderDto>>, ApiError> {
+    let orders = state.facade.list_orders(&auth_ctx.tenant_id).await?;
+    Ok(Json(orders.into_iter().map(OrderDto::from).collect()))
+}
+
+/// POST /api/v1/a2a/orders -- A2A envelope for order queries.
+async fn a2a_get_order(
+    AuthContextExtractor(auth_ctx): AuthContextExtractor,
+    State(state): State<AppState>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let order_id = body
+        .get("payload")
+        .and_then(|p| p.get("order_id"))
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| ApiError::BadRequest("payload.order_id is required".to_string()))?;
+    let order = state
+        .facade
+        .get_order(order_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound("order not found".to_string()))?;
+    if auth_ctx.tenant_id != order.tenant_id {
+        return Err(ApiError::Forbidden("tenant mismatch".to_string()));
+    }
+    let dto: OrderDto = order.into();
+    Ok(Json(serde_json::json!({
+        "capability": "dev.ucp.order.query",
+        "result": dto
+    })))
+}
+
+async fn register_webhook(
+    AuthContextExtractor(auth_ctx): AuthContextExtractor,
+    State(state): State<AppState>,
+    Json(req): Json<WebhookRegistrationRequestDto>,
+) -> Result<Json<WebhookRegistrationDto>, ApiError> {
+    let registration = orchestrator_runtime::WebhookRegistration {
+        id: format!("wh_{}", uuid::Uuid::new_v4()),
+        tenant_id: auth_ctx.tenant_id,
+        url: req.url,
+        secret: req.secret,
+        event_filter: req.event_filter,
+        active: true,
+    };
+    let dto = WebhookRegistrationDto::from(registration.clone());
+    state.facade.register_webhook(registration).await?;
+    Ok(Json(dto))
+}
+
+async fn list_webhooks(
+    AuthContextExtractor(auth_ctx): AuthContextExtractor,
+    State(state): State<AppState>,
+) -> Result<Json<Vec<WebhookRegistrationDto>>, ApiError> {
+    let hooks = state.facade.list_webhooks(&auth_ctx.tenant_id).await?;
+    Ok(Json(
+        hooks
+            .into_iter()
+            .map(WebhookRegistrationDto::from)
+            .collect(),
+    ))
+}
+
+async fn unregister_webhook(
+    AuthContextExtractor(_auth): AuthContextExtractor,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<WebhookUnregisterResponseDto>, ApiError> {
+    let removed = state.facade.unregister_webhook(&id).await?;
+    Ok(Json(WebhookUnregisterResponseDto { removed }))
+}
+
+async fn lookup_catalog_item(
+    AuthContextExtractor(_auth): AuthContextExtractor,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<CatalogItemDto>, ApiError> {
+    let item = state.facade.lookup_catalog_item(&id).await?;
+    Ok(Json(item.into()))
+}
+
 async fn capture_payment(
     AuthContextExtractor(auth_ctx): AuthContextExtractor,
     State(state): State<AppState>,
@@ -150,6 +264,16 @@ async fn refund_payment(
         success: result.success,
         reference: result.reference,
     }))
+}
+
+/// POST /api/v1/mcp/message -- MCP JSON-RPC message endpoint.
+async fn mcp_message(
+    AuthContextExtractor(auth_ctx): AuthContextExtractor,
+    State(state): State<AppState>,
+    Json(request): Json<orchestrator_mcp::JsonRpcRequest>,
+) -> Json<orchestrator_mcp::JsonRpcResponse> {
+    let response = orchestrator_mcp::handle_mcp_request(&request, &state.facade, &auth_ctx).await;
+    Json(response)
 }
 
 async fn accept_incoming_event(

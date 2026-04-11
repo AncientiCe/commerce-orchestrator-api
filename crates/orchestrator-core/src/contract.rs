@@ -198,11 +198,13 @@ pub struct PaymentLifecycleRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OrderRecord {
     pub order_id: String,
+    pub tenant_id: String,
     pub transaction_id: String,
     pub checkout_id: CartId,
     pub status: OrderStatus,
     pub events: Vec<OrderEvent>,
     pub adjustments: Vec<OrderAdjustment>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

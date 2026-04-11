@@ -108,7 +108,7 @@ async fn well_known_ucp_advertises_checkout_and_discount_capabilities() {
         flags
             .get("dev.ucp.shopping.catalog.lookup")
             .and_then(|v| v.as_bool()),
-        Some(false)
+        Some(true)
     );
     assert_eq!(
         flags.get("dev.ucp.payments.mpp").and_then(|v| v.as_bool()),

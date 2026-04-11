@@ -1,0 +1,23 @@
+[package]
+name = "orchestrator-mcp"
+version.workspace = true
+edition.workspace = true
+description = "Model Context Protocol (MCP) tool server for the commerce orchestrator"
+
+[dependencies]
+orchestrator-api = { path = "../orchestrator-api" }
+orchestrator-core = { path = "../orchestrator-core" }
+orchestrator-observability = { path = "../orchestrator-observability" }
+async-trait = "0.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["sync"] }
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+provider-mocks = { path = "../provider-mocks" }
+provider-contracts = { path = "../provider-contracts" }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+
+[lints]
+workspace = true

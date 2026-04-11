@@ -592,6 +592,16 @@ impl OrderStore for FileBackedOrderStore {
     async fn get(&self, order_id: &str) -> Option<OrderRecord> {
         self.records.read().await.get(order_id).cloned()
     }
+    async fn list_by_tenant(&self, tenant_id: &str) -> Result<Vec<OrderRecord>, StoreError> {
+        let guard = self.records.read().await;
+        let mut orders: Vec<OrderRecord> = guard
+            .values()
+            .filter(|r| r.tenant_id == tenant_id)
+            .cloned()
+            .collect();
+        orders.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        Ok(orders)
+    }
     async fn append_event(
         &self,
         order_id: &str,

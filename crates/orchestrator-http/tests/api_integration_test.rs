@@ -3,6 +3,7 @@
 use axum_test::TestServer;
 use http::header::{HeaderName, HeaderValue};
 use orchestrator_http::{app, auth::StaticTokenAuthnResolver, AppState};
+use provider_contracts::CatalogItem;
 use provider_mocks::{
     MockCatalogProvider, MockGeoProvider, MockPaymentProvider, MockPricingProvider,
     MockReceiptProvider, MockTaxProvider,
@@ -10,9 +11,14 @@ use provider_mocks::{
 use std::sync::Arc;
 
 fn test_state() -> AppState {
-    let catalog = Arc::new(MockCatalogProvider::default());
+    let catalog = MockCatalogProvider::default();
+    catalog.add_item(CatalogItem {
+        id: "SKU-1".to_string(),
+        title: "Test Product".to_string(),
+        price_minor: 1000,
+    });
     let facade = orchestrator_api::OrchestratorFacade::new(
-        catalog,
+        Arc::new(catalog),
         Arc::new(MockPricingProvider),
         Arc::new(MockTaxProvider),
         Arc::new(MockGeoProvider),
@@ -177,6 +183,259 @@ async fn protected_route_succeeds_with_valid_token() {
         .json(&body)
         .await;
     response.assert_status_ok();
+}
+
+#[tokio::test]
+async fn get_order_returns_order_after_checkout() {
+    let state = test_state();
+    let app = app::app().with_state(state);
+    let server = TestServer::new(app).unwrap();
+
+    let create = serde_json::json!({
+        "command": { "kind": "create_cart", "merchant_id": "m1", "currency": "USD" }
+    });
+    let cart: serde_json::Value = server
+        .post("/api/v1/cart/commands")
+        .json(&create)
+        .await
+        .json();
+    let cart_id = cart["cart_id"].as_str().unwrap();
+
+    let add = serde_json::json!({
+        "command": { "kind": "add_item", "item_id": "SKU-1", "quantity": 1 },
+        "cart_id": cart_id
+    });
+    let cart: serde_json::Value = server.post("/api/v1/cart/commands").json(&add).await.json();
+    let version = cart["version"].as_u64().unwrap();
+
+    let start = serde_json::json!({
+        "command": { "kind": "start_checkout", "cart_id": cart_id, "cart_version": version }
+    });
+    let cart: serde_json::Value = server
+        .post("/api/v1/cart/commands")
+        .json(&start)
+        .await
+        .json();
+    let version = cart["version"].as_u64().unwrap();
+
+    let checkout = serde_json::json!({
+        "tenant_id": "dev",
+        "merchant_id": "m1",
+        "cart_id": cart_id,
+        "cart_version": version,
+        "currency": "USD",
+        "payment_intent": {
+            "amount_minor": 1000,
+            "token_or_reference": "tok_test"
+        },
+        "idempotency_key": "order-query-test"
+    });
+    let txn: serde_json::Value = server
+        .post("/api/v1/checkout/execute")
+        .json(&checkout)
+        .await
+        .json();
+    let order_id = txn["order_id"]
+        .as_str()
+        .expect("checkout should return order_id");
+
+    let order_resp = server.get(&format!("/api/v1/orders/{}", order_id)).await;
+    order_resp.assert_status_ok();
+    let order: serde_json::Value = order_resp.json();
+    assert_eq!(order["order_id"].as_str(), Some(order_id));
+    assert_eq!(order["status"].as_str(), Some("created"));
+    assert_eq!(order["tenant_id"].as_str(), Some("dev"));
+}
+
+#[tokio::test]
+async fn list_orders_returns_tenant_orders() {
+    let state = test_state();
+    let app = app::app().with_state(state);
+    let server = TestServer::new(app).unwrap();
+
+    let create = serde_json::json!({
+        "command": { "kind": "create_cart", "merchant_id": "m1", "currency": "USD" }
+    });
+    let cart: serde_json::Value = server
+        .post("/api/v1/cart/commands")
+        .json(&create)
+        .await
+        .json();
+    let cart_id = cart["cart_id"].as_str().unwrap();
+
+    let add = serde_json::json!({
+        "command": { "kind": "add_item", "item_id": "SKU-1", "quantity": 1 },
+        "cart_id": cart_id
+    });
+    let cart: serde_json::Value = server.post("/api/v1/cart/commands").json(&add).await.json();
+    let version = cart["version"].as_u64().unwrap();
+
+    let start = serde_json::json!({
+        "command": { "kind": "start_checkout", "cart_id": cart_id, "cart_version": version }
+    });
+    let cart: serde_json::Value = server
+        .post("/api/v1/cart/commands")
+        .json(&start)
+        .await
+        .json();
+    let version = cart["version"].as_u64().unwrap();
+
+    let checkout = serde_json::json!({
+        "tenant_id": "dev",
+        "merchant_id": "m1",
+        "cart_id": cart_id,
+        "cart_version": version,
+        "currency": "USD",
+        "payment_intent": {
+            "amount_minor": 1000,
+            "token_or_reference": "tok_test"
+        },
+        "idempotency_key": "list-orders-test"
+    });
+    server
+        .post("/api/v1/checkout/execute")
+        .json(&checkout)
+        .await;
+
+    let orders_resp = server.get("/api/v1/orders").await;
+    orders_resp.assert_status_ok();
+    let orders: Vec<serde_json::Value> = orders_resp.json();
+    assert!(!orders.is_empty());
+    assert_eq!(orders[0]["tenant_id"].as_str(), Some("dev"));
+}
+
+#[tokio::test]
+async fn get_order_not_found_returns_404() {
+    let state = test_state();
+    let app = app::app().with_state(state);
+    let server = TestServer::new(app).unwrap();
+
+    let response = server.get("/api/v1/orders/nonexistent").await;
+    response.assert_status_not_found();
+}
+
+#[tokio::test]
+async fn mcp_message_initialize_returns_server_info() {
+    let state = test_state();
+    let app = app::app().with_state(state);
+    let server = TestServer::new(app).unwrap();
+
+    let body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {}
+    });
+    let response = server.post("/api/v1/mcp/message").json(&body).await;
+    response.assert_status_ok();
+    let json: serde_json::Value = response.json();
+    assert_eq!(json["jsonrpc"], "2.0");
+    assert!(json["result"]["serverInfo"]["name"].as_str().is_some());
+}
+
+#[tokio::test]
+async fn mcp_tools_list_returns_tools() {
+    let state = test_state();
+    let app = app::app().with_state(state);
+    let server = TestServer::new(app).unwrap();
+
+    let body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/list"
+    });
+    let response = server.post("/api/v1/mcp/message").json(&body).await;
+    response.assert_status_ok();
+    let json: serde_json::Value = response.json();
+    let tools = json["result"]["tools"].as_array().unwrap();
+    assert!(tools.len() >= 14);
+}
+
+#[tokio::test]
+async fn mcp_tool_call_create_cart() {
+    let state = test_state();
+    let app = app::app().with_state(state);
+    let server = TestServer::new(app).unwrap();
+
+    let body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+            "name": "create_cart",
+            "arguments": {
+                "merchant_id": "m1",
+                "currency": "EUR"
+            }
+        }
+    });
+    let response = server.post("/api/v1/mcp/message").json(&body).await;
+    response.assert_status_ok();
+    let json: serde_json::Value = response.json();
+    assert!(json.get("error").is_none());
+    assert!(json["result"]["cart_id"].as_str().is_some());
+    assert_eq!(json["result"]["currency"], "EUR");
+}
+
+#[tokio::test]
+async fn webhook_register_list_and_unregister() {
+    let state = test_state();
+    let app = app::app().with_state(state);
+    let server = TestServer::new(app).unwrap();
+
+    let body = serde_json::json!({
+        "url": "https://example.com/webhook",
+        "secret": "my-secret",
+        "event_filter": ["order.created"]
+    });
+    let response = server.post("/api/v1/webhooks").json(&body).await;
+    response.assert_status_ok();
+    let hook: serde_json::Value = response.json();
+    assert!(hook["id"].as_str().is_some());
+    assert_eq!(hook["tenant_id"].as_str(), Some("dev"));
+    assert!(hook["active"].as_bool().unwrap());
+
+    let list_resp = server.get("/api/v1/webhooks").await;
+    list_resp.assert_status_ok();
+    let hooks: Vec<serde_json::Value> = list_resp.json();
+    assert_eq!(hooks.len(), 1);
+
+    let hook_id = hook["id"].as_str().unwrap();
+    let del_resp = server
+        .delete(&format!("/api/v1/webhooks/{}", hook_id))
+        .await;
+    del_resp.assert_status_ok();
+    let del: serde_json::Value = del_resp.json();
+    assert!(del["removed"].as_bool().unwrap());
+
+    let list_resp = server.get("/api/v1/webhooks").await;
+    let hooks: Vec<serde_json::Value> = list_resp.json();
+    assert!(hooks.is_empty());
+}
+
+#[tokio::test]
+async fn catalog_lookup_returns_item() {
+    let state = test_state();
+    let app = app::app().with_state(state);
+    let server = TestServer::new(app).unwrap();
+
+    let response = server.get("/api/v1/catalog/items/SKU-1").await;
+    response.assert_status_ok();
+    let json: serde_json::Value = response.json();
+    assert_eq!(json["id"].as_str(), Some("SKU-1"));
+    assert_eq!(json["title"].as_str(), Some("Test Product"));
+    assert_eq!(json["price_minor"].as_i64(), Some(1000));
+}
+
+#[tokio::test]
+async fn catalog_lookup_not_found_returns_error() {
+    let state = test_state();
+    let app = app::app().with_state(state);
+    let server = TestServer::new(app).unwrap();
+
+    let response = server.get("/api/v1/catalog/items/NONEXISTENT").await;
+    let status = response.status_code();
+    assert_ne!(status.as_u16(), 200);
 }
 
 #[tokio::test]
