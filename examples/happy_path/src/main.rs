@@ -82,6 +82,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 country_code: Some("US".to_string()),
                 region: Some("CA".to_string()),
                 postal_code: Some("94043".to_string()),
+                intent: None,
             }),
             payment_intent: PaymentIntent {
                 amount_minor: cart.total_minor,

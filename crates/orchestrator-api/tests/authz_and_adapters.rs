@@ -199,6 +199,23 @@ fn normalizes_identity_linking_a2a_envelope() {
 }
 
 #[test]
+fn normalizes_canonical_identity_linking_a2a_envelope() {
+    let envelope = serde_json::json!({
+        "capability": "dev.ucp.common.identity_linking",
+        "payload": {
+            "tenant_id": "tenant_a",
+            "merchant_id": "merchant_a",
+            "agent_id": "agent_1",
+            "link_token": "link-token"
+        }
+    });
+    let normalized = normalize_a2a_identity_link_envelope(&envelope).expect("normalize");
+    assert_eq!(normalized.tenant_id, "tenant_a");
+    assert_eq!(normalized.merchant_id, "merchant_a");
+    assert_eq!(normalized.agent_id, "agent_1");
+}
+
+#[test]
 fn rejects_unsupported_identity_linking_capability() {
     let envelope = serde_json::json!({
         "capability": "dev.ucp.shopping.checkout",
@@ -224,7 +241,10 @@ fn selects_supported_ucp_version_when_requested() {
         Some("2026-01-11"),
     );
     assert_eq!(manifest.ucp.version, "2026-01-11");
-    assert_eq!(manifest.ucp.manifest.version, "2026-01-11");
+    assert_eq!(
+        manifest.ucp.manifest.expect("legacy manifest").version,
+        "2026-01-11"
+    );
 }
 
 #[tokio::test]

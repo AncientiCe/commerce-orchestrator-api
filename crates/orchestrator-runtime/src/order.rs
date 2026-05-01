@@ -3,6 +3,7 @@
 use crate::store_error::StoreError;
 use crate::store_traits::OrderStore;
 use orchestrator_core::contract::{OrderAdjustment, OrderEvent, OrderRecord, OrderStatus};
+use std::cmp::Reverse;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -69,7 +70,7 @@ impl OrderStore for InMemoryOrderStore {
             .filter(|r| r.tenant_id == tenant_id)
             .cloned()
             .collect();
-        orders.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        orders.sort_by_key(|order| Reverse(order.created_at));
         Ok(orders)
     }
     async fn append_event(
@@ -127,6 +128,10 @@ mod tests {
             transaction_id: "txn_1".to_string(),
             checkout_id: CartId::new(),
             status: OrderStatus::Created,
+            currency: "USD".to_string(),
+            permalink_url: "/orders/ord_1".to_string(),
+            line_items: Vec::new(),
+            totals: Default::default(),
             events: Vec::new(),
             adjustments: Vec::new(),
             created_at: chrono::Utc::now(),

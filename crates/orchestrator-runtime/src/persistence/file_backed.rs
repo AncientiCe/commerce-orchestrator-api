@@ -3,6 +3,7 @@
 use async_trait::async_trait;
 use orchestrator_core::contract::{PaymentState, *};
 use orchestrator_core::state_machine::CartState;
+use std::cmp::Reverse;
 use std::path::Path;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
@@ -599,7 +600,7 @@ impl OrderStore for FileBackedOrderStore {
             .filter(|r| r.tenant_id == tenant_id)
             .cloned()
             .collect();
-        orders.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        orders.sort_by_key(|order| Reverse(order.created_at));
         Ok(orders)
     }
     async fn append_event(

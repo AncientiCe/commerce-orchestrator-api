@@ -10,8 +10,9 @@ Deploy the orchestrator as an HTTP service (`orchestrator-server`). Your app (Ag
 
 | Area | Endpoints |
 |------|-----------|
-| **Discovery** | `GET /.well-known/ucp` (includes selected version, supported versions, capabilities, and capability flags) |
-| **Cart & checkout** | `POST /api/v1/cart/commands`, `POST /api/v1/checkout/execute`, `POST /api/v1/a2a/cart`, `POST /api/v1/a2a/checkout` |
+| **Discovery** | `GET /.well-known/ucp` (defaults to UCP `2026-04-08`; older `ucp_version` query values return compatible legacy profiles) |
+| **Cart & checkout** | `POST /api/v1/cart/commands`, `/api/v1/ucp/cart` routes, `POST /api/v1/checkout/execute`, `POST /api/v1/a2a/cart`, `POST /api/v1/a2a/checkout` |
+| **Catalog & orders** | `GET /api/v1/catalog/items/:id`, `/api/v1/ucp/catalog` routes, `GET /api/v1/orders/:id`, `GET /api/v1/ucp/orders/:id` |
 | **Identity linking** | `POST /api/v1/a2a/identity/link` |
 | **Payments** | `POST /api/v1/payments/capture`, `void`, `refund` |
 | **Events** | `POST /api/v1/events/incoming` (idempotent ingest) |
@@ -23,7 +24,7 @@ In production the service requires a Bearer token; send `Authorization: Bearer <
 ## Do not modify this repository
 
 - **Do not fork to change orchestrator behavior.** Consume the deployed API; fixes and features belong upstream.
-- **Pin to a released tag** (e.g. `v0.4.0`) for the deployment you use. Upgrade using release notes and `CHANGELOG.md`.
+- **Pin to a released tag** (e.g. `v0.5.0`) for the deployment you use. Upgrade using release notes and `CHANGELOG.md`.
 
 ## Summary
 

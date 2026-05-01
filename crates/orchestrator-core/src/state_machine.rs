@@ -12,6 +12,7 @@ pub enum CartState {
     Retaxed,
     GeoChecked,
     CheckoutReady,
+    Cancelled,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -22,6 +23,7 @@ pub enum CartEvent {
     TaxResolved,
     GeoValidated,
     MarkCheckoutReady,
+    Cancel,
 }
 
 pub fn next_cart_state(current: CartState, event: CartEvent) -> Option<CartState> {
@@ -41,6 +43,12 @@ pub fn next_cart_state(current: CartState, event: CartEvent) -> Option<CartState
         (S::GeoChecked, E::ItemChanged) | (S::CheckoutReady, E::ItemChanged) => {
             Some(S::ItemsMutated)
         }
+        (S::CartCreated, E::Cancel)
+        | (S::ItemsMutated, E::Cancel)
+        | (S::Repriced, E::Cancel)
+        | (S::Retaxed, E::Cancel)
+        | (S::GeoChecked, E::Cancel)
+        | (S::CheckoutReady, E::Cancel) => Some(S::Cancelled),
         _ => None,
     }
 }

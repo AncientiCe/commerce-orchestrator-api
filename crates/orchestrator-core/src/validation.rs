@@ -56,6 +56,9 @@ pub fn validate_cart_command(cmd: &CartCommand) -> ValidationResult {
         CartCommand::GetCart(p) => {
             let _ = p;
         }
+        CartCommand::CancelCart(p) => {
+            let _ = p;
+        }
         CartCommand::StartCheckout(p) => {
             if p.cart_version == 0 {
                 errors.push("cart_version must be > 0".to_string());

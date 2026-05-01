@@ -1,14 +1,16 @@
 //! API v1 request/response DTOs. Transport boundary only; no internal types leak.
 
 use orchestrator_core::contract::{
-    AddItemPayload, ApplyAdjustmentPayload, CartCommand, CartId, CartLineProjection,
-    CartProjection, CartStatus, CheckoutRequest, CreateCartPayload, CustomerHint, GetCartPayload,
-    LocationHint, OrderAdjustment, OrderEvent, OrderRecord, OrderStatus, PaymentIntent,
-    PaymentLifecycleRequest, PaymentMethodType, PaymentState, RemoveItemPayload,
-    StartCheckoutPayload, TransactionResult, TransactionStatus, UpdateItemQtyPayload,
+    AddItemPayload, ApplyAdjustmentPayload, CancelCartPayload, CartCommand, CartId,
+    CartLineProjection, CartProjection, CartStatus, CheckoutRequest, CreateCartPayload,
+    CustomerHint, GetCartPayload, LocationHint, OrderAdjustment, OrderEvent, OrderRecord,
+    OrderStatus, PaymentIntent, PaymentLifecycleRequest, PaymentMethodType, PaymentState,
+    RemoveItemPayload, StartCheckoutPayload, TransactionResult, TransactionStatus,
+    UpdateItemQtyPayload,
 };
 use orchestrator_core::{UCP_LATEST_VERSION, UCP_SUPPORTED_VERSIONS};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::str::FromStr;
 use utoipa::ToSchema;
 use uuid::Uuid;
@@ -50,6 +52,9 @@ pub enum CartCommandDto {
         cart_id: String,
         cart_version: u64,
     },
+    CancelCart {
+        cart_id: String,
+    },
 }
 
 impl TryFrom<CartCommandDto> for CartCommand {
@@ -85,6 +90,9 @@ impl TryFrom<CartCommandDto> for CartCommand {
             } => CartCommand::StartCheckout(StartCheckoutPayload {
                 cart_id: parse_cart_id(&cart_id)?,
                 cart_version,
+            }),
+            CartCommandDto::CancelCart { cart_id } => CartCommand::CancelCart(CancelCartPayload {
+                cart_id: parse_cart_id(&cart_id)?,
             }),
         })
     }
@@ -124,6 +132,7 @@ pub struct CartLineProjectionDto {
 pub enum CartStatusDto {
     Draft,
     CheckoutReady,
+    Cancelled,
 }
 
 impl From<CartProjection> for CartProjectionDto {
@@ -144,6 +153,7 @@ impl From<CartProjection> for CartProjectionDto {
             status: match p.status {
                 CartStatus::Draft => CartStatusDto::Draft,
                 CartStatus::CheckoutReady => CartStatusDto::CheckoutReady,
+                CartStatus::Cancelled => CartStatusDto::Cancelled,
                 _ => CartStatusDto::Draft,
             },
         }
@@ -189,6 +199,8 @@ pub struct LocationHintDto {
     pub country_code: Option<String>,
     pub region: Option<String>,
     pub postal_code: Option<String>,
+    #[serde(default)]
+    pub intent: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -223,6 +235,7 @@ impl TryFrom<CheckoutRequestDto> for CheckoutRequest {
                 country_code: l.country_code,
                 region: l.region,
                 postal_code: l.postal_code,
+                intent: l.intent,
             }),
             payment_intent: PaymentIntent {
                 amount_minor: dto.payment_intent.amount_minor,
@@ -460,6 +473,10 @@ pub struct OrderDto {
     pub transaction_id: String,
     pub checkout_id: String,
     pub status: OrderStatusDto,
+    pub currency: String,
+    pub permalink_url: String,
+    pub line_items: Vec<CartLineProjectionDto>,
+    pub totals: TotalsBreakdownDto,
     pub events: Vec<OrderEventDto>,
     pub adjustments: Vec<OrderAdjustmentDto>,
     pub created_at: String,
@@ -503,6 +520,19 @@ impl From<OrderRecord> for OrderDto {
                 OrderStatus::Fulfilled => OrderStatusDto::Fulfilled,
                 OrderStatus::Cancelled => OrderStatusDto::Cancelled,
                 _ => OrderStatusDto::Created,
+            },
+            currency: r.currency,
+            permalink_url: r.permalink_url,
+            line_items: r
+                .line_items
+                .into_iter()
+                .map(CartLineProjectionDto::from)
+                .collect(),
+            totals: TotalsBreakdownDto {
+                subtotal_minor: r.totals.subtotal_minor,
+                tax_minor: r.totals.tax_minor,
+                discount_minor: r.totals.discount_minor,
+                total_minor: r.totals.total_minor,
             },
             events: r.events.into_iter().map(OrderEventDto::from).collect(),
             adjustments: r
@@ -552,6 +582,232 @@ impl From<provider_contracts::CatalogItem> for CatalogItemDto {
             id: item.id,
             title: item.title,
             price_minor: item.price_minor,
+        }
+    }
+}
+
+// ---- UCP-native REST envelopes ----
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct UcpCapabilityDto {
+    pub version: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct UcpEnvelopeDto {
+    pub version: String,
+    pub supported_versions: Vec<String>,
+    pub capabilities: BTreeMap<String, Vec<UcpCapabilityDto>>,
+}
+
+impl UcpEnvelopeDto {
+    pub fn for_capabilities(capabilities: &[&str]) -> Self {
+        Self {
+            version: UCP_LATEST_VERSION.to_string(),
+            supported_versions: UCP_SUPPORTED_VERSIONS
+                .iter()
+                .map(|v| (*v).to_string())
+                .collect(),
+            capabilities: capabilities
+                .iter()
+                .map(|capability| {
+                    (
+                        (*capability).to_string(),
+                        vec![UcpCapabilityDto {
+                            version: UCP_LATEST_VERSION.to_string(),
+                        }],
+                    )
+                })
+                .collect(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct UcpMessageDto {
+    pub code: String,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct UcpCartItemRefDto {
+    pub id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct UcpCartLineRequestDto {
+    #[serde(default)]
+    pub id: Option<String>,
+    pub item: UcpCartItemRefDto,
+    pub quantity: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct UcpCartRequestDto {
+    #[serde(default)]
+    pub merchant_id: Option<String>,
+    pub currency: String,
+    #[serde(default)]
+    pub line_items: Vec<UcpCartLineRequestDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct UcpCartLineDto {
+    pub id: String,
+    pub item: UcpCartItemRefDto,
+    pub title: String,
+    pub quantity: u32,
+    pub unit_price_minor: i64,
+    pub total_minor: i64,
+}
+
+impl From<CartLineProjection> for UcpCartLineDto {
+    fn from(line: CartLineProjection) -> Self {
+        Self {
+            id: line.line_id,
+            item: UcpCartItemRefDto { id: line.item_id },
+            title: line.title,
+            quantity: line.quantity,
+            unit_price_minor: line.unit_price_minor,
+            total_minor: line.total_minor,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct UcpCartResponseDto {
+    pub ucp: UcpEnvelopeDto,
+    pub id: String,
+    pub version: u64,
+    pub currency: String,
+    pub line_items: Vec<UcpCartLineDto>,
+    pub subtotal_minor: i64,
+    pub tax_minor: i64,
+    pub total_minor: i64,
+    pub status: String,
+}
+
+impl From<CartProjection> for UcpCartResponseDto {
+    fn from(cart: CartProjection) -> Self {
+        let status = match cart.status {
+            CartStatus::Draft => "draft",
+            CartStatus::CheckoutReady => "checkout_ready",
+            CartStatus::Cancelled => "canceled",
+            _ => "draft",
+        }
+        .to_string();
+        Self {
+            ucp: UcpEnvelopeDto::for_capabilities(&["dev.ucp.shopping.cart"]),
+            id: cart.cart_id.0.to_string(),
+            version: cart.version,
+            currency: cart.currency,
+            line_items: cart.lines.into_iter().map(UcpCartLineDto::from).collect(),
+            subtotal_minor: cart.subtotal_minor,
+            tax_minor: cart.tax_minor,
+            total_minor: cart.total_minor,
+            status,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct UcpCatalogSearchRequestDto {
+    #[serde(default)]
+    pub query: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct UcpCatalogLookupRequestDto {
+    pub ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct UcpCatalogProductRequestDto {
+    pub id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct UcpCatalogProductsResponseDto {
+    pub ucp: UcpEnvelopeDto,
+    pub products: Vec<CatalogItemDto>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub messages: Vec<UcpMessageDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct UcpCatalogProductResponseDto {
+    pub ucp: UcpEnvelopeDto,
+    pub product: CatalogItemDto,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub messages: Vec<UcpMessageDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct UcpTotalDto {
+    #[serde(rename = "type")]
+    pub total_type: String,
+    pub amount: i64,
+    pub currency: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct UcpOrderResponseDto {
+    pub ucp: UcpEnvelopeDto,
+    pub id: String,
+    pub status: OrderStatusDto,
+    pub currency: String,
+    pub permalink_url: String,
+    pub line_items: Vec<UcpCartLineDto>,
+    pub totals: Vec<UcpTotalDto>,
+    pub events: Vec<OrderEventDto>,
+    pub created_at: String,
+}
+
+impl From<OrderRecord> for UcpOrderResponseDto {
+    fn from(order: OrderRecord) -> Self {
+        let status = match order.status {
+            OrderStatus::Created => OrderStatusDto::Created,
+            OrderStatus::FulfillmentPending => OrderStatusDto::FulfillmentPending,
+            OrderStatus::Fulfilled => OrderStatusDto::Fulfilled,
+            OrderStatus::Cancelled => OrderStatusDto::Cancelled,
+            _ => OrderStatusDto::Created,
+        };
+        let totals = vec![
+            UcpTotalDto {
+                total_type: "subtotal".to_string(),
+                amount: order.totals.subtotal_minor,
+                currency: order.currency.clone(),
+            },
+            UcpTotalDto {
+                total_type: "tax".to_string(),
+                amount: order.totals.tax_minor,
+                currency: order.currency.clone(),
+            },
+            UcpTotalDto {
+                total_type: "discount".to_string(),
+                amount: order.totals.discount_minor,
+                currency: order.currency.clone(),
+            },
+            UcpTotalDto {
+                total_type: "total".to_string(),
+                amount: order.totals.total_minor,
+                currency: order.currency.clone(),
+            },
+        ];
+        Self {
+            ucp: UcpEnvelopeDto::for_capabilities(&["dev.ucp.shopping.order"]),
+            id: order.order_id,
+            status,
+            currency: order.currency,
+            permalink_url: order.permalink_url,
+            line_items: order
+                .line_items
+                .into_iter()
+                .map(UcpCartLineDto::from)
+                .collect(),
+            totals,
+            events: order.events.into_iter().map(OrderEventDto::from).collect(),
+            created_at: order.created_at.to_rfc3339(),
         }
     }
 }

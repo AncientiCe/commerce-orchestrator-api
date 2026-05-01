@@ -83,6 +83,7 @@ const CART_CAPABILITIES: &[&str] = &[
 
 /// Identity-linking capability IDs accepted for identity-linking operations.
 const IDENTITY_LINKING_CAPABILITIES: &[&str] = &[
+    "dev.ucp.common.identity_linking",
     "dev.ucp.identity.linking",
     "dev.ucp.identity.link",
     "identity.linking",

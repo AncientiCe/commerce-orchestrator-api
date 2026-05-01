@@ -382,6 +382,46 @@ impl OrchestratorFacade {
         result
     }
 
+    /// Look up multiple catalog items by ID.
+    pub async fn lookup_catalog_items(
+        &self,
+        item_ids: &[String],
+    ) -> Result<Vec<provider_contracts::CatalogItem>, FacadeError> {
+        let started = Instant::now();
+        let result = self
+            .runner
+            .lookup_catalog_items(item_ids)
+            .await
+            .map_err(FacadeError::Runner);
+        let status = if result.is_ok() { "success" } else { "error" };
+        orchestrator_observability::observe_operation(
+            "catalog_batch_lookup",
+            status,
+            started.elapsed().as_secs_f64(),
+        );
+        result
+    }
+
+    /// Search catalog items.
+    pub async fn search_catalog_items(
+        &self,
+        query: Option<&str>,
+    ) -> Result<Vec<provider_contracts::CatalogItem>, FacadeError> {
+        let started = Instant::now();
+        let result = self
+            .runner
+            .search_catalog_items(query)
+            .await
+            .map_err(FacadeError::Runner);
+        let status = if result.is_ok() { "success" } else { "error" };
+        orchestrator_observability::observe_operation(
+            "catalog_search",
+            status,
+            started.elapsed().as_secs_f64(),
+        );
+        result
+    }
+
     /// Link a platform identity to an agent-facing commerce context.
     /// This lightweight endpoint keeps compatibility while exposing standardized identity-linking.
     pub async fn link_identity(
@@ -455,6 +495,7 @@ fn cart_command_operation(cmd: &CartCommand) -> &'static str {
         CartCommand::ApplyAdjustment(_) => "cart_apply_adjustment",
         CartCommand::GetCart(_) => "cart_get",
         CartCommand::StartCheckout(_) => "cart_start_checkout",
+        CartCommand::CancelCart(_) => "cart_cancel",
         _ => "cart_unknown",
     }
 }

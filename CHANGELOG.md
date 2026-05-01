@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-05-01
+
+### Added
+
+- **UCP 2026-04-08 discovery profile**: `/.well-known/ucp` now defaults to the `2026-04-08` business profile shape with reverse-domain `services` and `capabilities` maps, while `?ucp_version=2026-01-23` and `?ucp_version=2026-01-11` retain the legacy manifest shape.
+- **UCP-native REST shim**: Added `/api/v1/ucp` cart, catalog, and order endpoints with UCP metadata envelopes, catalog miss messages, and backed cart cancellation.
+- **Catalog search and batch lookup**: Catalog provider contracts, mocks, HTTP adapters, facade, REST, and MCP now support catalog search and multi-item lookup.
+- **UCP order response fields**: Orders now persist and expose `currency`, `permalink_url`, line items, and totals for current UCP order responses.
+
+### Changed
+
+- **Canonical capability names**: Latest discovery advertises `dev.ucp.common.identity_linking`; legacy identity-linking capability names remain accepted for A2A compatibility.
+- **Release baseline**: Version and conformance documentation now target `v0.5.0` and UCP `2026-04-08`, with deferred latest-UCP features marked as `not_supported_yet` instead of being advertised.
+
 ## [0.4.0] - 2026-04-11
 
 ### Added
@@ -100,6 +114,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - File-backed persistence is directory-based JSON; not suitable for high concurrency without external locking.
 
+[0.5.0]: https://github.com/your-org/commerce-orchestrator/releases/tag/v0.5.0
 [0.4.0]: https://github.com/your-org/commerce-orchestrator/releases/tag/v0.4.0
 [0.3.1]: https://github.com/your-org/commerce-orchestrator/releases/tag/v0.3.1
 [0.3.0]: https://github.com/your-org/commerce-orchestrator/releases/tag/v0.3.0

@@ -439,6 +439,186 @@ async fn catalog_lookup_not_found_returns_error() {
 }
 
 #[tokio::test]
+async fn ucp_cart_create_get_update_and_cancel_return_ucp_envelopes() {
+    let state = test_state();
+    let app = app::app().with_state(state);
+    let server = TestServer::new(app).unwrap();
+
+    let create = serde_json::json!({
+        "merchant_id": "m1",
+        "currency": "USD",
+        "line_items": [
+            { "item": { "id": "SKU-1" }, "quantity": 2 }
+        ]
+    });
+    let response = server.post("/api/v1/ucp/cart").json(&create).await;
+    response.assert_status_ok();
+    let cart: serde_json::Value = response.json();
+    assert_eq!(cart["ucp"]["version"].as_str(), Some("2026-04-08"));
+    assert!(cart["ucp"]["capabilities"]
+        .get("dev.ucp.shopping.cart")
+        .is_some());
+    let cart_id = cart["id"].as_str().expect("cart id");
+    assert_eq!(cart["currency"].as_str(), Some("USD"));
+    assert_eq!(cart["line_items"].as_array().unwrap().len(), 1);
+    let line_id = cart["line_items"][0]["id"].as_str().expect("line id");
+
+    let get_response = server.get(&format!("/api/v1/ucp/cart/{}", cart_id)).await;
+    get_response.assert_status_ok();
+    let fetched: serde_json::Value = get_response.json();
+    assert_eq!(fetched["id"].as_str(), Some(cart_id));
+    assert_eq!(fetched["line_items"][0]["quantity"].as_u64(), Some(2));
+
+    let update = serde_json::json!({
+        "currency": "USD",
+        "line_items": [
+            {
+                "id": line_id,
+                "item": { "id": "SKU-1" },
+                "quantity": 1
+            }
+        ]
+    });
+    let update_response = server
+        .put(&format!("/api/v1/ucp/cart/{}", cart_id))
+        .json(&update)
+        .await;
+    update_response.assert_status_ok();
+    let updated: serde_json::Value = update_response.json();
+    assert_eq!(updated["line_items"][0]["quantity"].as_u64(), Some(1));
+
+    let cancel_response = server
+        .post(&format!("/api/v1/ucp/cart/{}/cancel", cart_id))
+        .await;
+    cancel_response.assert_status_ok();
+    let canceled: serde_json::Value = cancel_response.json();
+    assert_eq!(canceled["status"].as_str(), Some("canceled"));
+    assert_eq!(canceled["ucp"]["version"].as_str(), Some("2026-04-08"));
+}
+
+#[tokio::test]
+async fn ucp_catalog_search_lookup_and_product_return_ucp_envelopes() {
+    let state = test_state();
+    let app = app::app().with_state(state);
+    let server = TestServer::new(app).unwrap();
+
+    let search = serde_json::json!({ "query": "test" });
+    let search_response = server
+        .post("/api/v1/ucp/catalog/search")
+        .json(&search)
+        .await;
+    search_response.assert_status_ok();
+    let search_json: serde_json::Value = search_response.json();
+    assert_eq!(search_json["ucp"]["version"].as_str(), Some("2026-04-08"));
+    assert!(search_json["ucp"]["capabilities"]
+        .get("dev.ucp.shopping.catalog.search")
+        .is_some());
+    assert_eq!(search_json["products"].as_array().unwrap().len(), 1);
+
+    let lookup = serde_json::json!({ "ids": ["SKU-1", "MISSING"] });
+    let lookup_response = server
+        .post("/api/v1/ucp/catalog/lookup")
+        .json(&lookup)
+        .await;
+    lookup_response.assert_status_ok();
+    let lookup_json: serde_json::Value = lookup_response.json();
+    assert_eq!(lookup_json["products"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        lookup_json["messages"][0]["code"].as_str(),
+        Some("not_found")
+    );
+    assert_eq!(
+        lookup_json["messages"][0]["content"].as_str(),
+        Some("MISSING")
+    );
+
+    let product = serde_json::json!({ "id": "SKU-1" });
+    let product_response = server
+        .post("/api/v1/ucp/catalog/product")
+        .json(&product)
+        .await;
+    product_response.assert_status_ok();
+    let product_json: serde_json::Value = product_response.json();
+    assert_eq!(product_json["product"]["id"].as_str(), Some("SKU-1"));
+    assert!(product_json["ucp"]["capabilities"]
+        .get("dev.ucp.shopping.catalog.lookup")
+        .is_some());
+}
+
+#[tokio::test]
+async fn ucp_order_get_returns_current_order_shape() {
+    let state = test_state();
+    let app = app::app().with_state(state);
+    let server = TestServer::new(app).unwrap();
+
+    let create = serde_json::json!({
+        "command": { "kind": "create_cart", "merchant_id": "m1", "currency": "USD" }
+    });
+    let cart: serde_json::Value = server
+        .post("/api/v1/cart/commands")
+        .json(&create)
+        .await
+        .json();
+    let cart_id = cart["cart_id"].as_str().unwrap();
+
+    let add = serde_json::json!({
+        "command": { "kind": "add_item", "item_id": "SKU-1", "quantity": 1 },
+        "cart_id": cart_id
+    });
+    let cart: serde_json::Value = server.post("/api/v1/cart/commands").json(&add).await.json();
+    let version = cart["version"].as_u64().unwrap();
+
+    let start = serde_json::json!({
+        "command": { "kind": "start_checkout", "cart_id": cart_id, "cart_version": version }
+    });
+    let cart: serde_json::Value = server
+        .post("/api/v1/cart/commands")
+        .json(&start)
+        .await
+        .json();
+    let version = cart["version"].as_u64().unwrap();
+
+    let checkout = serde_json::json!({
+        "tenant_id": "dev",
+        "merchant_id": "m1",
+        "cart_id": cart_id,
+        "cart_version": version,
+        "currency": "USD",
+        "payment_intent": {
+            "amount_minor": 1000,
+            "token_or_reference": "tok_test"
+        },
+        "idempotency_key": "ucp-order-test"
+    });
+    let txn: serde_json::Value = server
+        .post("/api/v1/checkout/execute")
+        .json(&checkout)
+        .await
+        .json();
+    let order_id = txn["order_id"].as_str().expect("order_id");
+
+    let response = server
+        .get(&format!("/api/v1/ucp/orders/{}", order_id))
+        .await;
+    response.assert_status_ok();
+    let order: serde_json::Value = response.json();
+    assert_eq!(order["ucp"]["version"].as_str(), Some("2026-04-08"));
+    assert!(order["ucp"]["capabilities"]
+        .get("dev.ucp.shopping.order")
+        .is_some());
+    assert_eq!(order["id"].as_str(), Some(order_id));
+    assert_eq!(order["currency"].as_str(), Some("USD"));
+    assert!(order["permalink_url"]
+        .as_str()
+        .is_some_and(|url| !url.is_empty()));
+    assert_eq!(order["line_items"].as_array().unwrap().len(), 1);
+    assert!(order["totals"].as_array().unwrap().iter().any(|total| {
+        total.get("type").and_then(|v| v.as_str()) == Some("total")
+            && total.get("amount").and_then(|v| v.as_i64()) == Some(1100)
+    }));
+}
+
+#[tokio::test]
 async fn a2a_identity_link_returns_link_result_envelope() {
     let state = test_state();
     let app = app::app().with_state(state);
@@ -462,7 +642,7 @@ async fn a2a_identity_link_returns_link_result_envelope() {
         json.get("ucp")
             .and_then(|v| v.get("version"))
             .and_then(|v| v.as_str()),
-        Some("2026-01-23")
+        Some("2026-04-08")
     );
     assert!(
         json.get("link_id")

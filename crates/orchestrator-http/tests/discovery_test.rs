@@ -34,37 +34,56 @@ async fn well_known_ucp_returns_200_and_manifest() {
     let ucp = json.get("ucp").expect("response has ucp");
     assert_eq!(
         ucp.get("version").and_then(|v| v.as_str()),
-        Some("2026-01-23")
+        Some("2026-04-08")
     );
     let supported = ucp
         .get("supported_versions")
-        .and_then(|v| v.as_array())
-        .expect("supported_versions array");
-    let supported_values: Vec<&str> = supported.iter().filter_map(|v| v.as_str()).collect();
+        .and_then(|v| v.as_object())
+        .expect("supported_versions object");
     assert!(
-        supported_values.contains(&"2026-01-23"),
-        "latest version should be listed"
-    );
-    assert!(
-        supported_values.contains(&"2026-01-11"),
+        supported.contains_key("2026-01-23"),
         "prior compatible version should be listed"
     );
-    assert!(ucp.get("manifest").is_some(), "manifest present");
-    let manifest = ucp.get("manifest").unwrap();
-    assert!(manifest.get("capabilities").is_some());
-    let rest = ucp
-        .get("rest_endpoint")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
     assert!(
-        rest.starts_with("https://orchestrator.example.com"),
-        "rest_endpoint {:?}",
-        rest
+        supported.contains_key("2026-01-11"),
+        "prior compatible version should be listed"
+    );
+    let services = ucp
+        .get("services")
+        .and_then(|v| v.as_object())
+        .expect("services map");
+    let shopping = services
+        .get("dev.ucp.shopping")
+        .and_then(|v| v.as_array())
+        .expect("shopping service bindings");
+    assert!(
+        shopping.iter().any(|binding| {
+            binding.get("transport").and_then(|v| v.as_str()) == Some("rest")
+                && binding
+                    .get("endpoint")
+                    .and_then(|v| v.as_str())
+                    .is_some_and(|endpoint| {
+                        endpoint == "https://orchestrator.example.com/api/v1/ucp"
+                    })
+        }),
+        "rest binding should point at UCP-native base endpoint"
+    );
+    assert!(
+        shopping.iter().any(|binding| {
+            binding.get("transport").and_then(|v| v.as_str()) == Some("mcp")
+                && binding
+                    .get("endpoint")
+                    .and_then(|v| v.as_str())
+                    .is_some_and(|endpoint| {
+                        endpoint == "https://orchestrator.example.com/api/v1/mcp/message"
+                    })
+        }),
+        "mcp binding should point at existing MCP endpoint"
     );
 }
 
 #[tokio::test]
-async fn well_known_ucp_advertises_checkout_and_discount_capabilities() {
+async fn well_known_ucp_advertises_current_core_capabilities() {
     let state = test_state_with_base_url("http://localhost:8080");
     let app = app::app().with_state(state);
     let server = TestServer::new(app).unwrap();
@@ -72,56 +91,38 @@ async fn well_known_ucp_advertises_checkout_and_discount_capabilities() {
     let response = server.get("/.well-known/ucp").await;
     response.assert_status_ok();
     let json: serde_json::Value = response.json();
-    let capabilities = json["ucp"]["manifest"]["capabilities"]
-        .as_array()
-        .expect("capabilities array");
-    let ids: Vec<String> = capabilities
-        .iter()
-        .filter_map(|c| c.get("id").and_then(|v| v.as_str()).map(String::from))
-        .collect();
-    assert!(
-        ids.contains(&"dev.ucp.shopping.checkout".to_string()),
-        "checkout capability advertised, got {:?}",
-        ids
-    );
-    assert!(
-        ids.contains(&"dev.ucp.shopping.discount".to_string()),
-        "discount capability advertised, got {:?}",
-        ids
-    );
-    assert!(
-        ids.contains(&"dev.ucp.identity.linking".to_string()),
-        "identity linking capability advertised, got {:?}",
-        ids
-    );
-
-    let flags = json["ucp"]["capability_flags"]
+    let capabilities = json["ucp"]["capabilities"]
         .as_object()
-        .expect("capability_flags object");
-    assert_eq!(
-        flags
-            .get("dev.ucp.shopping.cart.multi_item")
-            .and_then(|v| v.as_bool()),
-        Some(false)
+        .expect("capabilities map");
+    for id in [
+        "dev.ucp.shopping.checkout",
+        "dev.ucp.shopping.cart",
+        "dev.ucp.shopping.catalog.lookup",
+        "dev.ucp.shopping.catalog.search",
+        "dev.ucp.shopping.order",
+        "dev.ucp.shopping.discount",
+        "dev.ucp.common.identity_linking",
+    ] {
+        assert!(capabilities.contains_key(id), "{id} should be advertised");
+    }
+    assert!(
+        !capabilities.contains_key("dev.ucp.identity.linking"),
+        "legacy identity capability name should not be advertised for 2026-04-08"
     );
-    assert_eq!(
-        flags
-            .get("dev.ucp.shopping.catalog.lookup")
-            .and_then(|v| v.as_bool()),
-        Some(true)
-    );
-    assert_eq!(
-        flags.get("dev.ucp.payments.mpp").and_then(|v| v.as_bool()),
-        Some(false)
-    );
+    let discount = capabilities["dev.ucp.shopping.discount"][0]
+        .as_object()
+        .expect("discount descriptor");
+    let extends = discount
+        .get("extends")
+        .and_then(|v| v.as_array())
+        .expect("discount extends both checkout and cart");
+    let parents: Vec<&str> = extends.iter().filter_map(|v| v.as_str()).collect();
+    assert!(parents.contains(&"dev.ucp.shopping.checkout"));
+    assert!(parents.contains(&"dev.ucp.shopping.cart"));
 }
 
 #[tokio::test]
 async fn advertised_capabilities_have_implemented_routes() {
-    // Conformance: capabilities advertised in discovery must map to existing API routes.
-    // dev.ucp.shopping.checkout -> POST /api/v1/checkout/execute and /api/v1/cart/commands
-    // dev.ucp.shopping.discount -> apply_adjustment via /api/v1/cart/commands
-    // dev.ucp.identity.linking -> POST /api/v1/a2a/identity/link
     let state = test_state_with_base_url("http://localhost:8080");
     let app = app::app().with_state(state);
     let server = TestServer::new(app).unwrap();
@@ -172,8 +173,69 @@ async fn advertised_capabilities_have_implemented_routes() {
     assert_ne!(
         r_identity.status_code().as_u16(),
         404,
-        "identity link route must exist (dev.ucp.identity.linking)"
+        "identity link route must exist (legacy identity envelope compatibility)"
     );
+
+    let create_ucp_cart = serde_json::json!({
+        "merchant_id": "m",
+        "currency": "USD",
+        "line_items": []
+    });
+    let r_ucp_cart = server.post("/api/v1/ucp/cart").json(&create_ucp_cart).await;
+    assert_ne!(
+        r_ucp_cart.status_code().as_u16(),
+        404,
+        "UCP cart route must exist"
+    );
+
+    let catalog_lookup = serde_json::json!({ "ids": ["SKU-1", "missing"] });
+    let r_catalog_lookup = server
+        .post("/api/v1/ucp/catalog/lookup")
+        .json(&catalog_lookup)
+        .await;
+    assert_ne!(
+        r_catalog_lookup.status_code().as_u16(),
+        404,
+        "UCP catalog lookup route must exist"
+    );
+
+    let catalog_search = serde_json::json!({ "query": "sku" });
+    let r_catalog_search = server
+        .post("/api/v1/ucp/catalog/search")
+        .json(&catalog_search)
+        .await;
+    assert_ne!(
+        r_catalog_search.status_code().as_u16(),
+        404,
+        "UCP catalog search route must exist"
+    );
+}
+
+#[tokio::test]
+async fn well_known_ucp_legacy_version_retains_manifest_compatibility() {
+    let state = test_state_with_base_url("https://orchestrator.example.com");
+    let app = app::app().with_state(state);
+    let server = TestServer::new(app).unwrap();
+
+    let response = server
+        .get("/.well-known/ucp")
+        .add_query_param("ucp_version", "2026-01-23")
+        .await;
+    response.assert_status_ok();
+    let json: serde_json::Value = response.json();
+    let ucp = json.get("ucp").expect("response has ucp");
+    assert_eq!(
+        ucp.get("version").and_then(|v| v.as_str()),
+        Some("2026-01-23")
+    );
+    assert!(ucp.get("manifest").is_some(), "legacy manifest present");
+    let supported = ucp
+        .get("supported_versions")
+        .and_then(|v| v.as_array())
+        .expect("legacy supported_versions array");
+    let supported_values: Vec<&str> = supported.iter().filter_map(|v| v.as_str()).collect();
+    assert!(supported_values.contains(&"2026-01-23"));
+    assert!(supported_values.contains(&"2026-01-11"));
 }
 
 #[tokio::test]

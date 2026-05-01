@@ -194,6 +194,30 @@ pub fn list_tools() -> Vec<ToolDefinition> {
                 "required": ["item_id"]
             }),
         },
+        ToolDefinition {
+            name: "lookup_catalog_items".to_string(),
+            description: "Look up multiple catalog items by ID".to_string(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "item_ids": {
+                        "type": "array",
+                        "items": { "type": "string" }
+                    }
+                },
+                "required": ["item_ids"]
+            }),
+        },
+        ToolDefinition {
+            name: "search_catalog_items".to_string(),
+            description: "Search catalog items by query".to_string(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "query": { "type": "string" }
+                }
+            }),
+        },
     ]
 }
 
@@ -467,6 +491,33 @@ async fn dispatch_tool(
                 "title": item.title,
                 "price_minor": item.price_minor,
             }))
+        }
+        "lookup_catalog_items" => {
+            let item_ids = args
+                .get("item_ids")
+                .and_then(|value| value.as_array())
+                .ok_or_else(|| "missing required field: item_ids".to_string())?
+                .iter()
+                .map(|value| {
+                    value
+                        .as_str()
+                        .map(|item_id| item_id.to_string())
+                        .ok_or_else(|| "item_ids must contain only strings".to_string())
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let items = facade
+                .lookup_catalog_items(&item_ids)
+                .await
+                .map_err(|e| e.to_string())?;
+            serde_json::to_value(items).map_err(|e| e.to_string())
+        }
+        "search_catalog_items" => {
+            let query = args.get("query").and_then(|value| value.as_str());
+            let items = facade
+                .search_catalog_items(query)
+                .await
+                .map_err(|e| e.to_string())?;
+            serde_json::to_value(items).map_err(|e| e.to_string())
         }
         _ => Err(format!("unknown tool: {}", name)),
     }

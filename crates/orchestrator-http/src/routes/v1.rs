@@ -7,26 +7,41 @@ use crate::dto::{
     PaymentLifecycleRequestDto, PaymentMismatchDto, PaymentOperationResultDto,
     ProcessOutboxRequestDto, ReconciliationReportDto, ReconciliationRequestDto,
     ReplayDeadLetterRequestDto, ReplayDeadLetterResponseDto, TransactionResultDto,
-    WebhookRegistrationDto, WebhookRegistrationRequestDto, WebhookUnregisterResponseDto,
+    UcpCartRequestDto, UcpCartResponseDto, UcpCatalogLookupRequestDto, UcpCatalogProductRequestDto,
+    UcpCatalogProductResponseDto, UcpCatalogProductsResponseDto, UcpCatalogSearchRequestDto,
+    UcpEnvelopeDto, UcpMessageDto, UcpOrderResponseDto, WebhookRegistrationDto,
+    WebhookRegistrationRequestDto, WebhookUnregisterResponseDto,
 };
 use crate::error::ApiError;
 use crate::state::AppState;
 use axum::{
     extract::{Path, State},
-    routing::{get, post},
+    routing::{get, post, put},
     Json, Router,
 };
 use orchestrator_api::{
     normalize_a2a_cart_envelope, normalize_a2a_checkout_envelope,
     normalize_a2a_identity_link_envelope, redact_checkout_request,
 };
-use orchestrator_core::contract::{CartCommand, CartId, CheckoutRequest};
+use orchestrator_core::contract::{
+    AddItemPayload, CancelCartPayload, CartCommand, CartId, CheckoutRequest, CreateCartPayload,
+    GetCartPayload, RemoveItemPayload, UpdateItemQtyPayload,
+};
+use std::collections::HashSet;
 use std::str::FromStr;
 use uuid::Uuid;
 
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/cart/commands", post(dispatch_cart_command))
+        .route("/ucp/cart", post(ucp_create_cart))
+        .route("/ucp/cart/:id", get(ucp_get_cart))
+        .route("/ucp/cart/:id", put(ucp_update_cart))
+        .route("/ucp/cart/:id/cancel", post(ucp_cancel_cart))
+        .route("/ucp/catalog/search", post(ucp_catalog_search))
+        .route("/ucp/catalog/lookup", post(ucp_catalog_lookup))
+        .route("/ucp/catalog/product", post(ucp_catalog_product))
+        .route("/ucp/orders/:id", get(ucp_get_order))
         .route("/checkout/execute", post(execute_checkout))
         .route("/a2a/checkout", post(a2a_execute_checkout))
         .route("/a2a/cart", post(a2a_dispatch_cart_command))
@@ -63,6 +78,213 @@ async fn dispatch_cart_command(
         .map_err(|e| ApiError::BadRequest(e.to_string()))?;
     let projection = state.facade.dispatch_cart_command(cmd, cart_id).await?;
     Ok(Json(projection.into()))
+}
+
+async fn ucp_create_cart(
+    AuthContextExtractor(_auth): AuthContextExtractor,
+    State(state): State<AppState>,
+    Json(req): Json<UcpCartRequestDto>,
+) -> Result<Json<UcpCartResponseDto>, ApiError> {
+    let merchant_id = req
+        .merchant_id
+        .ok_or_else(|| ApiError::BadRequest("merchant_id is required".to_string()))?;
+    let mut projection = state
+        .facade
+        .dispatch_cart_command(
+            CartCommand::CreateCart(CreateCartPayload {
+                merchant_id,
+                currency: req.currency,
+            }),
+            None,
+        )
+        .await?;
+    let cart_id = projection.cart_id;
+    for line in req.line_items {
+        projection = state
+            .facade
+            .dispatch_cart_command(
+                CartCommand::AddItem(AddItemPayload {
+                    item_id: line.item.id,
+                    quantity: line.quantity,
+                }),
+                Some(cart_id),
+            )
+            .await?;
+    }
+    orchestrator_observability::incr("ucp_cart_create_total");
+    Ok(Json(projection.into()))
+}
+
+async fn ucp_get_cart(
+    AuthContextExtractor(_auth): AuthContextExtractor,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<UcpCartResponseDto>, ApiError> {
+    let cart_id = parse_ucp_cart_id(&id)?;
+    let projection = state
+        .facade
+        .dispatch_cart_command(CartCommand::GetCart(GetCartPayload { cart_id }), None)
+        .await?;
+    orchestrator_observability::incr("ucp_cart_get_total");
+    Ok(Json(projection.into()))
+}
+
+async fn ucp_update_cart(
+    AuthContextExtractor(_auth): AuthContextExtractor,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<UcpCartRequestDto>,
+) -> Result<Json<UcpCartResponseDto>, ApiError> {
+    let cart_id = parse_ucp_cart_id(&id)?;
+    let mut projection = state
+        .facade
+        .dispatch_cart_command(CartCommand::GetCart(GetCartPayload { cart_id }), None)
+        .await?;
+    let desired_existing: HashSet<String> = req
+        .line_items
+        .iter()
+        .filter_map(|line| line.id.clone())
+        .collect();
+    let current_ids: Vec<String> = projection
+        .lines
+        .iter()
+        .map(|line| line.line_id.clone())
+        .collect();
+
+    for line_id in current_ids {
+        if !desired_existing.contains(&line_id) {
+            projection = state
+                .facade
+                .dispatch_cart_command(
+                    CartCommand::RemoveItem(RemoveItemPayload { line_id }),
+                    Some(cart_id),
+                )
+                .await?;
+        }
+    }
+
+    for line in req.line_items {
+        projection = if let Some(line_id) = line.id {
+            state
+                .facade
+                .dispatch_cart_command(
+                    CartCommand::UpdateItemQty(UpdateItemQtyPayload {
+                        line_id,
+                        quantity: line.quantity,
+                    }),
+                    Some(cart_id),
+                )
+                .await?
+        } else {
+            state
+                .facade
+                .dispatch_cart_command(
+                    CartCommand::AddItem(AddItemPayload {
+                        item_id: line.item.id,
+                        quantity: line.quantity,
+                    }),
+                    Some(cart_id),
+                )
+                .await?
+        };
+    }
+    orchestrator_observability::incr("ucp_cart_update_total");
+    Ok(Json(projection.into()))
+}
+
+async fn ucp_cancel_cart(
+    AuthContextExtractor(_auth): AuthContextExtractor,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<UcpCartResponseDto>, ApiError> {
+    let cart_id = parse_ucp_cart_id(&id)?;
+    let projection = state
+        .facade
+        .dispatch_cart_command(CartCommand::CancelCart(CancelCartPayload { cart_id }), None)
+        .await?;
+    orchestrator_observability::incr("ucp_cart_cancel_total");
+    Ok(Json(projection.into()))
+}
+
+async fn ucp_catalog_search(
+    AuthContextExtractor(_auth): AuthContextExtractor,
+    State(state): State<AppState>,
+    Json(req): Json<UcpCatalogSearchRequestDto>,
+) -> Result<Json<UcpCatalogProductsResponseDto>, ApiError> {
+    let products = state
+        .facade
+        .search_catalog_items(req.query.as_deref())
+        .await?
+        .into_iter()
+        .map(CatalogItemDto::from)
+        .collect();
+    orchestrator_observability::incr("ucp_catalog_search_total");
+    Ok(Json(UcpCatalogProductsResponseDto {
+        ucp: UcpEnvelopeDto::for_capabilities(&["dev.ucp.shopping.catalog.search"]),
+        products,
+        messages: Vec::new(),
+    }))
+}
+
+async fn ucp_catalog_lookup(
+    AuthContextExtractor(_auth): AuthContextExtractor,
+    State(state): State<AppState>,
+    Json(req): Json<UcpCatalogLookupRequestDto>,
+) -> Result<Json<UcpCatalogProductsResponseDto>, ApiError> {
+    let found = state.facade.lookup_catalog_items(&req.ids).await?;
+    let found_ids: HashSet<String> = found.iter().map(|item| item.id.clone()).collect();
+    let messages = req
+        .ids
+        .iter()
+        .filter(|id| !found_ids.contains(*id))
+        .map(|id| UcpMessageDto {
+            code: "not_found".to_string(),
+            content: id.clone(),
+        })
+        .collect();
+    orchestrator_observability::incr("ucp_catalog_lookup_total");
+    Ok(Json(UcpCatalogProductsResponseDto {
+        ucp: UcpEnvelopeDto::for_capabilities(&["dev.ucp.shopping.catalog.lookup"]),
+        products: found.into_iter().map(CatalogItemDto::from).collect(),
+        messages,
+    }))
+}
+
+async fn ucp_catalog_product(
+    AuthContextExtractor(_auth): AuthContextExtractor,
+    State(state): State<AppState>,
+    Json(req): Json<UcpCatalogProductRequestDto>,
+) -> Result<Json<UcpCatalogProductResponseDto>, ApiError> {
+    let product = state.facade.lookup_catalog_item(&req.id).await?;
+    orchestrator_observability::incr("ucp_catalog_product_total");
+    Ok(Json(UcpCatalogProductResponseDto {
+        ucp: UcpEnvelopeDto::for_capabilities(&["dev.ucp.shopping.catalog.lookup"]),
+        product: product.into(),
+        messages: Vec::new(),
+    }))
+}
+
+async fn ucp_get_order(
+    AuthContextExtractor(auth_ctx): AuthContextExtractor,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<UcpOrderResponseDto>, ApiError> {
+    let order = state
+        .facade
+        .get_order(&id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound("order not found".to_string()))?;
+    if auth_ctx.tenant_id != order.tenant_id {
+        return Err(ApiError::Forbidden("tenant mismatch".to_string()));
+    }
+    orchestrator_observability::incr("ucp_order_get_total");
+    Ok(Json(order.into()))
+}
+
+fn parse_ucp_cart_id(id: &str) -> Result<CartId, ApiError> {
+    Uuid::from_str(id)
+        .map(CartId)
+        .map_err(|e| ApiError::BadRequest(e.to_string()))
 }
 
 async fn execute_checkout(

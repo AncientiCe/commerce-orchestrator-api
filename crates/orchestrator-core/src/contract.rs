@@ -14,6 +14,7 @@ pub enum CartCommand {
     ApplyAdjustment(ApplyAdjustmentPayload),
     GetCart(GetCartPayload),
     StartCheckout(StartCheckoutPayload),
+    CancelCart(CancelCartPayload),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -53,6 +54,11 @@ pub struct GetCartPayload {
 pub struct StartCheckoutPayload {
     pub cart_id: CartId,
     pub cart_version: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CancelCartPayload {
+    pub cart_id: CartId,
 }
 
 /// Cart/checkout identifier.
@@ -96,6 +102,8 @@ pub struct LocationHint {
     pub country_code: Option<String>,
     pub region: Option<String>,
     pub postal_code: Option<String>,
+    #[serde(default)]
+    pub intent: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -148,6 +156,7 @@ pub struct CartLineProjection {
 pub enum CartStatus {
     Draft,
     CheckoutReady,
+    Cancelled,
 }
 
 /// Transaction terminal output after checkout execution.
@@ -202,6 +211,14 @@ pub struct OrderRecord {
     pub transaction_id: String,
     pub checkout_id: CartId,
     pub status: OrderStatus,
+    #[serde(default = "default_order_currency")]
+    pub currency: String,
+    #[serde(default)]
+    pub permalink_url: String,
+    #[serde(default)]
+    pub line_items: Vec<CartLineProjection>,
+    #[serde(default)]
+    pub totals: TotalsBreakdown,
     pub events: Vec<OrderEvent>,
     pub adjustments: Vec<OrderAdjustment>,
     pub created_at: chrono::DateTime<chrono::Utc>,
@@ -232,10 +249,14 @@ pub struct OrderAdjustment {
     pub status: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TotalsBreakdown {
     pub subtotal_minor: i64,
     pub tax_minor: i64,
     pub discount_minor: i64,
     pub total_minor: i64,
+}
+
+fn default_order_currency() -> String {
+    "USD".to_string()
 }

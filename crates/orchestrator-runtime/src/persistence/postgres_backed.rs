@@ -8,6 +8,7 @@ use sqlx_core::query::query;
 use sqlx_core::query_scalar::query_scalar;
 use sqlx_core::row::Row;
 use sqlx_postgres::{PgPoolOptions, Postgres};
+use std::cmp::Reverse;
 
 use crate::commit::CommitRecord;
 use crate::effects::OutboxMessage;
@@ -661,7 +662,7 @@ impl OrderStore for PostgresOrderStore {
             .filter_map(|row| serde_json::from_value::<OrderRecord>(row.get("record")).ok())
             .filter(|r| r.tenant_id == tenant_id)
             .collect();
-        orders.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        orders.sort_by_key(|order| Reverse(order.created_at));
         Ok(orders)
     }
 

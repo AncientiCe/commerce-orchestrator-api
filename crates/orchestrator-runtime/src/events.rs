@@ -31,4 +31,5 @@ pub enum CartStreamEvent {
         allowed: bool,
     },
     CheckoutReady,
+    Cancelled,
 }

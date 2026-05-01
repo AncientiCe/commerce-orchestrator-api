@@ -22,17 +22,32 @@ See [consumer-integration.md](consumer-integration.md) for the high-level integr
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/.well-known/ucp` | Capability discovery: returns JSON manifest with selected `version`, `supported_versions`, services, capabilities, `capability_flags`, and `rest_endpoint` (orchestrator base URL). No auth required. |
+| `GET` | `/.well-known/ucp` | Capability discovery. Defaults to UCP `2026-04-08` with profile-shaped `services` and `capabilities`; `?ucp_version=2026-01-23` and `?ucp_version=2026-01-11` return compatible legacy manifests. No auth required. |
 
 ### Cart and checkout
 
 | Method | Path | Description |
 |--------|------|-------------|
 | `POST` | `/api/v1/cart/commands` | Dispatch a cart command (create, add item, update qty, remove item, apply adjustment, get cart, start checkout). Body: `CartCommandRequest` (see request shapes). |
+| `POST` | `/api/v1/ucp/cart` | UCP-native cart create with `line_items`; returns a UCP cart envelope. |
+| `GET` | `/api/v1/ucp/cart/:id` | UCP-native cart lookup. |
+| `PUT` | `/api/v1/ucp/cart/:id` | UCP-native cart line replacement/update. |
+| `POST` | `/api/v1/ucp/cart/:id/cancel` | UCP-native backed cart cancellation. |
 | `POST` | `/api/v1/checkout/execute` | Execute checkout for a cart. Body: `CheckoutRequestDto`. Requires auth in production. |
 | `POST` | `/api/v1/a2a/checkout` | A2A envelope: `{ "capability": "dev.ucp.shopping.checkout", "payload": CheckoutRequestDto }`. Same authz and idempotency as REST. |
 | `POST` | `/api/v1/a2a/cart` | A2A envelope: `{ "capability": "...", "payload": { "command": { "kind": "...", ... }, "cart_id": "..."? } }`. Same policy as REST. |
-| `POST` | `/api/v1/a2a/identity/link` | A2A envelope: `{ "capability": "dev.ucp.identity.linking", "payload": { "tenant_id": "...", "merchant_id": "...", "agent_id": "...", "link_token": "...", "user_reference": "..."? } }`. Returns identity-link result envelope with UCP metadata. |
+| `POST` | `/api/v1/a2a/identity/link` | A2A envelope: `{ "capability": "dev.ucp.common.identity_linking", "payload": { "tenant_id": "...", "merchant_id": "...", "agent_id": "...", "link_token": "...", "user_reference": "..."? } }`. Legacy identity capability names remain accepted. |
+
+### Catalog and orders
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/v1/catalog/items/:id` | Legacy catalog item lookup. |
+| `POST` | `/api/v1/ucp/catalog/search` | UCP-native catalog search. Body: `{ "query": "..." }`. |
+| `POST` | `/api/v1/ucp/catalog/lookup` | UCP-native batch lookup. Body: `{ "ids": ["SKU-1"] }`; misses are returned as UCP `messages`. |
+| `POST` | `/api/v1/ucp/catalog/product` | UCP-native product lookup. Body: `{ "id": "SKU-1" }`. |
+| `GET` | `/api/v1/orders/:id` | Legacy order lookup with tenant isolation. |
+| `GET` | `/api/v1/ucp/orders/:id` | UCP-native order lookup with `currency`, `permalink_url`, line items, and totals. |
 
 ### Payments
 
@@ -80,6 +95,7 @@ Command kinds and their fields:
 - `apply_adjustment`: `code`
 - `get_cart`: `cart_id`
 - `start_checkout`: `cart_id`, `cart_version`
+- `cancel_cart`: `cart_id`
 
 **Response (success):** Cart projection with `cart_id`, `version`, `currency`, `lines`, `subtotal_minor`, `tax_minor`, `total_minor`, `geo_ok`, `status`.
 
@@ -100,7 +116,7 @@ MPP note:
 
 **Request:** A2A envelope with `capability` and `payload`:
 
-- `capability`: `dev.ucp.identity.linking`
+- `capability`: `dev.ucp.common.identity_linking` (legacy `dev.ucp.identity.linking` remains accepted)
 - `payload`: `tenant_id`, `merchant_id`, `agent_id`, `link_token`, optional `user_reference`
 
 **Response (success):** `{ "ucp": { "version": "...", "supported_versions": [...] }, "link_id": "...", "status": "linked" }`.

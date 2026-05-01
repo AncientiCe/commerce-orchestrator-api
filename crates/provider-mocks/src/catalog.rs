@@ -30,4 +30,30 @@ impl CatalogProvider for MockCatalogProvider {
             .cloned()
             .ok_or_else(|| CatalogError::NotFound(item_id.to_string()))
     }
+
+    async fn lookup_items(&self, item_ids: &[String]) -> Result<Vec<CatalogItem>, CatalogError> {
+        let items = self.items.lock().unwrap();
+        Ok(item_ids
+            .iter()
+            .filter_map(|item_id| items.get(item_id).cloned())
+            .collect())
+    }
+
+    async fn search_items(&self, query: Option<&str>) -> Result<Vec<CatalogItem>, CatalogError> {
+        let query = query.unwrap_or_default().to_ascii_lowercase();
+        let mut items: Vec<CatalogItem> = self
+            .items
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|item| {
+                query.is_empty()
+                    || item.id.to_ascii_lowercase().contains(&query)
+                    || item.title.to_ascii_lowercase().contains(&query)
+            })
+            .cloned()
+            .collect();
+        items.sort_by(|a, b| a.id.cmp(&b.id));
+        Ok(items)
+    }
 }

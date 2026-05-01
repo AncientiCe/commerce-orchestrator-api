@@ -3,8 +3,8 @@
 
 use serde::{Deserialize, Serialize};
 
-pub const UCP_LATEST_VERSION: &str = "2026-01-23";
-pub const UCP_SUPPORTED_VERSIONS: &[&str] = &[UCP_LATEST_VERSION, "2026-01-11"];
+pub const UCP_LATEST_VERSION: &str = "2026-04-08";
+pub const UCP_SUPPORTED_VERSIONS: &[&str] = &[UCP_LATEST_VERSION, "2026-01-23", "2026-01-11"];
 
 /// Capability identifier (UCP-style: e.g. dev.ucp.shopping.checkout).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -30,6 +30,26 @@ pub struct CapabilityManifest {
 pub struct ServiceDescriptor {
     pub version: String,
     pub spec_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UcpServiceBinding {
+    pub version: String,
+    pub spec: String,
+    pub transport: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub schema: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub endpoint: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UcpCapabilityBinding {
+    pub version: String,
+    pub spec: String,
+    pub schema: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extends: Option<Vec<String>>,
 }
 
 impl Default for CapabilityManifest {

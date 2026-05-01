@@ -388,6 +388,24 @@ impl Runner {
                     .await?;
                 Ok(projection)
             }
+            CartCommand::CancelCart(payload) => {
+                let mut projection = self
+                    .event_store
+                    .get_cart_snapshot(&payload.cart_id)
+                    .await
+                    .ok_or(RunnerError::CartNotFound)?;
+                projection.status = CartStatus::Cancelled;
+                projection.version += 1;
+                self.event_store
+                    .append_cart_event(payload.cart_id, CartStreamEvent::Cancelled)
+                    .await?;
+                self.event_store
+                    .put_cart_snapshot(projection.clone())
+                    .await?;
+                self.transition_cart(payload.cart_id, CartEvent::Cancel)
+                    .await?;
+                Ok(projection)
+            }
             _ => Err(RunnerError::UnsupportedCommand),
         }
     }
@@ -532,6 +550,15 @@ impl Runner {
                 transaction_id: committed.transaction_id.clone(),
                 checkout_id: request.cart_id,
                 status: OrderStatus::Created,
+                currency: request.currency.clone(),
+                permalink_url: format!("/orders/{}", order_id),
+                line_items: cart.lines.clone(),
+                totals: TotalsBreakdown {
+                    subtotal_minor: cart.subtotal_minor,
+                    tax_minor: cart.tax_minor,
+                    discount_minor: 0,
+                    total_minor: cart.total_minor,
+                },
                 events: vec![OrderEvent {
                     id: format!("evt_{}", Uuid::new_v4()),
                     event_type: "created".to_string(),
@@ -791,6 +818,30 @@ impl Runner {
         self.providers
             .catalog
             .get_item(item_id)
+            .await
+            .map_err(RunnerError::Catalog)
+    }
+
+    /// Look up multiple catalog items by ID.
+    pub async fn lookup_catalog_items(
+        &self,
+        item_ids: &[String],
+    ) -> Result<Vec<provider_contracts::CatalogItem>, RunnerError> {
+        self.providers
+            .catalog
+            .lookup_items(item_ids)
+            .await
+            .map_err(RunnerError::Catalog)
+    }
+
+    /// Search catalog items.
+    pub async fn search_catalog_items(
+        &self,
+        query: Option<&str>,
+    ) -> Result<Vec<provider_contracts::CatalogItem>, RunnerError> {
+        self.providers
+            .catalog
+            .search_items(query)
             .await
             .map_err(RunnerError::Catalog)
     }

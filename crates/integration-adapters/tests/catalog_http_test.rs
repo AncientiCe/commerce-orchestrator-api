@@ -42,3 +42,48 @@ async fn get_item_404_returns_not_found() {
 
     assert!(err.to_string().contains("not found") || err.to_string().contains("404"));
 }
+
+#[tokio::test]
+async fn lookup_items_posts_batch_lookup_request() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/catalog/lookup"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "products": [
+                { "id": "item_1", "title": "Test Product", "price_minor": 1999 }
+            ]
+        })))
+        .mount(&server)
+        .await;
+
+    let config = ClientConfig::default();
+    let adapter = CatalogHttpAdapter::new(server.uri(), config).unwrap();
+    let items = adapter
+        .lookup_items(&["item_1".to_string(), "missing".to_string()])
+        .await
+        .unwrap();
+
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].id, "item_1");
+}
+
+#[tokio::test]
+async fn search_items_posts_search_request() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/catalog/search"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "products": [
+                { "id": "item_1", "title": "Blue Runner", "price_minor": 1999 }
+            ]
+        })))
+        .mount(&server)
+        .await;
+
+    let config = ClientConfig::default();
+    let adapter = CatalogHttpAdapter::new(server.uri(), config).unwrap();
+    let items = adapter.search_items(Some("blue")).await.unwrap();
+
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].title, "Blue Runner");
+}
