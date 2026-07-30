@@ -1,9 +1,20 @@
 //! MCP tool definitions and dispatch for commerce operations.
 
-use crate::jsonrpc::{JsonRpcRequest, JsonRpcResponse, INTERNAL_ERROR, METHOD_NOT_FOUND};
+use crate::jsonrpc::{
+    JsonRpcRequest, JsonRpcResponse, INTERNAL_ERROR, METHOD_NOT_FOUND, UNSUPPORTED_PROTOCOL_VERSION,
+};
 use orchestrator_api::{AuthContext, OrchestratorFacade};
 use orchestrator_core::contract::*;
 use std::time::Instant;
+
+pub const MCP_MODERN_VERSION: &str = "2026-07-28";
+pub const MCP_LEGACY_VERSION: &str = "2024-11-05";
+pub const MCP_LEGACY_2025_VERSION: &str = "2025-11-25";
+pub const MCP_SUPPORTED_VERSIONS: &[&str] = &[
+    MCP_MODERN_VERSION,
+    MCP_LEGACY_2025_VERSION,
+    MCP_LEGACY_VERSION,
+];
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ToolDefinition {
@@ -249,13 +260,59 @@ fn get_i64(params: &serde_json::Value, key: &str) -> Result<i64, String> {
 }
 
 /// Handle a JSON-RPC request and return a response. Dispatches MCP methods to facade operations.
+///
+/// Dual-era support:
+/// - Legacy (`2024-11-05` / `2025-11-25`): `initialize` handshake.
+/// - Modern (`2026-07-28`): per-request protocol version via header and/or `_meta`.
 pub async fn handle_mcp_request(
     request: &JsonRpcRequest,
     facade: &OrchestratorFacade,
     auth: &AuthContext,
 ) -> JsonRpcResponse {
+    handle_mcp_request_with_version(request, facade, auth, None).await
+}
+
+pub async fn handle_mcp_request_with_version(
+    request: &JsonRpcRequest,
+    facade: &OrchestratorFacade,
+    auth: &AuthContext,
+    header_version: Option<&str>,
+) -> JsonRpcResponse {
     let started = Instant::now();
+    let meta_version = extract_meta_protocol_version(request);
+    let negotiated = match negotiate_mcp_version(header_version, meta_version.as_deref(), request) {
+        Ok(v) => v,
+        Err(requested) => {
+            orchestrator_observability::incr("mcp_version_unsupported_total");
+            return JsonRpcResponse::error_with_data(
+                request.id.clone(),
+                UNSUPPORTED_PROTOCOL_VERSION,
+                "Unsupported protocol version",
+                serde_json::json!({
+                    "supported": MCP_SUPPORTED_VERSIONS,
+                    "requested": requested,
+                }),
+            );
+        }
+    };
+    orchestrator_observability::incr(&format!(
+        "mcp_version_selected_{}_total",
+        negotiated.replace('-', "_")
+    ));
+
+    if header_version.is_some()
+        && meta_version.is_some()
+        && header_version.map(str::trim) != meta_version.as_deref().map(str::trim)
+    {
+        return JsonRpcResponse::error(
+            request.id.clone(),
+            -32600,
+            "MCP-Protocol-Version header does not match params._meta protocolVersion",
+        );
+    }
+
     let result = match request.method.as_str() {
+        "server/discover" => Ok(server_discover_payload()),
         "tools/list" => {
             let tools = list_tools();
             Ok(serde_json::json!({ "tools": tools }))
@@ -287,17 +344,27 @@ pub async fn handle_mcp_request(
             let uri = params.get("uri").and_then(|v| v.as_str()).unwrap_or("");
             read_resource(uri, facade).await
         }
-        "initialize" => Ok(serde_json::json!({
-            "protocolVersion": "2024-11-05",
-            "capabilities": {
-                "tools": { "listChanged": false },
-                "resources": { "subscribe": false, "listChanged": false }
-            },
-            "serverInfo": {
-                "name": "commerce-orchestrator",
-                "version": env!("CARGO_PKG_VERSION")
+        "initialize" => {
+            if negotiated == MCP_MODERN_VERSION {
+                return JsonRpcResponse::error(
+                    request.id.clone(),
+                    METHOD_NOT_FOUND,
+                    "initialize is not used in MCP 2026-07-28; call server/discover instead",
+                );
             }
-        })),
+            Ok(serde_json::json!({
+                "protocolVersion": negotiated,
+                "capabilities": {
+                    "tools": { "listChanged": false },
+                    "resources": { "subscribe": false, "listChanged": false }
+                },
+                "serverInfo": {
+                    "name": "commerce-orchestrator",
+                    "version": env!("CARGO_PKG_VERSION")
+                }
+            }))
+        }
+        "notifications/initialized" => Ok(serde_json::json!({})),
         _ => {
             return JsonRpcResponse::error(
                 request.id.clone(),
@@ -315,7 +382,25 @@ pub async fn handle_mcp_request(
         .unwrap_or(&request.method);
 
     match result {
-        Ok(value) => {
+        Ok(mut value) => {
+            if negotiated == MCP_MODERN_VERSION {
+                if let Some(obj) = value.as_object_mut() {
+                    let meta = obj.entry("_meta").or_insert_with(|| serde_json::json!({}));
+                    if let Some(meta_obj) = meta.as_object_mut() {
+                        meta_obj.insert(
+                            "io.modelcontextprotocol/serverInfo".to_string(),
+                            serde_json::json!({
+                                "name": "commerce-orchestrator",
+                                "version": env!("CARGO_PKG_VERSION")
+                            }),
+                        );
+                        meta_obj.insert(
+                            "io.modelcontextprotocol/protocolVersion".to_string(),
+                            serde_json::json!(MCP_MODERN_VERSION),
+                        );
+                    }
+                }
+            }
             orchestrator_observability::observe_operation(
                 "mcp_tool_call",
                 "success",
@@ -333,6 +418,65 @@ pub async fn handle_mcp_request(
             JsonRpcResponse::error(request.id.clone(), INTERNAL_ERROR, err)
         }
     }
+}
+
+fn server_discover_payload() -> serde_json::Value {
+    serde_json::json!({
+        "protocolVersions": MCP_SUPPORTED_VERSIONS,
+        "capabilities": {
+            "tools": { "listChanged": false },
+            "resources": { "subscribe": false, "listChanged": false }
+        },
+        "serverInfo": {
+            "name": "commerce-orchestrator",
+            "version": env!("CARGO_PKG_VERSION")
+        }
+    })
+}
+
+fn extract_meta_protocol_version(request: &JsonRpcRequest) -> Option<String> {
+    let params = request.params.as_ref()?;
+    let meta = params.get("_meta")?;
+    meta.get("io.modelcontextprotocol/protocolVersion")
+        .or_else(|| meta.get("protocolVersion"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+}
+
+/// Negotiate MCP version. Returns Ok(version) or Err(requested_string).
+fn negotiate_mcp_version(
+    header_version: Option<&str>,
+    meta_version: Option<&str>,
+    request: &JsonRpcRequest,
+) -> Result<&'static str, String> {
+    let requested = header_version
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .or(meta_version.map(str::trim).filter(|v| !v.is_empty()));
+
+    if let Some(v) = requested {
+        return match_supported(v).ok_or_else(|| v.to_string());
+    }
+
+    // Legacy initialize without version defaults to 2024-11-05.
+    if request.method == "initialize" || request.method == "notifications/initialized" {
+        return Ok(MCP_LEGACY_VERSION);
+    }
+
+    // Modern clients must declare a version for non-discover calls; allow discover without.
+    if request.method == "server/discover" {
+        return Ok(MCP_MODERN_VERSION);
+    }
+
+    // Backward compat: no header → treat as legacy for tools/resources.
+    Ok(MCP_LEGACY_VERSION)
+}
+
+fn match_supported(version: &str) -> Option<&'static str> {
+    MCP_SUPPORTED_VERSIONS
+        .iter()
+        .find(|v| **v == version)
+        .copied()
 }
 
 async fn dispatch_tool(
@@ -685,5 +829,72 @@ mod tests {
         let resp = handle_mcp_request(&req, &facade, &dev_auth()).await;
         assert!(resp.error.is_some());
         assert_eq!(resp.error.unwrap().code, crate::jsonrpc::METHOD_NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn server_discover_returns_supported_versions() {
+        let facade = build_facade();
+        let req = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: serde_json::json!(1),
+            method: "server/discover".to_string(),
+            params: None,
+        };
+        let resp =
+            handle_mcp_request_with_version(&req, &facade, &dev_auth(), Some(MCP_MODERN_VERSION))
+                .await;
+        let result = resp.result.expect("discover result");
+        let versions = result["protocolVersions"].as_array().unwrap();
+        assert!(versions
+            .iter()
+            .any(|v| v.as_str() == Some(MCP_MODERN_VERSION)));
+        assert!(versions
+            .iter()
+            .any(|v| v.as_str() == Some(MCP_LEGACY_VERSION)));
+    }
+
+    #[tokio::test]
+    async fn modern_unsupported_version_returns_32022() {
+        let facade = build_facade();
+        let req = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: serde_json::json!(1),
+            method: "tools/list".to_string(),
+            params: None,
+        };
+        let resp =
+            handle_mcp_request_with_version(&req, &facade, &dev_auth(), Some("1900-01-01")).await;
+        let err = resp.error.expect("error");
+        assert_eq!(err.code, crate::jsonrpc::UNSUPPORTED_PROTOCOL_VERSION);
+        let data = err.data.unwrap();
+        let supported = data["supported"].as_array().unwrap();
+        assert!(supported
+            .iter()
+            .any(|v| v.as_str() == Some(MCP_MODERN_VERSION)));
+    }
+
+    #[tokio::test]
+    async fn modern_tools_list_embeds_server_meta() {
+        let facade = build_facade();
+        let req = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: serde_json::json!(1),
+            method: "tools/list".to_string(),
+            params: Some(serde_json::json!({
+                "_meta": {
+                    "io.modelcontextprotocol/protocolVersion": MCP_MODERN_VERSION,
+                    "io.modelcontextprotocol/clientInfo": { "name": "test", "version": "0" },
+                    "io.modelcontextprotocol/clientCapabilities": {}
+                }
+            })),
+        };
+        let resp =
+            handle_mcp_request_with_version(&req, &facade, &dev_auth(), Some(MCP_MODERN_VERSION))
+                .await;
+        let result = resp.result.unwrap();
+        assert_eq!(
+            result["_meta"]["io.modelcontextprotocol/protocolVersion"],
+            MCP_MODERN_VERSION
+        );
     }
 }

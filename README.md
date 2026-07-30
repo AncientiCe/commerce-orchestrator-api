@@ -1,10 +1,10 @@
 # Agentic Commerce Orchestrator
 
-**UCP/A2A/AP2/MCP-ready middleware for reliable cart-to-checkout in the age of AI agents** — Rust, production-grade, open-source.
+**UCP/A2A/AP2/ACP/MCP-ready middleware for reliable cart-to-checkout in the age of AI agents** — Rust, production-grade, open-source.
 
 [![Rust](https://img.shields.io/badge/Rust-stable-orange?logo=rust&logoColor=white)](https://www.rust-lang.org/)
 [![Kubernetes-ready](https://img.shields.io/badge/Kubernetes-ready-326CE5?logo=kubernetes&logoColor=white)](deploy/README.md)
-[![Protocol Conformance](https://img.shields.io/badge/Protocols-UCP%20%7C%20A2A%20%7C%20AP2%20%7C%20MCP-blueviolet)](docs/standards/conformance-matrix.md)
+[![Protocol Conformance](https://img.shields.io/badge/Protocols-UCP%20%7C%20A2A%20%7C%20AP2%20%7C%20ACP%20%7C%20MCP-blueviolet)](docs/standards/conformance-matrix.md)
 [![v0.5.0](https://img.shields.io/badge/version-0.5.0-blue)](CHANGELOG.md)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20%2F%20Apache--2.0-green)](LICENSE-MIT)
 [![CI](https://img.shields.io/github/actions/workflow/status/AncientiCe/commerce-orchestrator/ci.yml?branch=main&label=CI)](https://github.com/AncientiCe/commerce-orchestrator/actions)
@@ -26,7 +26,7 @@ An agent → orchestrator → merchant middleware layer: your AI agents (or any 
 | [Changelog](CHANGELOG.md) | Version history and release notes. |
 | [Runbooks](docs/runbooks/) | [Retries and outbox](docs/runbooks/retries-and-outbox.md), [dead-letter handling](docs/runbooks/dead-letter-handling.md), [reconciliation](docs/runbooks/reconciliation.md). |
 | [Consumer example](examples/consumer_example/README.md) | Template for wiring providers and running happy-path tests. |
-| [Standards conformance](docs/standards/conformance-matrix.md) | Target protocol versions (UCP-style, A2A, MCP, AP2) and conformance matrix with acceptance criteria. |
+| [Standards conformance](docs/standards/conformance-matrix.md) | Target protocol versions (UCP, A2A, AP2, ACP, MCP) and conformance matrix with acceptance criteria. |
 
 ## Overview
 
@@ -42,16 +42,19 @@ The Commerce Orchestrator is a middleware API layer. Your clients call its REST 
 - **Observability:** Request IDs, tracing, metrics endpoint; health probes for liveness and readiness.
 - **Deployment:** Docker image, Kubernetes manifests (Deployment, Service, HPA, PDB, NetworkPolicy, ConfigMap, Secret).
 
-## API Surface (REST + MCP)
+## API Surface (REST + MCP + ACP)
 
 | Area | Endpoints |
 |------|-----------|
 | Cart & checkout | `POST /api/v1/cart/commands`, `POST /api/v1/checkout/execute` |
+| UCP shim | `/api/v1/ucp/cart`, `/ucp/checkout`, `/ucp/catalog/*`, `/ucp/orders/:id`, `/ucp/payment-handlers` |
+| ACP shim | `/api/v1/acp/checkout_sessions`, `POST /api/v1/acp/delegate_payment` (`API-Version: 2026-04-17`) |
 | Orders | `GET /api/v1/orders`, `GET /api/v1/orders/:id`, `POST /api/v1/a2a/orders` |
 | Catalog | `GET /api/v1/catalog/items/:id` |
 | Payments | `POST /api/v1/payments/capture`, `void`, `refund` |
 | Webhooks | `POST /api/v1/webhooks`, `GET /api/v1/webhooks`, `DELETE /api/v1/webhooks/:id` |
-| MCP | `POST /api/v1/mcp/message` (JSON-RPC 2.0) |
+| A2A | `POST /api/v1/a2a/{checkout,cart,identity/link,orders}` (`A2A-Version: 1.0` or `0.3`) |
+| MCP | `POST /api/v1/mcp/message` (JSON-RPC 2.0; dual-era `2026-07-28` + legacy) |
 | Events | `POST /api/v1/events/incoming` (idempotent) |
 | Operations | `POST /api/v1/ops/outbox/process`, `GET /api/v1/ops/dead-letter`, `POST /api/v1/ops/dead-letter/replay`, `POST /api/v1/ops/reconciliation` |
 | Health | `GET /health/live`, `GET /health/ready`, `GET /metrics` |
@@ -140,13 +143,14 @@ cargo audit
 
 This service implements protocol-aligned behavior for agentic commerce:
 
-- **Discovery:** `GET /.well-known/ucp` defaults to the UCP `2026-04-08` business profile with profile-shaped services and capabilities; older supported UCP versions return compatible legacy manifests.
+- **Discovery:** `GET /.well-known/ucp` defaults to the UCP `2026-04-08` business profile with profile-shaped services and capabilities, signing keys, payment handlers, and ACP/MCP/A2A/AP2 version metadata; older supported UCP versions return compatible legacy manifests.
 - **REST:** Cart, catalog, order, checkout, and payment endpoints match the [consumption guide](docs/consumption-guide.md); auth and tenant isolation are enforced.
-- **A2A:** `POST /api/v1/a2a/checkout` and `POST /api/v1/a2a/cart` accept A2A-style envelopes; requests are normalized to the same domain types and policy as REST.
-- **AP2:** Payment intent supports `ap2_consent_proof` and `payment_handler_id`. With `AP2_STRICT=1`, checkout requires a structured consent proof whose issuer, signature, expiry, and payment handler binding validate before execution; see [SECURITY.md](SECURITY.md).
-- **MCP:** `POST /api/v1/mcp/message` accepts JSON-RPC 2.0 requests; `tools/list`, `tools/call`, `resources/list`, and `resources/read` map to facade operations. Discovery advertises `mcp_endpoint`.
+- **A2A:** Profile `1.0` (compat `0.3`) with `A2A-Version` negotiation; `POST /api/v1/a2a/checkout` and `POST /api/v1/a2a/cart` accept A2A-style envelopes normalized to the same domain types and policy as REST.
+- **AP2 0.2:** Payment intent supports `ap2_consent_proof` and `payment_handler_id`. With `AP2_STRICT=1`, checkout verifies closed mandates and optional open (HNP) mandates with amount/currency constraints; see [SECURITY.md](SECURITY.md).
+- **ACP 2026-04-17:** Merchant-hosted checkout sessions and delegate payment under `/api/v1/acp/*` (require `API-Version` header). Feed API is out of scope.
+- **MCP:** Dual-era tool server — modern `2026-07-28` (`server/discover`, per-request version meta) plus legacy `initialize` for `2024-11-05` / `2025-11-25`. Discovery advertises `mcp_endpoint` and supported versions.
 
-Conformance is asserted by CI (discovery, A2A, AP2, and MCP tests). Target protocol versions and required/optional items are in the [conformance matrix](docs/standards/conformance-matrix.md).
+Conformance is asserted by CI (discovery, A2A, AP2, ACP, and MCP tests). Target protocol versions and required/optional items are in the [conformance matrix](docs/standards/conformance-matrix.md).
 
 ## License
 

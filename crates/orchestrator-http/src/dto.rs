@@ -743,10 +743,15 @@ pub struct UcpCatalogProductResponseDto {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct UcpSignedAmountDto {
+    pub amount: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct UcpTotalDto {
     #[serde(rename = "type")]
     pub total_type: String,
-    pub amount: i64,
+    pub amount: UcpSignedAmountDto,
     pub currency: String,
 }
 
@@ -775,22 +780,30 @@ impl From<OrderRecord> for UcpOrderResponseDto {
         let totals = vec![
             UcpTotalDto {
                 total_type: "subtotal".to_string(),
-                amount: order.totals.subtotal_minor,
+                amount: UcpSignedAmountDto {
+                    amount: order.totals.subtotal_minor,
+                },
                 currency: order.currency.clone(),
             },
             UcpTotalDto {
                 total_type: "tax".to_string(),
-                amount: order.totals.tax_minor,
+                amount: UcpSignedAmountDto {
+                    amount: order.totals.tax_minor,
+                },
                 currency: order.currency.clone(),
             },
             UcpTotalDto {
                 total_type: "discount".to_string(),
-                amount: order.totals.discount_minor,
+                amount: UcpSignedAmountDto {
+                    amount: -order.totals.discount_minor.abs(),
+                },
                 currency: order.currency.clone(),
             },
             UcpTotalDto {
                 total_type: "total".to_string(),
-                amount: order.totals.total_minor,
+                amount: UcpSignedAmountDto {
+                    amount: order.totals.total_minor,
+                },
                 currency: order.currency.clone(),
             },
         ];

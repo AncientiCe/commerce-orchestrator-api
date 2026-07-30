@@ -614,7 +614,11 @@ async fn ucp_order_get_returns_current_order_shape() {
     assert_eq!(order["line_items"].as_array().unwrap().len(), 1);
     assert!(order["totals"].as_array().unwrap().iter().any(|total| {
         total.get("type").and_then(|v| v.as_str()) == Some("total")
-            && total.get("amount").and_then(|v| v.as_i64()) == Some(1100)
+            && total
+                .get("amount")
+                .and_then(|v| v.get("amount"))
+                .and_then(|v| v.as_i64())
+                == Some(1100)
     }));
 }
 
@@ -650,4 +654,83 @@ async fn a2a_identity_link_returns_link_result_envelope() {
             .is_some_and(|v| !v.is_empty()),
         "link_id should be generated"
     );
+}
+
+#[tokio::test]
+async fn acp_checkout_session_lifecycle_and_delegate_payment() {
+    let state = test_state();
+    let app = app::app().with_state(state);
+    let server = TestServer::new(app).unwrap();
+
+    let create = serde_json::json!({
+        "merchant_id": "m1",
+        "currency": "USD",
+        "line_items": [{ "item": { "id": "SKU-1" }, "quantity": 1 }]
+    });
+    let created = server
+        .post("/api/v1/acp/checkout_sessions")
+        .add_header(
+            HeaderName::from_static("api-version"),
+            HeaderValue::from_static("2026-04-17"),
+        )
+        .json(&create)
+        .await;
+    created.assert_status_ok();
+    let session: serde_json::Value = created.json();
+    let id = session["id"].as_str().expect("session id");
+    assert!(id.starts_with("cs_"));
+    assert_eq!(session["api_version"], "2026-04-17");
+
+    let got = server
+        .get(&format!("/api/v1/acp/checkout_sessions/{id}"))
+        .add_header(
+            HeaderName::from_static("api-version"),
+            HeaderValue::from_static("2026-04-17"),
+        )
+        .await;
+    got.assert_status_ok();
+
+    let complete = server
+        .post(&format!("/api/v1/acp/checkout_sessions/{id}/complete"))
+        .add_header(
+            HeaderName::from_static("api-version"),
+            HeaderValue::from_static("2026-04-17"),
+        )
+        .json(&serde_json::json!({
+            "tenant_id": "dev",
+            "merchant_id": "m1",
+            "idempotency_key": "acp-complete-1",
+            "payment_data": {
+                "token": "tok_acp",
+                "amount_minor": 1000
+            }
+        }))
+        .await;
+    assert_ne!(complete.status_code().as_u16(), 404);
+
+    let delegated = server
+        .post("/api/v1/acp/delegate_payment")
+        .add_header(
+            HeaderName::from_static("api-version"),
+            HeaderValue::from_static("2026-04-17"),
+        )
+        .json(&serde_json::json!({
+            "tenant_id": "dev",
+            "payment_method": { "type": "card", "token": "pm_tok_1" },
+            "risk_signals": []
+        }))
+        .await;
+    delegated.assert_status_ok();
+    let dpay: serde_json::Value = delegated.json();
+    assert_eq!(dpay["status"], "delegated");
+    assert_eq!(dpay["api_version"], "2026-04-17");
+
+    let missing_version = server
+        .post("/api/v1/acp/delegate_payment")
+        .json(&serde_json::json!({
+            "tenant_id": "dev",
+            "payment_method": { "token": "pm_tok_2" }
+        }))
+        .await;
+    assert_eq!(missing_version.status_code().as_u16(), 400);
 }

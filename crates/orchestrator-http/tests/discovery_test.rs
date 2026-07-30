@@ -1,6 +1,7 @@
 //! Discovery endpoint tests: GET /.well-known/ucp and capability-route parity.
 
 use axum_test::TestServer;
+use http::header::{HeaderName, HeaderValue};
 use orchestrator_http::{app, AppState};
 use provider_mocks::{
     MockCatalogProvider, MockGeoProvider, MockPaymentProvider, MockPricingProvider,
@@ -278,4 +279,85 @@ async fn a2a_checkout_envelope_requires_valid_payload() {
     let response = server.post("/api/v1/a2a/checkout").json(&envelope).await;
     // Route exists; may return 200 (success) or 4xx/5xx (e.g. cart not found, payment error) but not 404
     assert_ne!(response.status_code().as_u16(), 404);
+}
+
+#[tokio::test]
+async fn discovery_advertises_acp_signing_and_payment_handlers() {
+    let state = test_state_with_base_url("http://localhost:8080");
+    let app = app::app().with_state(state);
+    let server = TestServer::new(app).unwrap();
+
+    let response = server.get("/.well-known/ucp").await;
+    response.assert_status_ok();
+    let json: serde_json::Value = response.json();
+    assert!(!json["ucp"]["signing_keys"].as_array().unwrap().is_empty());
+    assert!(!json["ucp"]["payment_handlers"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    assert_eq!(json["ucp"]["a2a_profile_version"], "1.0");
+    assert_eq!(json["ucp"]["ap2_protocol_version"], "0.2");
+    assert_eq!(json["ucp"]["acp_api_version"], "2026-04-17");
+    assert_eq!(
+        json["ucp"]["capability_flags"]["dev.ucp.payments.mpp"],
+        true
+    );
+    let caps = json["ucp"]["capabilities"].as_object().unwrap();
+    assert!(caps.contains_key("dev.ucp.shopping.payment_handlers"));
+    let services = json["ucp"]["services"]["dev.ucp.shopping"]
+        .as_array()
+        .unwrap();
+    assert!(services.iter().any(|s| s["transport"] == "acp"));
+}
+
+#[tokio::test]
+async fn ucp_checkout_and_payment_handler_routes_exist() {
+    let state = test_state_with_base_url("http://localhost:8080");
+    let app = app::app().with_state(state);
+    let server = TestServer::new(app).unwrap();
+
+    let create = serde_json::json!({
+        "merchant_id": "m",
+        "currency": "USD",
+        "line_items": []
+    });
+    let r = server.post("/api/v1/ucp/checkout").json(&create).await;
+    assert_ne!(r.status_code().as_u16(), 404);
+
+    let handlers = server.get("/api/v1/ucp/payment-handlers").await;
+    assert_ne!(handlers.status_code().as_u16(), 404);
+    handlers.assert_status_ok();
+
+    let acp = server
+        .post("/api/v1/acp/checkout_sessions")
+        .add_header(
+            HeaderName::from_static("api-version"),
+            HeaderValue::from_static("2026-04-17"),
+        )
+        .json(&create)
+        .await;
+    assert_ne!(acp.status_code().as_u16(), 404);
+}
+
+#[tokio::test]
+async fn a2a_rejects_unsupported_version_header() {
+    let state = test_state_with_base_url("http://localhost:8080");
+    let app = app::app().with_state(state);
+    let server = TestServer::new(app).unwrap();
+
+    let envelope = serde_json::json!({
+        "capability": "dev.ucp.shopping.checkout",
+        "payload": {
+            "command": { "kind": "create_cart", "merchant_id": "m", "currency": "USD" }
+        }
+    });
+    let response = server
+        .post("/api/v1/a2a/cart")
+        .add_header(
+            HeaderName::from_static("a2a-version"),
+            HeaderValue::from_static("9.9"),
+        )
+        .json(&envelope)
+        .await;
+    assert_eq!(response.status_code().as_u16(), 400);
 }

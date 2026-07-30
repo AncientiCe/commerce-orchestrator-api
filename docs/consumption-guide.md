@@ -33,9 +33,22 @@ See [consumer-integration.md](consumer-integration.md) for the high-level integr
 | `GET` | `/api/v1/ucp/cart/:id` | UCP-native cart lookup. |
 | `PUT` | `/api/v1/ucp/cart/:id` | UCP-native cart line replacement/update. |
 | `POST` | `/api/v1/ucp/cart/:id/cancel` | UCP-native backed cart cancellation. |
+| `POST` | `/api/v1/ucp/checkout` | UCP checkout session create (cart + start_checkout). |
+| `GET` | `/api/v1/ucp/checkout/:id` | UCP checkout session lookup. |
+| `PUT` | `/api/v1/ucp/checkout/:id` | UCP checkout session line update. |
+| `POST` | `/api/v1/ucp/checkout/:id/complete` | Complete UCP checkout (execute checkout). |
+| `POST` | `/api/v1/ucp/checkout/:id/cancel` | Cancel UCP checkout session. |
+| `GET` | `/api/v1/ucp/payment-handlers` | List configured payment handlers. |
+| `GET` | `/api/v1/ucp/payment-handlers/:id` | Get a payment handler by id. |
+| `POST` | `/api/v1/acp/checkout_sessions` | ACP create checkout session. Requires `API-Version: 2026-04-17`. |
+| `GET` | `/api/v1/acp/checkout_sessions/:id` | ACP get checkout session. |
+| `PUT` | `/api/v1/acp/checkout_sessions/:id` | ACP update checkout session lines. |
+| `POST` | `/api/v1/acp/checkout_sessions/:id/complete` | ACP complete session (checkout execute). |
+| `POST` | `/api/v1/acp/checkout_sessions/:id/cancel` | ACP cancel session. |
+| `POST` | `/api/v1/acp/delegate_payment` | ACP delegate payment token exchange. |
 | `POST` | `/api/v1/checkout/execute` | Execute checkout for a cart. Body: `CheckoutRequestDto`. Requires auth in production. |
-| `POST` | `/api/v1/a2a/checkout` | A2A envelope: `{ "capability": "dev.ucp.shopping.checkout", "payload": CheckoutRequestDto }`. Same authz and idempotency as REST. |
-| `POST` | `/api/v1/a2a/cart` | A2A envelope: `{ "capability": "...", "payload": { "command": { "kind": "...", ... }, "cart_id": "..."? } }`. Same policy as REST. |
+| `POST` | `/api/v1/a2a/checkout` | A2A envelope checkout. Send `A2A-Version: 1.0` (or `0.3`). |
+| `POST` | `/api/v1/a2a/cart` | A2A envelope cart command. Send `A2A-Version: 1.0` (or `0.3`). |
 | `POST` | `/api/v1/a2a/identity/link` | A2A envelope: `{ "capability": "dev.ucp.common.identity_linking", "payload": { "tenant_id": "...", "merchant_id": "...", "agent_id": "...", "link_token": "...", "user_reference": "..."? } }`. Legacy identity capability names remain accepted. |
 
 ### Catalog and orders
@@ -162,7 +175,7 @@ The orchestrator is a middleware API layer. Operators configure where each downs
 
 Optional: `AUTH_TENANT_ID`, `AUTH_CALLER_ID` (default `prod` for static mode), `AP2_TRUSTED_ISSUERS` (comma-separated allowlist for strict AP2 issuer checks and JWT issuer checks). Config can be loaded from a file (`CONFIG_FILE` or `config.yaml`) with env overrides.
 
-AP2 note: this release aligns with AP2 `v0.1` strict validation behavior; roadmap expansion to AP2 `v1.x` capabilities remains forward-compatible and additive.
+AP2 note: this release aligns with AP2 **0.2** (closed mandates plus optional open/HNP mandates with amount and currency constraints). Strict mode remains fail-closed.
 
 ## Next steps
 

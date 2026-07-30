@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **ACP 2026-04-17 shim**: Merchant-hosted Agentic Commerce Protocol routes under `/api/v1/acp` for checkout sessions (create/get/update/complete/cancel) and `POST /delegate_payment`, with required `API-Version` negotiation and discovery `transport: acp` binding.
+- **MCP dual-era**: Support modern MCP `2026-07-28` (`server/discover`, per-request `MCP-Protocol-Version` / `_meta`) while retaining legacy `initialize` for `2024-11-05` / `2025-11-25`.
+- **AP2 0.2 HNP mandates**: Strict verification accepts closed payment/checkout mandates plus optional open mandates with amount/currency constraints (`vct` matching).
+- **UCP checkout lifecycle + payment handlers**: `/api/v1/ucp/checkout` create/get/update/complete/cancel and `/api/v1/ucp/payment-handlers`; discovery advertises `signing_keys`, payment handlers, and MPP flag.
+- **UCP signed totals**: Order totals use signed amount objects; discount amounts are negative.
+
+### Changed
+
+- **A2A profile**: Primary profile is `1.0` (documented patch `1.0.1`) with `A2A-Version` header negotiation; `0.3` remains supported.
+- **Conformance matrix**: Targets updated for AP2 0.2, A2A 1.0, MCP dual-era, and ACP 2026-04-17.
+
 ## [0.5.0] - 2026-05-01
 
 ### Added

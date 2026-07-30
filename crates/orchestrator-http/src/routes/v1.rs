@@ -16,16 +16,22 @@ use crate::error::ApiError;
 use crate::state::AppState;
 use axum::{
     extract::{Path, State},
+    http::HeaderMap,
     routing::{get, post, put},
     Json, Router,
 };
 use orchestrator_api::{
-    normalize_a2a_cart_envelope, normalize_a2a_checkout_envelope,
-    normalize_a2a_identity_link_envelope, redact_checkout_request,
+    add_item_commands, cancel_cart_command, complete_to_checkout_request, create_cart_command,
+    default_payment_handlers, delegate_payment_response, get_cart_command, negotiate_a2a_version,
+    negotiate_acp_version, normalize_a2a_cart_envelope, normalize_a2a_checkout_envelope,
+    normalize_a2a_identity_link_envelope, parse_acp_session_id, projection_to_acp_session,
+    redact_checkout_request, start_checkout_command, AcpCheckoutSessionCreateRequest,
+    AcpCheckoutSessionUpdateRequest, AcpCompleteSessionRequest, AcpDelegatePaymentRequest,
+    PaymentHandlerDescriptor,
 };
 use orchestrator_core::contract::{
     AddItemPayload, CancelCartPayload, CartCommand, CartId, CheckoutRequest, CreateCartPayload,
-    GetCartPayload, RemoveItemPayload, UpdateItemQtyPayload,
+    GetCartPayload, RemoveItemPayload, StartCheckoutPayload, UpdateItemQtyPayload,
 };
 use std::collections::HashSet;
 use std::str::FromStr;
@@ -38,10 +44,29 @@ pub fn routes() -> Router<AppState> {
         .route("/ucp/cart/:id", get(ucp_get_cart))
         .route("/ucp/cart/:id", put(ucp_update_cart))
         .route("/ucp/cart/:id/cancel", post(ucp_cancel_cart))
+        .route("/ucp/checkout", post(ucp_create_checkout))
+        .route("/ucp/checkout/:id", get(ucp_get_checkout))
+        .route("/ucp/checkout/:id", put(ucp_update_checkout))
+        .route("/ucp/checkout/:id/complete", post(ucp_complete_checkout))
+        .route("/ucp/checkout/:id/cancel", post(ucp_cancel_checkout))
+        .route("/ucp/payment-handlers", get(ucp_list_payment_handlers))
+        .route("/ucp/payment-handlers/:id", get(ucp_get_payment_handler))
         .route("/ucp/catalog/search", post(ucp_catalog_search))
         .route("/ucp/catalog/lookup", post(ucp_catalog_lookup))
         .route("/ucp/catalog/product", post(ucp_catalog_product))
         .route("/ucp/orders/:id", get(ucp_get_order))
+        .route("/acp/checkout_sessions", post(acp_create_session))
+        .route("/acp/checkout_sessions/:id", get(acp_get_session))
+        .route("/acp/checkout_sessions/:id", put(acp_update_session))
+        .route(
+            "/acp/checkout_sessions/:id/complete",
+            post(acp_complete_session),
+        )
+        .route(
+            "/acp/checkout_sessions/:id/cancel",
+            post(acp_cancel_session),
+        )
+        .route("/acp/delegate_payment", post(acp_delegate_payment))
         .route("/checkout/execute", post(execute_checkout))
         .route("/a2a/checkout", post(a2a_execute_checkout))
         .route("/a2a/cart", post(a2a_dispatch_cart_command))
@@ -287,6 +312,313 @@ fn parse_ucp_cart_id(id: &str) -> Result<CartId, ApiError> {
         .map_err(|e| ApiError::BadRequest(e.to_string()))
 }
 
+fn a2a_version_from_headers(headers: &HeaderMap) -> Result<String, ApiError> {
+    let raw = headers
+        .get("A2A-Version")
+        .or_else(|| headers.get("a2a-version"))
+        .and_then(|v| v.to_str().ok());
+    negotiate_a2a_version(raw).map_err(ApiError::BadRequest)
+}
+
+fn acp_version_from_headers(headers: &HeaderMap) -> Result<&'static str, ApiError> {
+    let raw = headers
+        .get("API-Version")
+        .or_else(|| headers.get("api-version"))
+        .and_then(|v| v.to_str().ok());
+    negotiate_acp_version(raw).map_err(|e| ApiError::BadRequest(e.message()))
+}
+
+async fn ucp_create_checkout(
+    AuthContextExtractor(_auth): AuthContextExtractor,
+    State(state): State<AppState>,
+    Json(req): Json<UcpCartRequestDto>,
+) -> Result<Json<UcpCartResponseDto>, ApiError> {
+    let merchant_id = req
+        .merchant_id
+        .ok_or_else(|| ApiError::BadRequest("merchant_id is required".to_string()))?;
+    let mut projection = state
+        .facade
+        .dispatch_cart_command(
+            CartCommand::CreateCart(CreateCartPayload {
+                merchant_id,
+                currency: req.currency,
+            }),
+            None,
+        )
+        .await?;
+    let cart_id = projection.cart_id;
+    for line in req.line_items {
+        projection = state
+            .facade
+            .dispatch_cart_command(
+                CartCommand::AddItem(AddItemPayload {
+                    item_id: line.item.id,
+                    quantity: line.quantity,
+                }),
+                Some(cart_id),
+            )
+            .await?;
+    }
+    projection = state
+        .facade
+        .dispatch_cart_command(
+            CartCommand::StartCheckout(StartCheckoutPayload {
+                cart_id,
+                cart_version: projection.version,
+            }),
+            Some(cart_id),
+        )
+        .await?;
+    orchestrator_observability::incr("ucp_checkout_create_total");
+    Ok(Json(projection.into()))
+}
+
+async fn ucp_get_checkout(
+    AuthContextExtractor(_auth): AuthContextExtractor,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<UcpCartResponseDto>, ApiError> {
+    let cart_id = parse_ucp_cart_id(&id)?;
+    let projection = state
+        .facade
+        .dispatch_cart_command(CartCommand::GetCart(GetCartPayload { cart_id }), None)
+        .await?;
+    orchestrator_observability::incr("ucp_checkout_get_total");
+    Ok(Json(projection.into()))
+}
+
+async fn ucp_update_checkout(
+    auth: AuthContextExtractor,
+    state: State<AppState>,
+    path: Path<String>,
+    req: Json<UcpCartRequestDto>,
+) -> Result<Json<UcpCartResponseDto>, ApiError> {
+    let response = ucp_update_cart(auth, state, path, req).await?;
+    orchestrator_observability::incr("ucp_checkout_update_total");
+    Ok(response)
+}
+
+async fn ucp_complete_checkout(
+    AuthContextExtractor(auth_ctx): AuthContextExtractor,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<CheckoutRequestDto>,
+) -> Result<Json<TransactionResultDto>, ApiError> {
+    let cart_id = parse_ucp_cart_id(&id)?;
+    let mut request = CheckoutRequest::try_from(req).map_err(ApiError::BadRequest)?;
+    request.cart_id = cart_id;
+    let result = state
+        .facade
+        .execute_checkout_authorized(&auth_ctx, request)
+        .await?;
+    orchestrator_observability::incr("ucp_checkout_complete_total");
+    Ok(Json(result.into()))
+}
+
+async fn ucp_cancel_checkout(
+    AuthContextExtractor(_auth): AuthContextExtractor,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<UcpCartResponseDto>, ApiError> {
+    let cart_id = parse_ucp_cart_id(&id)?;
+    let projection = state
+        .facade
+        .dispatch_cart_command(CartCommand::CancelCart(CancelCartPayload { cart_id }), None)
+        .await?;
+    orchestrator_observability::incr("ucp_checkout_cancel_total");
+    Ok(Json(projection.into()))
+}
+
+async fn ucp_list_payment_handlers(
+    AuthContextExtractor(_auth): AuthContextExtractor,
+) -> Result<Json<Vec<PaymentHandlerDescriptor>>, ApiError> {
+    orchestrator_observability::incr("ucp_payment_handlers_list_total");
+    Ok(Json(default_payment_handlers()))
+}
+
+async fn ucp_get_payment_handler(
+    AuthContextExtractor(_auth): AuthContextExtractor,
+    Path(id): Path<String>,
+) -> Result<Json<PaymentHandlerDescriptor>, ApiError> {
+    let handler = default_payment_handlers()
+        .into_iter()
+        .find(|h| h.id == id)
+        .ok_or_else(|| ApiError::NotFound(format!("payment handler '{id}' not found")))?;
+    orchestrator_observability::incr("ucp_payment_handlers_get_total");
+    Ok(Json(handler))
+}
+
+async fn acp_create_session(
+    AuthContextExtractor(_auth): AuthContextExtractor,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<AcpCheckoutSessionCreateRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    acp_version_from_headers(&headers)?;
+    let mut projection = state
+        .facade
+        .dispatch_cart_command(create_cart_command(&req), None)
+        .await?;
+    let cart_id = projection.cart_id;
+    for cmd in add_item_commands(&req) {
+        projection = state
+            .facade
+            .dispatch_cart_command(cmd, Some(cart_id))
+            .await?;
+    }
+    orchestrator_observability::incr("acp_checkout_session_create_total");
+    Ok(Json(
+        serde_json::to_value(projection_to_acp_session(&projection)).unwrap(),
+    ))
+}
+
+async fn acp_get_session(
+    AuthContextExtractor(_auth): AuthContextExtractor,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    acp_version_from_headers(&headers)?;
+    let cart_id = parse_acp_session_id(&id).map_err(ApiError::BadRequest)?;
+    let projection = state
+        .facade
+        .dispatch_cart_command(get_cart_command(cart_id), None)
+        .await?;
+    orchestrator_observability::incr("acp_checkout_session_get_total");
+    Ok(Json(
+        serde_json::to_value(projection_to_acp_session(&projection)).unwrap(),
+    ))
+}
+
+async fn acp_update_session(
+    AuthContextExtractor(_auth): AuthContextExtractor,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(req): Json<AcpCheckoutSessionUpdateRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    acp_version_from_headers(&headers)?;
+    let cart_id = parse_acp_session_id(&id).map_err(ApiError::BadRequest)?;
+    let mut projection = state
+        .facade
+        .dispatch_cart_command(get_cart_command(cart_id), None)
+        .await?;
+    let desired: HashSet<String> = req
+        .line_items
+        .iter()
+        .filter_map(|line| line.id.clone())
+        .collect();
+    let current_ids: Vec<String> = projection
+        .lines
+        .iter()
+        .map(|line| line.line_id.clone())
+        .collect();
+    for line_id in current_ids {
+        if !desired.contains(&line_id) {
+            projection = state
+                .facade
+                .dispatch_cart_command(
+                    CartCommand::RemoveItem(RemoveItemPayload { line_id }),
+                    Some(cart_id),
+                )
+                .await?;
+        }
+    }
+    for line in req.line_items {
+        projection = if let Some(line_id) = line.id {
+            state
+                .facade
+                .dispatch_cart_command(
+                    CartCommand::UpdateItemQty(UpdateItemQtyPayload {
+                        line_id,
+                        quantity: line.quantity,
+                    }),
+                    Some(cart_id),
+                )
+                .await?
+        } else {
+            state
+                .facade
+                .dispatch_cart_command(
+                    CartCommand::AddItem(AddItemPayload {
+                        item_id: line.item.id,
+                        quantity: line.quantity,
+                    }),
+                    Some(cart_id),
+                )
+                .await?
+        };
+    }
+    orchestrator_observability::incr("acp_checkout_session_update_total");
+    Ok(Json(
+        serde_json::to_value(projection_to_acp_session(&projection)).unwrap(),
+    ))
+}
+
+async fn acp_complete_session(
+    AuthContextExtractor(auth_ctx): AuthContextExtractor,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(req): Json<AcpCompleteSessionRequest>,
+) -> Result<Json<TransactionResultDto>, ApiError> {
+    acp_version_from_headers(&headers)?;
+    let cart_id = parse_acp_session_id(&id).map_err(ApiError::BadRequest)?;
+    let projection = state
+        .facade
+        .dispatch_cart_command(get_cart_command(cart_id), None)
+        .await?;
+    let _ = state
+        .facade
+        .dispatch_cart_command(
+            start_checkout_command(cart_id, projection.version),
+            Some(cart_id),
+        )
+        .await?;
+    let checkout =
+        complete_to_checkout_request(cart_id, projection.version, &projection.currency, &req);
+    let result = state
+        .facade
+        .execute_checkout_authorized(&auth_ctx, checkout)
+        .await?;
+    orchestrator_observability::incr("acp_checkout_session_complete_total");
+    Ok(Json(result.into()))
+}
+
+async fn acp_cancel_session(
+    AuthContextExtractor(_auth): AuthContextExtractor,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    acp_version_from_headers(&headers)?;
+    let cart_id = parse_acp_session_id(&id).map_err(ApiError::BadRequest)?;
+    let projection = state
+        .facade
+        .dispatch_cart_command(cancel_cart_command(cart_id), None)
+        .await?;
+    orchestrator_observability::incr("acp_checkout_session_cancel_total");
+    Ok(Json(
+        serde_json::to_value(projection_to_acp_session(&projection)).unwrap(),
+    ))
+}
+
+async fn acp_delegate_payment(
+    AuthContextExtractor(_auth): AuthContextExtractor,
+    headers: HeaderMap,
+    Json(req): Json<AcpDelegatePaymentRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    acp_version_from_headers(&headers)?;
+    if req.payment_method.token.trim().is_empty() {
+        return Err(ApiError::BadRequest(
+            "payment_method.token is required".to_string(),
+        ));
+    }
+    let response = delegate_payment_response(&req);
+    orchestrator_observability::incr("acp_delegate_payment_total");
+    Ok(Json(serde_json::to_value(response).unwrap()))
+}
+
 async fn execute_checkout(
     AuthContextExtractor(auth_ctx): AuthContextExtractor,
     State(state): State<AppState>,
@@ -306,8 +638,10 @@ async fn execute_checkout(
 async fn a2a_execute_checkout(
     AuthContextExtractor(auth_ctx): AuthContextExtractor,
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(body): Json<serde_json::Value>,
 ) -> Result<Json<TransactionResultDto>, ApiError> {
+    let _version = a2a_version_from_headers(&headers)?;
     let request = normalize_a2a_checkout_envelope(&body).map_err(ApiError::BadRequest)?;
     let redacted = redact_checkout_request(&request);
     tracing::info!(checkout_request = ?redacted, "a2a checkout execute");
@@ -322,8 +656,10 @@ async fn a2a_execute_checkout(
 async fn a2a_dispatch_cart_command(
     AuthContextExtractor(_auth): AuthContextExtractor,
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(body): Json<serde_json::Value>,
 ) -> Result<Json<CartProjectionDto>, ApiError> {
+    let _version = a2a_version_from_headers(&headers)?;
     let (cmd, cart_id) = normalize_a2a_cart_envelope(&body).map_err(ApiError::BadRequest)?;
     let projection = state.facade.dispatch_cart_command(cmd, cart_id).await?;
     Ok(Json(projection.into()))
@@ -334,8 +670,10 @@ async fn a2a_dispatch_cart_command(
 async fn a2a_link_identity(
     AuthContextExtractor(_auth): AuthContextExtractor,
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(body): Json<serde_json::Value>,
 ) -> Result<Json<IdentityLinkResultDto>, ApiError> {
+    let _version = a2a_version_from_headers(&headers)?;
     let request = normalize_a2a_identity_link_envelope(&body).map_err(ApiError::BadRequest)?;
     let result = state.facade.link_identity(request).await?;
     Ok(Json(result.into()))
@@ -369,8 +707,10 @@ async fn list_orders(
 async fn a2a_get_order(
     AuthContextExtractor(auth_ctx): AuthContextExtractor,
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(body): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    let _version = a2a_version_from_headers(&headers)?;
     let order_id = body
         .get("payload")
         .and_then(|p| p.get("order_id"))
@@ -492,9 +832,20 @@ async fn refund_payment(
 async fn mcp_message(
     AuthContextExtractor(auth_ctx): AuthContextExtractor,
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(request): Json<orchestrator_mcp::JsonRpcRequest>,
 ) -> Json<orchestrator_mcp::JsonRpcResponse> {
-    let response = orchestrator_mcp::handle_mcp_request(&request, &state.facade, &auth_ctx).await;
+    let header_version = headers
+        .get("MCP-Protocol-Version")
+        .or_else(|| headers.get("mcp-protocol-version"))
+        .and_then(|v| v.to_str().ok());
+    let response = orchestrator_mcp::handle_mcp_request_with_version(
+        &request,
+        &state.facade,
+        &auth_ctx,
+        header_version,
+    )
+    .await;
     Json(response)
 }
 

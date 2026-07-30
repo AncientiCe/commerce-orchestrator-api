@@ -1,8 +1,9 @@
 use orchestrator_api::{
     authorize_checkout, build_well_known_manifest_with_version, extract_ap2_metadata,
-    extract_mpp_metadata, normalize_a2a_checkout_envelope, normalize_a2a_identity_link_envelope,
-    redact_checkout_request, A2AHandoffProfile, AuthContext, FacadeError, OrchestratorFacade,
-    UcpCheckoutEnvelope, A2A_PROFILE_VERSION,
+    extract_mpp_metadata, is_supported_a2a_profile_version, negotiate_a2a_version,
+    normalize_a2a_checkout_envelope, normalize_a2a_identity_link_envelope, redact_checkout_request,
+    verify_ap2_strict, A2AHandoffProfile, AuthContext, FacadeError, OrchestratorFacade,
+    UcpCheckoutEnvelope, A2A_PROFILE_VERSION, AP2_PROTOCOL_VERSION,
 };
 use orchestrator_core::contract::{
     AddItemPayload, CartCommand, CartId, CheckoutRequest, CreateCartPayload, CustomerHint,
@@ -118,7 +119,7 @@ fn extracts_ap2_metadata() {
         protocol: "a2a".to_string(),
         version: A2A_PROFILE_VERSION.to_string(),
         delegated_capability: "checkout".to_string(),
-        supported_versions: vec!["0.3.0".to_string(), "1.0".to_string()],
+        supported_versions: vec!["1.0".to_string(), "0.3".to_string()],
     };
     let ap2 = extract_ap2_metadata(&req);
     assert_eq!(ap2.handler_id.as_deref(), Some("handler"));
@@ -892,4 +893,129 @@ async fn execute_checkout_rejects_stale_cart_version() {
         }
         _ => panic!("expected CartVersionConflict, got {:?}", err),
     }
+}
+
+#[test]
+fn a2a_profile_defaults_to_1_0_and_accepts_0_3() {
+    assert_eq!(A2A_PROFILE_VERSION, "1.0");
+    assert!(is_supported_a2a_profile_version("1.0"));
+    assert!(is_supported_a2a_profile_version("1.0.1"));
+    assert!(is_supported_a2a_profile_version("0.3"));
+    assert!(is_supported_a2a_profile_version("0.3.0"));
+    assert!(negotiate_a2a_version(None).unwrap() == "0.3");
+    assert_eq!(negotiate_a2a_version(Some("1.0")).unwrap(), "1.0");
+    assert!(negotiate_a2a_version(Some("2.0")).is_err());
+}
+
+#[test]
+fn ap2_protocol_version_is_0_2() {
+    assert_eq!(AP2_PROTOCOL_VERSION, "0.2");
+}
+
+fn ap2_hnp_consent_proof(handler_id: &str, expires_at: i64, max_amount: i64) -> String {
+    serde_json::json!({
+        "vct": "mandate.payment.1",
+        "issuer": "issuer.example",
+        "subject": "agent_1",
+        "mandate_id": "mandate_closed_1",
+        "payment_handler_id": handler_id,
+        "issued_at": 1_735_689_600_i64,
+        "expires_at": expires_at,
+        "signature": "sig_closed",
+        "max_amount_minor": max_amount,
+        "currency": "USD",
+        "open_mandate": {
+            "vct": "mandate.checkout.open.1",
+            "issuer": "issuer.example",
+            "subject": "user_1",
+            "mandate_id": "mandate_open_1",
+            "issued_at": 1_735_689_600_i64,
+            "expires_at": expires_at,
+            "signature": "sig_open",
+            "cnf": "agent-pubkey-1",
+            "max_amount_minor": max_amount,
+            "currency": "USD"
+        }
+    })
+    .to_string()
+}
+
+#[test]
+fn ap2_0_2_accepts_hnp_open_closed_mandates() {
+    let expires = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64
+        + 3600;
+    let req = CheckoutRequest {
+        tenant_id: "tenant_a".to_string(),
+        merchant_id: "m".to_string(),
+        cart_id: CartId::new(),
+        cart_version: 1,
+        currency: "USD".to_string(),
+        customer: None,
+        location: None,
+        payment_intent: PaymentIntent {
+            amount_minor: 500,
+            token_or_reference: "tok".to_string(),
+            ap2_consent_proof: Some(ap2_hnp_consent_proof("handler", expires, 1000)),
+            payment_handler_id: Some("handler".to_string()),
+            payment_method_type: Some(PaymentMethodType::Ap2),
+            mpp_method: None,
+            mpp_intent: None,
+        },
+        idempotency_key: "k".to_string(),
+    };
+    verify_ap2_strict(&req).expect("HNP open+closed mandate should verify");
+}
+
+#[test]
+fn ap2_0_2_rejects_hnp_when_amount_exceeds_open_constraint() {
+    let expires = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64
+        + 3600;
+    let req = CheckoutRequest {
+        tenant_id: "tenant_a".to_string(),
+        merchant_id: "m".to_string(),
+        cart_id: CartId::new(),
+        cart_version: 1,
+        currency: "USD".to_string(),
+        customer: None,
+        location: None,
+        payment_intent: PaymentIntent {
+            amount_minor: 2000,
+            token_or_reference: "tok".to_string(),
+            ap2_consent_proof: Some(ap2_hnp_consent_proof("handler", expires, 1000)),
+            payment_handler_id: Some("handler".to_string()),
+            payment_method_type: Some(PaymentMethodType::Ap2),
+            mpp_method: None,
+            mpp_intent: None,
+        },
+        idempotency_key: "k".to_string(),
+    };
+    let err = verify_ap2_strict(&req).expect_err("amount over open mandate max must fail");
+    assert!(err.0.contains("max_amount_minor"));
+}
+
+#[test]
+fn discovery_advertises_signing_keys_payment_handlers_and_protocol_versions() {
+    let manifest = build_well_known_manifest_with_version("https://example.com", None);
+    let flags = manifest.ucp.capability_flags.expect("flags");
+    assert_eq!(flags.get("dev.ucp.payments.mpp"), Some(&true));
+    assert!(!manifest.ucp.signing_keys.as_ref().unwrap().is_empty());
+    assert!(!manifest.ucp.payment_handlers.as_ref().unwrap().is_empty());
+    assert_eq!(manifest.ucp.a2a_profile_version.as_deref(), Some("1.0"));
+    assert_eq!(manifest.ucp.ap2_protocol_version.as_deref(), Some("0.2"));
+    assert_eq!(manifest.ucp.acp_api_version.as_deref(), Some("2026-04-17"));
+    let services = manifest.ucp.services.as_ref().unwrap();
+    let shopping = &services["dev.ucp.shopping"];
+    assert!(shopping.iter().any(|b| b.transport == "acp"));
+    assert!(manifest
+        .ucp
+        .capabilities
+        .as_ref()
+        .unwrap()
+        .contains_key("dev.ucp.shopping.payment_handlers"));
 }

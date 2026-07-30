@@ -1,5 +1,6 @@
 //! Stable orchestration entrypoint for cart commands and checkout execution.
 
+pub mod acp_mapping;
 pub mod adapters;
 pub mod ap2_verification;
 pub mod authn;
@@ -8,6 +9,7 @@ pub mod facade;
 pub mod pii;
 pub mod ucp_mapping;
 
+pub use acp_mapping::*;
 pub use adapters::*;
 pub use ap2_verification::*;
 pub use authn::*;

@@ -1,4 +1,4 @@
-//! Phase 2 adapter scaffolding for UCP/A2A/AP2 interop.
+//! Adapter layer for UCP/A2A/AP2/ACP interop.
 //! Normalizes A2A-style envelopes into domain types so the same facade and authz apply.
 
 use orchestrator_core::contract::{CartCommand, CartId, CheckoutRequest};
@@ -33,11 +33,41 @@ pub struct MppPaymentMetadata {
     pub intent: Option<String>,
 }
 
-pub const A2A_PROFILE_VERSION: &str = "0.3.0";
-pub const A2A_SUPPORTED_PROFILE_VERSIONS: &[&str] = &[A2A_PROFILE_VERSION, "1.0"];
+/// Primary A2A profile (Major.Minor). Patch `1.0.1` is documented; negotiate on Major.Minor.
+pub const A2A_PROFILE_VERSION: &str = "1.0";
+/// Spec patch reference for docs/conformance (not used in wire negotiation).
+pub const A2A_PROFILE_PATCH_VERSION: &str = "1.0.1";
+pub const A2A_SUPPORTED_PROFILE_VERSIONS: &[&str] = &[A2A_PROFILE_VERSION, "0.3", "0.3.0"];
+
+pub fn normalize_a2a_version(version: &str) -> String {
+    let trimmed = version.trim();
+    let parts: Vec<&str> = trimmed.split('.').collect();
+    match parts.as_slice() {
+        [major, minor, ..] => format!("{major}.{minor}"),
+        [major] => (*major).to_string(),
+        _ => trimmed.to_string(),
+    }
+}
 
 pub fn is_supported_a2a_profile_version(version: &str) -> bool {
-    A2A_SUPPORTED_PROFILE_VERSIONS.contains(&version)
+    let normalized = normalize_a2a_version(version);
+    A2A_SUPPORTED_PROFILE_VERSIONS
+        .iter()
+        .any(|supported| normalize_a2a_version(supported) == normalized)
+}
+
+/// Validate `A2A-Version` header (or body version). Empty defaults to `0.3` for legacy clients.
+pub fn negotiate_a2a_version(requested: Option<&str>) -> Result<String, String> {
+    let requested = requested.map(str::trim).filter(|v| !v.is_empty());
+    let version = requested.unwrap_or("0.3");
+    if is_supported_a2a_profile_version(version) {
+        Ok(normalize_a2a_version(version))
+    } else {
+        Err(format!(
+            "unsupported A2A-Version '{version}'; supported: {}",
+            A2A_SUPPORTED_PROFILE_VERSIONS.join(", ")
+        ))
+    }
 }
 
 pub fn default_a2a_handoff_profile(delegated_capability: impl Into<String>) -> A2AHandoffProfile {

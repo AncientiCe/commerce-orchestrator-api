@@ -10,11 +10,13 @@ Deploy the orchestrator as an HTTP service (`orchestrator-server`). Your app (Ag
 
 | Area | Endpoints |
 |------|-----------|
-| **Discovery** | `GET /.well-known/ucp` (defaults to UCP `2026-04-08`; older `ucp_version` query values return compatible legacy profiles) |
-| **Cart & checkout** | `POST /api/v1/cart/commands`, `/api/v1/ucp/cart` routes, `POST /api/v1/checkout/execute`, `POST /api/v1/a2a/cart`, `POST /api/v1/a2a/checkout` |
+| **Discovery** | `GET /.well-known/ucp` (defaults to UCP `2026-04-08`; includes ACP/MCP/A2A/AP2 version metadata, signing keys, payment handlers) |
+| **Cart & checkout** | `POST /api/v1/cart/commands`, `/api/v1/ucp/cart` and `/api/v1/ucp/checkout` routes, `POST /api/v1/checkout/execute`, `POST /api/v1/a2a/cart`, `POST /api/v1/a2a/checkout` |
+| **ACP** | `/api/v1/acp/checkout_sessions` (+ complete/cancel), `POST /api/v1/acp/delegate_payment` — require `API-Version: 2026-04-17` |
 | **Catalog & orders** | `GET /api/v1/catalog/items/:id`, `/api/v1/ucp/catalog` routes, `GET /api/v1/orders/:id`, `GET /api/v1/ucp/orders/:id` |
-| **Identity linking** | `POST /api/v1/a2a/identity/link` |
-| **Payments** | `POST /api/v1/payments/capture`, `void`, `refund` |
+| **Identity linking** | `POST /api/v1/a2a/identity/link` (`A2A-Version: 1.0` or `0.3`) |
+| **Payments** | `POST /api/v1/payments/capture`, `void`, `refund`; `GET /api/v1/ucp/payment-handlers` |
+| **MCP** | `POST /api/v1/mcp/message` (dual-era: `2026-07-28` + legacy initialize) |
 | **Events** | `POST /api/v1/events/incoming` (idempotent ingest) |
 | **Operations** | `POST /api/v1/ops/outbox/process`, `GET /api/v1/ops/dead-letter`, `POST /api/v1/ops/dead-letter/replay`, `POST /api/v1/ops/reconciliation` |
 | **Health** | `GET /health/live`, `GET /health/ready`, `GET /metrics` |

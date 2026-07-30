@@ -51,11 +51,31 @@ impl JsonRpcResponse {
             }),
         }
     }
+
+    pub fn error_with_data(
+        id: serde_json::Value,
+        code: i64,
+        message: impl Into<String>,
+        data: serde_json::Value,
+    ) -> Self {
+        Self {
+            jsonrpc: "2.0".to_string(),
+            id,
+            result: None,
+            error: Some(JsonRpcError {
+                code,
+                message: message.into(),
+                data: Some(data),
+            }),
+        }
+    }
 }
 
 pub const METHOD_NOT_FOUND: i64 = -32601;
 pub const INVALID_PARAMS: i64 = -32602;
 pub const INTERNAL_ERROR: i64 = -32603;
+/// MCP unsupported protocol version (2026-07-28).
+pub const UNSUPPORTED_PROTOCOL_VERSION: i64 = -32022;
 
 #[cfg(test)]
 mod tests {
