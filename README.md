@@ -5,7 +5,7 @@
 [![Rust](https://img.shields.io/badge/Rust-stable-orange?logo=rust&logoColor=white)](https://www.rust-lang.org/)
 [![Kubernetes-ready](https://img.shields.io/badge/Kubernetes-ready-326CE5?logo=kubernetes&logoColor=white)](deploy/README.md)
 [![Protocol Conformance](https://img.shields.io/badge/Protocols-UCP%20%7C%20A2A%20%7C%20AP2%20%7C%20ACP%20%7C%20MCP-blueviolet)](docs/standards/conformance-matrix.md)
-[![v0.5.0](https://img.shields.io/badge/version-0.5.0-blue)](CHANGELOG.md)
+[![v0.6.0](https://img.shields.io/badge/version-0.6.0-blue)](CHANGELOG.md)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20%2F%20Apache--2.0-green)](LICENSE-MIT)
 [![CI](https://img.shields.io/github/actions/workflow/status/AncientiCe/commerce-orchestrator/ci.yml?branch=main&label=CI)](https://github.com/AncientiCe/commerce-orchestrator/actions)
 

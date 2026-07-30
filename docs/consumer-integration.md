@@ -26,7 +26,7 @@ In production the service requires a Bearer token; send `Authorization: Bearer <
 ## Do not modify this repository
 
 - **Do not fork to change orchestrator behavior.** Consume the deployed API; fixes and features belong upstream.
-- **Pin to a released tag** (e.g. `v0.5.0`) for the deployment you use. Upgrade using release notes and `CHANGELOG.md`.
+- **Pin to a released tag** (e.g. `v0.6.0`) for the deployment you use. Upgrade using release notes and `CHANGELOG.md`.
 
 ## Summary
 

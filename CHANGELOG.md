@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-07-30
+
 ### Added
 
 - **ACP 2026-04-17 shim**: Merchant-hosted Agentic Commerce Protocol routes under `/api/v1/acp` for checkout sessions (create/get/update/complete/cancel) and `POST /delegate_payment`, with required `API-Version` negotiation and discovery `transport: acp` binding.
@@ -19,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A2A profile**: Primary profile is `1.0` (documented patch `1.0.1`) with `A2A-Version` header negotiation; `0.3` remains supported.
 - **Conformance matrix**: Targets updated for AP2 0.2, A2A 1.0, MCP dual-era, and ACP 2026-04-17.
+- **Release baseline**: Version and conformance documentation now target `v0.6.0`.
 
 ## [0.5.0] - 2026-05-01
 
@@ -129,6 +132,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - File-backed persistence is directory-based JSON; not suitable for high concurrency without external locking.
 
+[0.6.0]: https://github.com/your-org/commerce-orchestrator/releases/tag/v0.6.0
 [0.5.0]: https://github.com/your-org/commerce-orchestrator/releases/tag/v0.5.0
 [0.4.0]: https://github.com/your-org/commerce-orchestrator/releases/tag/v0.4.0
 [0.3.1]: https://github.com/your-org/commerce-orchestrator/releases/tag/v0.3.1
