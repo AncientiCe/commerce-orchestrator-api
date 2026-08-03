@@ -38,6 +38,7 @@ See [consumer-integration.md](consumer-integration.md) for the high-level integr
 | `PUT` | `/api/v1/ucp/checkout/:id` | UCP checkout session line update. |
 | `POST` | `/api/v1/ucp/checkout/:id/complete` | Complete UCP checkout (execute checkout). |
 | `POST` | `/api/v1/ucp/checkout/:id/cancel` | Cancel UCP checkout session. |
+| `POST` | `/api/v1/ucp/checkout/:id/embedded-link` | UCP embedded transport: returns a short-lived, signed handoff URL (`embedded_url`, `checkout_session_id`, `expires_at`) for completing checkout on the merchant's hosted embedded surface. 404 if the checkout does not exist. |
 | `GET` | `/api/v1/ucp/payment-handlers` | List configured payment handlers. |
 | `GET` | `/api/v1/ucp/payment-handlers/:id` | Get a payment handler by id. |
 | `POST` | `/api/v1/acp/checkout_sessions` | ACP create checkout session. Requires `API-Version: 2026-04-17`. |

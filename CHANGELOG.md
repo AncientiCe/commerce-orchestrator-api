@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-08-03
+
+### Added
+
+- **UCP embedded transport**: Shopping services advertise a `transport: embedded` binding and `dev.ucp.shopping.checkout.embedded` capability flag; `POST /api/v1/ucp/checkout/:id/embedded-link` returns a short-lived, signed handoff URL for merchant-hosted embedded checkout (UCP `2026-04-08` link-delegation extension).
+- **Community health files**: `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md` (Contributor Covenant), issue templates, and a pull request template.
+
+### Fixed
+
+- **Dependency audit remediation**: Bumped `wiremock` (0.5→0.6), `utoipa-axum` (0.1→0.2), `axum-test` (14→16), and patched `anyhow`, `rand`, and `event-listener` to resolve RustSec advisories reported since the `v0.6.0` release; `cargo audit` is clean (one documented, justified ignore remains for the unmaintained, upstream-unfixable `paste` proc-macro pulled in transitively by `utoipa-axum`; see `audit.toml`).
+- **Repository metadata**: Corrected `Cargo.toml` repository URL, `CHANGELOG.md` release links, and the README CI badge to point at the actual `AncientiCe/commerce-orchestrator-api` GitHub repository.
+
+### Changed
+
+- **Conformance matrix**: UCP embedded transport moved from `not_supported_yet` to `required` with acceptance criteria and test evidence.
+- **Release baseline**: Version and conformance documentation now target `v0.7.0`.
+
 ## [0.6.0] - 2026-07-30
 
 ### Added
@@ -132,10 +149,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - File-backed persistence is directory-based JSON; not suitable for high concurrency without external locking.
 
-[0.6.0]: https://github.com/your-org/commerce-orchestrator/releases/tag/v0.6.0
-[0.5.0]: https://github.com/your-org/commerce-orchestrator/releases/tag/v0.5.0
-[0.4.0]: https://github.com/your-org/commerce-orchestrator/releases/tag/v0.4.0
-[0.3.1]: https://github.com/your-org/commerce-orchestrator/releases/tag/v0.3.1
-[0.3.0]: https://github.com/your-org/commerce-orchestrator/releases/tag/v0.3.0
-[0.2.0]: https://github.com/your-org/commerce-orchestrator/releases/tag/v0.2.0
-[0.1.0]: https://github.com/your-org/commerce-orchestrator/releases/tag/v0.1.0
+[0.7.0]: https://github.com/AncientiCe/commerce-orchestrator-api/releases/tag/v0.7.0
+[0.6.0]: https://github.com/AncientiCe/commerce-orchestrator-api/releases/tag/v0.6.0
+[0.5.0]: https://github.com/AncientiCe/commerce-orchestrator-api/releases/tag/v0.5.0
+[0.4.0]: https://github.com/AncientiCe/commerce-orchestrator-api/releases/tag/v0.4.0
+[0.3.1]: https://github.com/AncientiCe/commerce-orchestrator-api/releases/tag/v0.3.1
+[0.3.0]: https://github.com/AncientiCe/commerce-orchestrator-api/releases/tag/v0.3.0
+[0.2.0]: https://github.com/AncientiCe/commerce-orchestrator-api/releases/tag/v0.2.0
+[0.1.0]: https://github.com/AncientiCe/commerce-orchestrator-api/releases/tag/v0.1.0

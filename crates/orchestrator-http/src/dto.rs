@@ -742,6 +742,17 @@ pub struct UcpCatalogProductResponseDto {
     pub messages: Vec<UcpMessageDto>,
 }
 
+/// Response for `POST /api/v1/ucp/checkout/:id/embedded-link` (UCP "embedded" transport /
+/// link delegation): a short-lived, signed handoff URL for completing checkout on the
+/// merchant's hosted embedded surface.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct UcpEmbeddedCheckoutLinkResponseDto {
+    pub ucp: UcpEnvelopeDto,
+    pub checkout_session_id: String,
+    pub embedded_url: String,
+    pub expires_at: i64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct UcpSignedAmountDto {
     pub amount: i64,

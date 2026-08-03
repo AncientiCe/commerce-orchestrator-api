@@ -29,12 +29,12 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 utoipa = "5"
-utoipa-axum = "0.1"
+utoipa-axum = "0.2"
 
 [dev-dependencies]
 provider-mocks = { path = "../provider-mocks" }
 tower = "0.4"
-axum-test = "14"
+axum-test = "16"
 http = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 

@@ -1,0 +1,13 @@
+# cargo-audit configuration.
+#
+# Ignored advisories must be reviewed at every release and removed as soon as
+# an upstream fix is available (see docs/release-checklist.md).
+[advisories]
+ignore = [
+    # paste (unmaintained, no upstream fix available) is a compile-time-only
+    # proc-macro pulled in by utoipa-axum 0.2.0 (the latest published version)
+    # for OpenAPI route macro codegen. It ships no runtime code and has no
+    # known vulnerability, only an "unmaintained" advisory with no replacement
+    # released by utoipa-axum yet. Re-evaluate when utoipa-axum drops it.
+    "RUSTSEC-2024-0436",
+]

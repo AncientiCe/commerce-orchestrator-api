@@ -210,6 +210,12 @@ async fn advertised_capabilities_have_implemented_routes() {
         404,
         "UCP catalog search route must exist"
     );
+
+    // Embedded checkout link route parity is asserted separately (it returns a
+    // domain-specific 404 for a missing checkout, so it can't share the generic
+    // "not 404" pattern used above): see
+    // `ucp_checkout_embedded_link_returns_signed_handoff_url` and
+    // `ucp_checkout_embedded_link_returns_404_for_unknown_checkout`.
 }
 
 #[tokio::test]
@@ -337,6 +343,83 @@ async fn ucp_checkout_and_payment_handler_routes_exist() {
         .json(&create)
         .await;
     assert_ne!(acp.status_code().as_u16(), 404);
+}
+
+#[tokio::test]
+async fn well_known_ucp_advertises_embedded_transport() {
+    let state = test_state_with_base_url("https://orchestrator.example.com");
+    let app = app::app().with_state(state);
+    let server = TestServer::new(app).unwrap();
+
+    let response = server.get("/.well-known/ucp").await;
+    response.assert_status_ok();
+    let json: serde_json::Value = response.json();
+    let services = json["ucp"]["services"]["dev.ucp.shopping"]
+        .as_array()
+        .expect("shopping service bindings");
+    assert!(
+        services.iter().any(|binding| {
+            binding.get("transport").and_then(|v| v.as_str()) == Some("embedded")
+                && binding
+                    .get("endpoint")
+                    .and_then(|v| v.as_str())
+                    .is_some_and(|endpoint| {
+                        endpoint.starts_with("https://orchestrator.example.com")
+                    })
+        }),
+        "embedded transport binding should be advertised with an endpoint"
+    );
+    assert_eq!(
+        json["ucp"]["capability_flags"]["dev.ucp.shopping.checkout.embedded"],
+        true
+    );
+}
+
+#[tokio::test]
+async fn ucp_checkout_embedded_link_returns_signed_handoff_url() {
+    let state = test_state_with_base_url("https://orchestrator.example.com");
+    let app = app::app().with_state(state);
+    let server = TestServer::new(app).unwrap();
+
+    let create = serde_json::json!({
+        "merchant_id": "m",
+        "currency": "USD",
+        "line_items": []
+    });
+    let created = server.post("/api/v1/ucp/checkout").json(&create).await;
+    created.assert_status_ok();
+    let checkout: serde_json::Value = created.json();
+    let cart_id = checkout["id"].as_str().expect("id present");
+
+    let response = server
+        .post(&format!("/api/v1/ucp/checkout/{cart_id}/embedded-link"))
+        .await;
+    response.assert_status_ok();
+    let body: serde_json::Value = response.json();
+    let embedded_url = body["embedded_url"].as_str().expect("embedded_url present");
+    assert!(embedded_url.starts_with("https://orchestrator.example.com/api/v1/ucp/checkout/"));
+    assert!(embedded_url.contains("token="));
+    let session_id = body["checkout_session_id"]
+        .as_str()
+        .expect("checkout_session_id present");
+    assert!(embedded_url.contains(session_id));
+    assert!(body["expires_at"].as_i64().expect("expires_at present") > 0);
+    assert!(body["ucp"]["capabilities"]
+        .as_object()
+        .unwrap()
+        .contains_key("dev.ucp.shopping.checkout.embedded"));
+}
+
+#[tokio::test]
+async fn ucp_checkout_embedded_link_returns_404_for_unknown_checkout() {
+    let state = test_state_with_base_url("http://localhost:8080");
+    let app = app::app().with_state(state);
+    let server = TestServer::new(app).unwrap();
+
+    let response = server
+        .post("/api/v1/ucp/checkout/00000000-0000-0000-0000-000000000099/embedded-link")
+        .await;
+    assert_eq!(response.status_code().as_u16(), 404);
 }
 
 #[tokio::test]

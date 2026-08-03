@@ -26,7 +26,7 @@ Status values: **required** (must pass for claimed alignment), **optional** (sup
 | Multi-parent extensions | required | `dev.ucp.shopping.discount` extends both checkout and cart in the latest profile | discovery tests |
 | Advertised capabilities map to implemented routes | required | Every latest advertised capability has a corresponding executable REST, A2A, or MCP operation | Conformance test: capability_route_parity |
 | Signing keys advertisement | required | Discovery includes root-level `signing_keys` JWKs; optional `UCP-Signature` verification when `UCP_SIGNING_SECRET` is set | discovery tests; `verify_ucp_request_signature` |
-| Embedded transport | not_supported_yet | Full embedded checkout transport is not advertised until backed by implementation | conformance review |
+| Embedded transport | required | Shopping services advertise a `transport: embedded` binding and `dev.ucp.shopping.checkout.embedded` capability flag; `POST /api/v1/ucp/checkout/:id/embedded-link` returns a short-lived, signed handoff URL for merchant-hosted embedded checkout (404 for an unknown checkout) | discovery tests: `well_known_ucp_advertises_embedded_transport`, `ucp_checkout_embedded_link_returns_signed_handoff_url`, `ucp_checkout_embedded_link_returns_404_for_unknown_checkout`; `orchestrator_api::build_embedded_checkout_link` |
 
 ### Transport: REST
 

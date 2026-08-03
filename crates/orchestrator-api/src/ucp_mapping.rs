@@ -65,6 +65,16 @@ pub fn build_well_known_manifest_with_version(
                             ),
                             endpoint: Some(format!("{}/api/v1/acp", base)),
                         },
+                        UcpServiceBinding {
+                            version: selected_version.to_string(),
+                            spec: spec_url(selected_version, "embedded-link-delegation"),
+                            transport: "embedded".to_string(),
+                            schema: Some(format!(
+                                "https://ucp.dev/{}/services/shopping/embedded.openapi.json",
+                                selected_version
+                            )),
+                            endpoint: Some(format!("{}/api/v1/ucp/checkout", base)),
+                        },
                     ],
                 ),
             ])),
@@ -76,6 +86,7 @@ pub fn build_well_known_manifest_with_version(
                 ("dev.ucp.payments.mpp".to_string(), true),
                 ("dev.ucp.shopping.payment_handlers".to_string(), true),
                 ("dev.ucp.security.signatures".to_string(), true),
+                ("dev.ucp.shopping.checkout.embedded".to_string(), true),
             ])),
             signing_keys: Some(default_signing_keys()),
             payment_handlers: Some(default_payment_handlers()),
@@ -342,4 +353,93 @@ fn simple_hmac_hex(secret: &str, body: &[u8]) -> String {
     secret.hash(&mut hasher);
     body.hash(&mut hasher);
     format!("{:x}", hasher.finish())
+}
+
+/// Time-to-live for embedded checkout handoff links, in seconds (UCP 2026-04-08 "embedded"
+/// transport / link delegation extension).
+pub const EMBEDDED_CHECKOUT_LINK_TTL_SECONDS: i64 = 900;
+
+/// A short-lived, signed handoff link a client can open to complete checkout on the merchant's
+/// hosted embedded surface without leaving the embedding agent/client experience.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EmbeddedCheckoutLink {
+    pub checkout_session_id: String,
+    pub embedded_url: String,
+    pub expires_at: i64,
+}
+
+/// Build an embedded checkout handoff link for the UCP "embedded" transport.
+/// Signed with `UCP_SIGNING_SECRET` when configured, matching `verify_ucp_request_signature`.
+pub fn build_embedded_checkout_link(base_url: &str, cart_id: CartId) -> EmbeddedCheckoutLink {
+    let base = base_url.trim_end_matches('/');
+    let session_id = cart_id_to_session_id(cart_id);
+    let expires_at = now_unix_timestamp() + EMBEDDED_CHECKOUT_LINK_TTL_SECONDS;
+    let token = embedded_link_token(&session_id, expires_at);
+    EmbeddedCheckoutLink {
+        embedded_url: format!(
+            "{base}/api/v1/ucp/checkout/{session_id}/embedded?token={token}&expires={expires_at}"
+        ),
+        checkout_session_id: session_id,
+        expires_at,
+    }
+}
+
+fn embedded_link_token(session_id: &str, expires_at: i64) -> String {
+    let secret = std::env::var("UCP_SIGNING_SECRET").unwrap_or_default();
+    signed_token(session_id, expires_at, &secret)
+}
+
+fn signed_token(session_id: &str, expires_at: i64, secret: &str) -> String {
+    let payload = format!("{session_id}:{expires_at}");
+    simple_hmac_hex(secret, payload.as_bytes())
+}
+
+fn now_unix_timestamp() -> i64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn build_embedded_checkout_link_returns_url_with_session_id_and_future_expiry() {
+        let before = now_unix_timestamp();
+        let link = build_embedded_checkout_link(
+            "https://orchestrator.example.com/",
+            CartId(uuid::Uuid::nil()),
+        );
+
+        assert_eq!(
+            link.checkout_session_id,
+            cart_id_to_session_id(CartId(uuid::Uuid::nil()))
+        );
+        assert!(link
+            .embedded_url
+            .starts_with("https://orchestrator.example.com/api/v1/ucp/checkout/"));
+        assert!(link.embedded_url.contains(&link.checkout_session_id));
+        assert!(link.embedded_url.contains("token="));
+        assert!(link
+            .embedded_url
+            .contains(&format!("expires={}", link.expires_at)));
+        assert!(link.expires_at > before);
+        assert_eq!(link.expires_at - before, EMBEDDED_CHECKOUT_LINK_TTL_SECONDS,);
+    }
+
+    #[test]
+    fn signed_token_changes_with_secret_but_is_deterministic() {
+        let unsigned_a = signed_token("chk_session", 1_000, "");
+        let unsigned_b = signed_token("chk_session", 1_000, "");
+        let signed = signed_token("chk_session", 1_000, "test-secret");
+
+        assert_eq!(
+            unsigned_a, unsigned_b,
+            "same inputs must produce same token"
+        );
+        assert_ne!(unsigned_a, signed, "different secret must change the token");
+    }
 }

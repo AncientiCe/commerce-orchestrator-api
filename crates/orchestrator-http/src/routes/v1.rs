@@ -9,8 +9,8 @@ use crate::dto::{
     ReplayDeadLetterRequestDto, ReplayDeadLetterResponseDto, TransactionResultDto,
     UcpCartRequestDto, UcpCartResponseDto, UcpCatalogLookupRequestDto, UcpCatalogProductRequestDto,
     UcpCatalogProductResponseDto, UcpCatalogProductsResponseDto, UcpCatalogSearchRequestDto,
-    UcpEnvelopeDto, UcpMessageDto, UcpOrderResponseDto, WebhookRegistrationDto,
-    WebhookRegistrationRequestDto, WebhookUnregisterResponseDto,
+    UcpEmbeddedCheckoutLinkResponseDto, UcpEnvelopeDto, UcpMessageDto, UcpOrderResponseDto,
+    WebhookRegistrationDto, WebhookRegistrationRequestDto, WebhookUnregisterResponseDto,
 };
 use crate::error::ApiError;
 use crate::state::AppState;
@@ -21,9 +21,10 @@ use axum::{
     Json, Router,
 };
 use orchestrator_api::{
-    add_item_commands, cancel_cart_command, complete_to_checkout_request, create_cart_command,
-    default_payment_handlers, delegate_payment_response, get_cart_command, negotiate_a2a_version,
-    negotiate_acp_version, normalize_a2a_cart_envelope, normalize_a2a_checkout_envelope,
+    add_item_commands, build_embedded_checkout_link, cancel_cart_command,
+    complete_to_checkout_request, create_cart_command, default_payment_handlers,
+    delegate_payment_response, get_cart_command, negotiate_a2a_version, negotiate_acp_version,
+    normalize_a2a_cart_envelope, normalize_a2a_checkout_envelope,
     normalize_a2a_identity_link_envelope, parse_acp_session_id, projection_to_acp_session,
     redact_checkout_request, start_checkout_command, AcpCheckoutSessionCreateRequest,
     AcpCheckoutSessionUpdateRequest, AcpCompleteSessionRequest, AcpDelegatePaymentRequest,
@@ -49,6 +50,10 @@ pub fn routes() -> Router<AppState> {
         .route("/ucp/checkout/:id", put(ucp_update_checkout))
         .route("/ucp/checkout/:id/complete", post(ucp_complete_checkout))
         .route("/ucp/checkout/:id/cancel", post(ucp_cancel_checkout))
+        .route(
+            "/ucp/checkout/:id/embedded-link",
+            post(ucp_create_embedded_checkout_link),
+        )
         .route("/ucp/payment-handlers", get(ucp_list_payment_handlers))
         .route("/ucp/payment-handlers/:id", get(ucp_get_payment_handler))
         .route("/ucp/catalog/search", post(ucp_catalog_search))
@@ -427,6 +432,30 @@ async fn ucp_cancel_checkout(
         .await?;
     orchestrator_observability::incr("ucp_checkout_cancel_total");
     Ok(Json(projection.into()))
+}
+
+/// POST /api/v1/ucp/checkout/:id/embedded-link — UCP "embedded" transport / link delegation.
+/// Returns a short-lived, signed handoff URL for completing checkout on the merchant's hosted
+/// embedded surface without leaving the embedding agent/client experience.
+async fn ucp_create_embedded_checkout_link(
+    AuthContextExtractor(_auth): AuthContextExtractor,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<UcpEmbeddedCheckoutLinkResponseDto>, ApiError> {
+    let cart_id = parse_ucp_cart_id(&id)?;
+    // Verify the checkout/cart exists before minting a handoff link for it.
+    state
+        .facade
+        .dispatch_cart_command(CartCommand::GetCart(GetCartPayload { cart_id }), None)
+        .await?;
+    let link = build_embedded_checkout_link(&state.discovery_base_url, cart_id);
+    orchestrator_observability::incr("ucp_checkout_embedded_link_total");
+    Ok(Json(UcpEmbeddedCheckoutLinkResponseDto {
+        ucp: UcpEnvelopeDto::for_capabilities(&["dev.ucp.shopping.checkout.embedded"]),
+        checkout_session_id: link.checkout_session_id,
+        embedded_url: link.embedded_url,
+        expires_at: link.expires_at,
+    }))
 }
 
 async fn ucp_list_payment_handlers(

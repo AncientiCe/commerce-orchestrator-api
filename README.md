@@ -5,9 +5,9 @@
 [![Rust](https://img.shields.io/badge/Rust-stable-orange?logo=rust&logoColor=white)](https://www.rust-lang.org/)
 [![Kubernetes-ready](https://img.shields.io/badge/Kubernetes-ready-326CE5?logo=kubernetes&logoColor=white)](deploy/README.md)
 [![Protocol Conformance](https://img.shields.io/badge/Protocols-UCP%20%7C%20A2A%20%7C%20AP2%20%7C%20ACP%20%7C%20MCP-blueviolet)](docs/standards/conformance-matrix.md)
-[![v0.6.0](https://img.shields.io/badge/version-0.6.0-blue)](CHANGELOG.md)
+[![v0.7.0](https://img.shields.io/badge/version-0.7.0-blue)](CHANGELOG.md)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20%2F%20Apache--2.0-green)](LICENSE-MIT)
-[![CI](https://img.shields.io/github/actions/workflow/status/AncientiCe/commerce-orchestrator/ci.yml?branch=main&label=CI)](https://github.com/AncientiCe/commerce-orchestrator/actions)
+[![CI](https://img.shields.io/github/actions/workflow/status/AncientiCe/commerce-orchestrator-api/ci.yml?branch=main&label=CI)](https://github.com/AncientiCe/commerce-orchestrator-api/actions)
 
 ---
 
@@ -48,6 +48,7 @@ The Commerce Orchestrator is a middleware API layer. Your clients call its REST 
 |------|-----------|
 | Cart & checkout | `POST /api/v1/cart/commands`, `POST /api/v1/checkout/execute` |
 | UCP shim | `/api/v1/ucp/cart`, `/ucp/checkout`, `/ucp/catalog/*`, `/ucp/orders/:id`, `/ucp/payment-handlers` |
+| UCP embedded transport | `POST /api/v1/ucp/checkout/:id/embedded-link` — short-lived, signed handoff URL for merchant-hosted embedded checkout |
 | ACP shim | `/api/v1/acp/checkout_sessions`, `POST /api/v1/acp/delegate_payment` (`API-Version: 2026-04-17`) |
 | Orders | `GET /api/v1/orders`, `GET /api/v1/orders/:id`, `POST /api/v1/a2a/orders` |
 | Catalog | `GET /api/v1/catalog/items/:id` |
