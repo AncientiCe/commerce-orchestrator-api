@@ -497,6 +497,76 @@ async fn ucp_cart_create_get_update_and_cancel_return_ucp_envelopes() {
 }
 
 #[tokio::test]
+async fn ucp_cart_fulfillment_quotes_and_selects_shipping_option() {
+    let state = test_state();
+    let app = app::app().with_state(state);
+    let server = TestServer::new(app).unwrap();
+
+    let create = serde_json::json!({
+        "merchant_id": "m1",
+        "currency": "USD",
+        "line_items": [
+            { "item": { "id": "SKU-1" }, "quantity": 1 }
+        ]
+    });
+    let response = server.post("/api/v1/ucp/cart").json(&create).await;
+    response.assert_status_ok();
+    let cart: serde_json::Value = response.json();
+    let cart_id = cart["id"].as_str().expect("cart id");
+    let total_before = cart["total_minor"].as_i64().expect("total before");
+
+    let quote_request = serde_json::json!({
+        "method_type": "shipping",
+        "destination": {
+            "id": "dest_1",
+            "street_address": "1 Market St",
+            "address_locality": "San Francisco",
+            "address_region": "CA",
+            "address_country": "US",
+            "postal_code": "94105"
+        }
+    });
+    let quote_response = server
+        .post(&format!("/api/v1/ucp/cart/{}/fulfillment", cart_id))
+        .json(&quote_request)
+        .await;
+    quote_response.assert_status_ok();
+    let quoted: serde_json::Value = quote_response.json();
+    let methods = quoted["fulfillment"]["methods"]
+        .as_array()
+        .expect("methods");
+    assert_eq!(methods.len(), 1);
+    let options = methods[0]["groups"][0]["options"]
+        .as_array()
+        .expect("options");
+    assert_eq!(options.len(), 2);
+    assert_eq!(quoted["total_minor"].as_i64(), Some(total_before));
+
+    let select_request = serde_json::json!({
+        "method_type": "shipping",
+        "destination": { "id": "dest_1" },
+        "selected_option_id": "express"
+    });
+    let select_response = server
+        .post(&format!("/api/v1/ucp/cart/{}/fulfillment", cart_id))
+        .json(&select_request)
+        .await;
+    select_response.assert_status_ok();
+    let selected: serde_json::Value = select_response.json();
+    assert_eq!(
+        selected["fulfillment"]["methods"][0]["groups"][0]["selected_option_id"].as_str(),
+        Some("express")
+    );
+    assert_eq!(selected["total_minor"].as_i64(), Some(total_before + 1_000));
+
+    let metrics_response = server.get("/metrics").await;
+    metrics_response.assert_status_ok();
+    let metrics_body = metrics_response.text();
+    assert!(metrics_body.contains("cart_fulfillment_selection_total"));
+    assert!(metrics_body.contains("operation=\"cart_set_fulfillment\""));
+}
+
+#[tokio::test]
 async fn ucp_catalog_search_lookup_and_product_return_ucp_envelopes() {
     let state = test_state();
     let app = app::app().with_state(state);
@@ -673,6 +743,10 @@ async fn acp_checkout_session_lifecycle_and_delegate_payment() {
             HeaderName::from_static("api-version"),
             HeaderValue::from_static("2026-04-17"),
         )
+        .add_header(
+            HeaderName::from_static("idempotency-key"),
+            HeaderValue::from_static("acp-create-1"),
+        )
         .json(&create)
         .await;
     created.assert_status_ok();
@@ -696,6 +770,10 @@ async fn acp_checkout_session_lifecycle_and_delegate_payment() {
             HeaderName::from_static("api-version"),
             HeaderValue::from_static("2026-04-17"),
         )
+        .add_header(
+            HeaderName::from_static("idempotency-key"),
+            HeaderValue::from_static("acp-complete-header-1"),
+        )
         .json(&serde_json::json!({
             "tenant_id": "dev",
             "merchant_id": "m1",
@@ -713,6 +791,10 @@ async fn acp_checkout_session_lifecycle_and_delegate_payment() {
         .add_header(
             HeaderName::from_static("api-version"),
             HeaderValue::from_static("2026-04-17"),
+        )
+        .add_header(
+            HeaderName::from_static("idempotency-key"),
+            HeaderValue::from_static("acp-delegate-1"),
         )
         .json(&serde_json::json!({
             "tenant_id": "dev",
@@ -733,4 +815,183 @@ async fn acp_checkout_session_lifecycle_and_delegate_payment() {
         }))
         .await;
     assert_eq!(missing_version.status_code().as_u16(), 400);
+}
+
+#[tokio::test]
+async fn acp_post_routes_require_idempotency_key_header() {
+    let state = test_state();
+    let app = app::app().with_state(state);
+    let server = TestServer::new(app).unwrap();
+
+    let create_without_key = server
+        .post("/api/v1/acp/checkout_sessions")
+        .add_header(
+            HeaderName::from_static("api-version"),
+            HeaderValue::from_static("2026-04-17"),
+        )
+        .json(&serde_json::json!({
+            "merchant_id": "m1",
+            "currency": "USD",
+            "line_items": [{ "item": { "id": "SKU-1" }, "quantity": 1 }]
+        }))
+        .await;
+    assert_eq!(create_without_key.status_code().as_u16(), 400);
+    let create_error: serde_json::Value = create_without_key.json();
+    assert_eq!(create_error["code"], "idempotency_key_required");
+
+    let create_with_key = server
+        .post("/api/v1/acp/checkout_sessions")
+        .add_header(
+            HeaderName::from_static("api-version"),
+            HeaderValue::from_static("2026-04-17"),
+        )
+        .add_header(
+            HeaderName::from_static("idempotency-key"),
+            HeaderValue::from_static("acp-idem-create-1"),
+        )
+        .json(&serde_json::json!({
+            "merchant_id": "m1",
+            "currency": "USD",
+            "line_items": [{ "item": { "id": "SKU-1" }, "quantity": 1 }]
+        }))
+        .await;
+    create_with_key.assert_status_ok();
+    let session: serde_json::Value = create_with_key.json();
+    let id = session["id"].as_str().expect("session id");
+
+    let cancel_without_key = server
+        .post(&format!("/api/v1/acp/checkout_sessions/{id}/cancel"))
+        .add_header(
+            HeaderName::from_static("api-version"),
+            HeaderValue::from_static("2026-04-17"),
+        )
+        .await;
+    assert_eq!(cancel_without_key.status_code().as_u16(), 400);
+    let cancel_error: serde_json::Value = cancel_without_key.json();
+    assert_eq!(cancel_error["code"], "idempotency_key_required");
+
+    let cancel_with_key = server
+        .post(&format!("/api/v1/acp/checkout_sessions/{id}/cancel"))
+        .add_header(
+            HeaderName::from_static("api-version"),
+            HeaderValue::from_static("2026-04-17"),
+        )
+        .add_header(
+            HeaderName::from_static("idempotency-key"),
+            HeaderValue::from_static("acp-idem-cancel-1"),
+        )
+        .await;
+    cancel_with_key.assert_status_ok();
+
+    let delegate_without_key = server
+        .post("/api/v1/acp/delegate_payment")
+        .add_header(
+            HeaderName::from_static("api-version"),
+            HeaderValue::from_static("2026-04-17"),
+        )
+        .json(&serde_json::json!({
+            "tenant_id": "dev",
+            "payment_method": { "type": "card", "token": "pm_tok_1" }
+        }))
+        .await;
+    assert_eq!(delegate_without_key.status_code().as_u16(), 400);
+    let delegate_error: serde_json::Value = delegate_without_key.json();
+    assert_eq!(delegate_error["code"], "idempotency_key_required");
+}
+
+#[tokio::test]
+async fn acp_cart_create_get_update_and_cancel_lifecycle() {
+    let state = test_state();
+    let app = app::app().with_state(state);
+    let server = TestServer::new(app).unwrap();
+
+    let create = server
+        .post("/api/v1/acp/carts")
+        .add_header(
+            HeaderName::from_static("api-version"),
+            HeaderValue::from_static("2026-04-17"),
+        )
+        .add_header(
+            HeaderName::from_static("idempotency-key"),
+            HeaderValue::from_static("acp-cart-create-1"),
+        )
+        .json(&serde_json::json!({
+            "merchant_id": "m1",
+            "currency": "USD",
+            "line_items": [{ "item": { "id": "SKU-1" }, "quantity": 1 }],
+            "buyer": { "email": "buyer@example.com" }
+        }))
+        .await;
+    create.assert_status_ok();
+    let cart: serde_json::Value = create.json();
+    let id = cart["id"].as_str().expect("cart id");
+    assert!(id.starts_with("cart_"));
+    assert_eq!(cart["status"], "active");
+    assert_eq!(cart["api_version"], "2026-04-17");
+    assert_eq!(cart["line_items"].as_array().unwrap().len(), 1);
+
+    let create_without_key = server
+        .post("/api/v1/acp/carts")
+        .add_header(
+            HeaderName::from_static("api-version"),
+            HeaderValue::from_static("2026-04-17"),
+        )
+        .json(&serde_json::json!({
+            "merchant_id": "m1",
+            "currency": "USD",
+            "line_items": []
+        }))
+        .await;
+    assert_eq!(create_without_key.status_code().as_u16(), 400);
+    let create_error: serde_json::Value = create_without_key.json();
+    assert_eq!(create_error["code"], "idempotency_key_required");
+
+    let got = server
+        .get(&format!("/api/v1/acp/carts/{id}"))
+        .add_header(
+            HeaderName::from_static("api-version"),
+            HeaderValue::from_static("2026-04-17"),
+        )
+        .await;
+    got.assert_status_ok();
+    let got_cart: serde_json::Value = got.json();
+    assert_eq!(got_cart["id"], id);
+
+    let updated = server
+        .put(&format!("/api/v1/acp/carts/{id}"))
+        .add_header(
+            HeaderName::from_static("api-version"),
+            HeaderValue::from_static("2026-04-17"),
+        )
+        .json(&serde_json::json!({
+            "line_items": [{ "item": { "id": "SKU-1" }, "quantity": 3 }]
+        }))
+        .await;
+    updated.assert_status_ok();
+    let updated_cart: serde_json::Value = updated.json();
+    assert_eq!(updated_cart["line_items"][0]["quantity"], 3);
+
+    let cancel_without_key = server
+        .post(&format!("/api/v1/acp/carts/{id}/cancel"))
+        .add_header(
+            HeaderName::from_static("api-version"),
+            HeaderValue::from_static("2026-04-17"),
+        )
+        .await;
+    assert_eq!(cancel_without_key.status_code().as_u16(), 400);
+
+    let cancelled = server
+        .post(&format!("/api/v1/acp/carts/{id}/cancel"))
+        .add_header(
+            HeaderName::from_static("api-version"),
+            HeaderValue::from_static("2026-04-17"),
+        )
+        .add_header(
+            HeaderName::from_static("idempotency-key"),
+            HeaderValue::from_static("acp-cart-cancel-1"),
+        )
+        .await;
+    cancelled.assert_status_ok();
+    let cancelled_cart: serde_json::Value = cancelled.json();
+    assert_eq!(cancelled_cart["status"], "canceled");
 }

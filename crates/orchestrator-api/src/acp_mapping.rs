@@ -180,6 +180,97 @@ pub fn parse_acp_session_id(id: &str) -> Result<CartId, String> {
         .map_err(|e| format!("invalid checkout session id: {e}"))
 }
 
+/// ACP Cart Capability (added `2026-04-17`): pre-checkout basket state decoupled from the
+/// checkout session, with estimated pricing. Reuses the checkout-session cart plumbing since
+/// both are backed by the same orchestrator-native `CartProjection`.
+pub const ACP_CART_ID_PREFIX: &str = "cart_";
+
+pub fn cart_id_to_acp_cart_id(cart_id: CartId) -> String {
+    format!("{ACP_CART_ID_PREFIX}{}", cart_id.0)
+}
+
+pub fn parse_acp_cart_id(id: &str) -> Result<CartId, String> {
+    let raw = id.strip_prefix(ACP_CART_ID_PREFIX).unwrap_or(id);
+    Uuid::from_str(raw)
+        .map(CartId)
+        .map_err(|e| format!("invalid cart id: {e}"))
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AcpCartCreateRequest {
+    pub merchant_id: String,
+    pub currency: String,
+    #[serde(default)]
+    pub line_items: Vec<AcpLineItem>,
+    #[serde(default)]
+    pub buyer: Option<AcpBuyer>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AcpCartUpdateRequest {
+    #[serde(default)]
+    pub line_items: Vec<AcpLineItem>,
+    #[serde(default)]
+    pub buyer: Option<AcpBuyer>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AcpCartResponse {
+    pub id: String,
+    pub status: String,
+    pub currency: String,
+    pub line_items: Vec<AcpSessionLine>,
+    pub totals: AcpTotals,
+    pub api_version: String,
+}
+
+pub fn create_cart_command_for_acp_cart(req: &AcpCartCreateRequest) -> CartCommand {
+    CartCommand::CreateCart(CreateCartPayload {
+        merchant_id: req.merchant_id.clone(),
+        currency: req.currency.clone(),
+    })
+}
+
+pub fn add_item_commands_for_acp_cart(req: &AcpCartCreateRequest) -> Vec<CartCommand> {
+    req.line_items
+        .iter()
+        .map(|line| {
+            CartCommand::AddItem(AddItemPayload {
+                item_id: line.item.id.clone(),
+                quantity: line.quantity,
+            })
+        })
+        .collect()
+}
+
+pub fn projection_to_acp_cart(projection: &CartProjection) -> AcpCartResponse {
+    let status = match projection.status {
+        orchestrator_core::contract::CartStatus::Cancelled => "canceled",
+        _ => "active",
+    };
+    AcpCartResponse {
+        id: cart_id_to_acp_cart_id(projection.cart_id),
+        status: status.to_string(),
+        currency: projection.currency.clone(),
+        line_items: projection
+            .lines
+            .iter()
+            .map(|line| AcpSessionLine {
+                id: line.line_id.clone(),
+                item_id: line.item_id.clone(),
+                quantity: line.quantity,
+                unit_amount: line.unit_price_minor,
+            })
+            .collect(),
+        totals: AcpTotals {
+            subtotal_minor: projection.subtotal_minor,
+            tax_minor: projection.tax_minor,
+            total_minor: projection.total_minor,
+        },
+        api_version: ACP_API_VERSION.to_string(),
+    }
+}
+
 pub fn projection_to_acp_session(projection: &CartProjection) -> AcpCheckoutSessionResponse {
     let status = match projection.status {
         orchestrator_core::contract::CartStatus::CheckoutReady => "ready_for_payment",
@@ -279,6 +370,63 @@ pub fn complete_to_checkout_request(
             mpp_intent: req.payment_data.mpp_intent.clone(),
         },
         idempotency_key: req.idempotency_key.clone(),
+    }
+}
+
+/// ACP discovery document (`GET /.well-known/acp.json`, added `2026-04-17`): advertises the
+/// seller's protocol version, REST base URL, transports, and supported services/extensions.
+/// See `rfcs/rfc.discovery.md` in the ACP spec repo.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AcpDiscoveryProtocol {
+    pub name: String,
+    pub version: String,
+    pub supported_versions: Vec<String>,
+    pub documentation_url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AcpDiscoveryExtension {
+    pub name: String,
+    pub spec: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AcpDiscoveryCapabilities {
+    pub services: Vec<String>,
+    pub extensions: Vec<AcpDiscoveryExtension>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AcpDiscoveryDocument {
+    pub protocol: AcpDiscoveryProtocol,
+    pub api_base_url: String,
+    pub transports: Vec<String>,
+    pub capabilities: AcpDiscoveryCapabilities,
+}
+
+pub fn build_acp_discovery_document(base_url: &str) -> AcpDiscoveryDocument {
+    let base = base_url.trim_end_matches('/');
+    AcpDiscoveryDocument {
+        protocol: AcpDiscoveryProtocol {
+            name: "acp".to_string(),
+            version: ACP_API_VERSION.to_string(),
+            supported_versions: ACP_SUPPORTED_VERSIONS
+                .iter()
+                .map(|v| v.to_string())
+                .collect(),
+            documentation_url:
+                "https://github.com/agentic-commerce-protocol/agentic-commerce-protocol".to_string(),
+        },
+        api_base_url: format!("{base}/api/v1/acp"),
+        transports: vec!["rest".to_string()],
+        capabilities: AcpDiscoveryCapabilities {
+            services: vec![
+                "checkout".to_string(),
+                "carts".to_string(),
+                "delegate_payment".to_string(),
+            ],
+            extensions: vec![],
+        },
     }
 }
 

@@ -24,6 +24,54 @@ fn test_state_with_base_url(base_url: &str) -> AppState {
 }
 
 #[tokio::test]
+async fn well_known_acp_returns_200_and_manifest() {
+    let state = test_state_with_base_url("https://orchestrator.example.com");
+    let app = app::app().with_state(state);
+    let server = TestServer::new(app).unwrap();
+
+    let response = server.get("/.well-known/acp.json").await;
+    response.assert_status_ok();
+    let json: serde_json::Value = response.json();
+
+    let protocol = json.get("protocol").expect("response has protocol");
+    assert_eq!(protocol.get("name").and_then(|v| v.as_str()), Some("acp"));
+    assert_eq!(
+        protocol.get("version").and_then(|v| v.as_str()),
+        Some("2026-04-17")
+    );
+    let supported_versions = protocol
+        .get("supported_versions")
+        .and_then(|v| v.as_array())
+        .expect("supported_versions array");
+    assert!(supported_versions
+        .iter()
+        .any(|v| v.as_str() == Some("2026-04-17")));
+
+    assert_eq!(
+        json.get("api_base_url").and_then(|v| v.as_str()),
+        Some("https://orchestrator.example.com/api/v1/acp")
+    );
+
+    let transports = json
+        .get("transports")
+        .and_then(|v| v.as_array())
+        .expect("transports array");
+    assert!(transports.iter().any(|v| v.as_str() == Some("rest")));
+
+    let services = json
+        .get("capabilities")
+        .and_then(|c| c.get("services"))
+        .and_then(|v| v.as_array())
+        .expect("capabilities.services array");
+    for expected in ["checkout", "carts", "delegate_payment"] {
+        assert!(
+            services.iter().any(|v| v.as_str() == Some(expected)),
+            "expected service '{expected}' in {services:?}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn well_known_ucp_returns_200_and_manifest() {
     let state = test_state_with_base_url("https://orchestrator.example.com");
     let app = app::app().with_state(state);
@@ -120,6 +168,38 @@ async fn well_known_ucp_advertises_current_core_capabilities() {
     let parents: Vec<&str> = extends.iter().filter_map(|v| v.as_str()).collect();
     assert!(parents.contains(&"dev.ucp.shopping.checkout"));
     assert!(parents.contains(&"dev.ucp.shopping.cart"));
+}
+
+#[tokio::test]
+async fn well_known_ucp_advertises_fulfillment_extension() {
+    let state = test_state_with_base_url("http://localhost:8080");
+    let app = app::app().with_state(state);
+    let server = TestServer::new(app).unwrap();
+
+    let response = server.get("/.well-known/ucp").await;
+    response.assert_status_ok();
+    let json: serde_json::Value = response.json();
+    let capabilities = json["ucp"]["capabilities"]
+        .as_object()
+        .expect("capabilities map");
+    assert!(
+        capabilities.contains_key("dev.ucp.shopping.fulfillment"),
+        "dev.ucp.shopping.fulfillment should be advertised"
+    );
+    let fulfillment = capabilities["dev.ucp.shopping.fulfillment"][0]
+        .as_object()
+        .expect("fulfillment descriptor");
+    let extends = fulfillment
+        .get("extends")
+        .and_then(|v| v.as_array())
+        .expect("fulfillment extends both checkout and cart");
+    let parents: Vec<&str> = extends.iter().filter_map(|v| v.as_str()).collect();
+    assert!(parents.contains(&"dev.ucp.shopping.checkout"));
+    assert!(parents.contains(&"dev.ucp.shopping.cart"));
+    assert_eq!(
+        json["ucp"]["capability_flags"]["dev.ucp.shopping.fulfillment"],
+        true
+    );
 }
 
 #[tokio::test]

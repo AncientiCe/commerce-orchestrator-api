@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-08-07
+
+### Added
+
+- **UCP Fulfillment extension**: `dev.ucp.shopping.fulfillment` (extends both `dev.ucp.shopping.checkout` and `dev.ucp.shopping.cart`) covering shipping/pickup methods, destinations, groups, and quoted options. New `SetFulfillmentSelection` cart command and `fulfillment_minor` totals field; `POST /api/v1/ucp/cart/:id/fulfillment` and `POST /api/v1/ucp/checkout/:id/fulfillment` quote and select shipping/pickup options end-to-end.
+- **ACP Cart Capability**: `POST/GET/PUT /api/v1/acp/carts` (+ `POST .../cancel`) manage pre-checkout basket state decoupled from the checkout session, backed by the same `CartProjection` as `checkout_sessions`.
+- **ACP discovery document**: `GET /.well-known/acp.json` returns `protocol` (name/version/supported_versions), `api_base_url`, `transports`, and `capabilities.services`.
+- **ACP mandatory Idempotency-Key**: Every mutating ACP POST route now requires a non-empty `Idempotency-Key` header, returning `400` with `code: idempotency_key_required` when missing or blank.
+
+### Changed
+
+- **Conformance matrix**: Added a Fulfillment (UCP) section; ACP section gains required rows for Idempotency-Key, Cart Capability, and Discovery, plus explicit `not_supported_yet` rows for Native Orders enrichment, Delegate Authentication, and the ACP MCP transport binding.
+- **Release baseline**: Version and conformance documentation now target `v0.8.0`.
+
 ## [0.7.0] - 2026-08-03
 
 ### Added
@@ -149,6 +163,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - File-backed persistence is directory-based JSON; not suitable for high concurrency without external locking.
 
+[0.8.0]: https://github.com/AncientiCe/commerce-orchestrator-api/releases/tag/v0.8.0
 [0.7.0]: https://github.com/AncientiCe/commerce-orchestrator-api/releases/tag/v0.7.0
 [0.6.0]: https://github.com/AncientiCe/commerce-orchestrator-api/releases/tag/v0.6.0
 [0.5.0]: https://github.com/AncientiCe/commerce-orchestrator-api/releases/tag/v0.5.0

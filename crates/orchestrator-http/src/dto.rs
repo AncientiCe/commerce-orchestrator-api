@@ -5,8 +5,12 @@ use orchestrator_core::contract::{
     CartLineProjection, CartProjection, CartStatus, CheckoutRequest, CreateCartPayload,
     CustomerHint, GetCartPayload, LocationHint, OrderAdjustment, OrderEvent, OrderRecord,
     OrderStatus, PaymentIntent, PaymentLifecycleRequest, PaymentMethodType, PaymentState,
-    RemoveItemPayload, StartCheckoutPayload, TransactionResult, TransactionStatus,
-    UpdateItemQtyPayload,
+    RemoveItemPayload, SetFulfillmentSelectionPayload, StartCheckoutPayload, TransactionResult,
+    TransactionStatus, UpdateItemQtyPayload,
+};
+use orchestrator_core::fulfillment::{
+    FulfillmentDestination, FulfillmentGroup, FulfillmentMethod, FulfillmentMethodType,
+    FulfillmentOption, FulfillmentState, PostalAddress,
 };
 use orchestrator_core::{UCP_LATEST_VERSION, UCP_SUPPORTED_VERSIONS};
 use serde::{Deserialize, Serialize};
@@ -683,8 +687,12 @@ pub struct UcpCartResponseDto {
     pub line_items: Vec<UcpCartLineDto>,
     pub subtotal_minor: i64,
     pub tax_minor: i64,
+    #[serde(default)]
+    pub fulfillment_minor: i64,
     pub total_minor: i64,
     pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fulfillment: Option<UcpFulfillmentDto>,
 }
 
 impl From<CartProjection> for UcpCartResponseDto {
@@ -697,15 +705,227 @@ impl From<CartProjection> for UcpCartResponseDto {
         }
         .to_string();
         Self {
-            ucp: UcpEnvelopeDto::for_capabilities(&["dev.ucp.shopping.cart"]),
+            ucp: UcpEnvelopeDto::for_capabilities(&[
+                "dev.ucp.shopping.cart",
+                "dev.ucp.shopping.fulfillment",
+            ]),
             id: cart.cart_id.0.to_string(),
             version: cart.version,
             currency: cart.currency,
             line_items: cart.lines.into_iter().map(UcpCartLineDto::from).collect(),
             subtotal_minor: cart.subtotal_minor,
             tax_minor: cart.tax_minor,
+            fulfillment_minor: cart.fulfillment_minor,
             total_minor: cart.total_minor,
             status,
+            fulfillment: cart.fulfillment.map(UcpFulfillmentDto::from),
+        }
+    }
+}
+
+// ---- UCP Fulfillment extension (dev.ucp.shopping.fulfillment) ----
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum UcpFulfillmentMethodTypeDto {
+    Shipping,
+    Pickup,
+}
+
+impl From<FulfillmentMethodType> for UcpFulfillmentMethodTypeDto {
+    fn from(method_type: FulfillmentMethodType) -> Self {
+        match method_type {
+            FulfillmentMethodType::Shipping => Self::Shipping,
+            FulfillmentMethodType::Pickup => Self::Pickup,
+            _ => Self::Shipping,
+        }
+    }
+}
+
+impl From<UcpFulfillmentMethodTypeDto> for FulfillmentMethodType {
+    fn from(dto: UcpFulfillmentMethodTypeDto) -> Self {
+        match dto {
+            UcpFulfillmentMethodTypeDto::Shipping => Self::Shipping,
+            UcpFulfillmentMethodTypeDto::Pickup => Self::Pickup,
+        }
+    }
+}
+
+/// Destination request fields. For `method_type: shipping`, address fields describe the
+/// shipping address. For `method_type: pickup`, `name` identifies the retail location.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
+pub struct UcpFulfillmentDestinationRequestDto {
+    pub id: String,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub street_address: Option<String>,
+    #[serde(default)]
+    pub extended_address: Option<String>,
+    #[serde(default)]
+    pub address_locality: Option<String>,
+    #[serde(default)]
+    pub address_region: Option<String>,
+    #[serde(default)]
+    pub address_country: Option<String>,
+    #[serde(default)]
+    pub postal_code: Option<String>,
+    #[serde(default)]
+    pub first_name: Option<String>,
+    #[serde(default)]
+    pub last_name: Option<String>,
+    #[serde(default)]
+    pub phone_number: Option<String>,
+}
+
+impl From<&UcpFulfillmentDestinationRequestDto> for PostalAddress {
+    fn from(dto: &UcpFulfillmentDestinationRequestDto) -> Self {
+        Self {
+            extended_address: dto.extended_address.clone(),
+            street_address: dto.street_address.clone(),
+            address_locality: dto.address_locality.clone(),
+            address_region: dto.address_region.clone(),
+            address_country: dto.address_country.clone(),
+            postal_code: dto.postal_code.clone(),
+            first_name: dto.first_name.clone(),
+            last_name: dto.last_name.clone(),
+            phone_number: dto.phone_number.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct UcpFulfillmentSelectionRequestDto {
+    pub method_type: UcpFulfillmentMethodTypeDto,
+    /// Line items this selection covers; empty/omitted means all current cart lines.
+    #[serde(default)]
+    pub line_item_ids: Vec<String>,
+    pub destination: UcpFulfillmentDestinationRequestDto,
+    /// Option id to select immediately; omit to quote options without selecting one.
+    #[serde(default)]
+    pub selected_option_id: Option<String>,
+}
+
+impl TryFrom<UcpFulfillmentSelectionRequestDto> for SetFulfillmentSelectionPayload {
+    type Error = String;
+
+    fn try_from(dto: UcpFulfillmentSelectionRequestDto) -> Result<Self, Self::Error> {
+        let method_type: FulfillmentMethodType = dto.method_type.into();
+        let destination = match method_type {
+            FulfillmentMethodType::Pickup => FulfillmentDestination::Retail {
+                id: dto.destination.id.clone(),
+                name: dto
+                    .destination
+                    .name
+                    .clone()
+                    .ok_or_else(|| "destination.name is required for pickup".to_string())?,
+                address: Some(PostalAddress::from(&dto.destination)),
+            },
+            FulfillmentMethodType::Shipping => FulfillmentDestination::Shipping {
+                id: dto.destination.id.clone(),
+                address: PostalAddress::from(&dto.destination),
+            },
+            _ => FulfillmentDestination::Shipping {
+                id: dto.destination.id.clone(),
+                address: PostalAddress::from(&dto.destination),
+            },
+        };
+        Ok(SetFulfillmentSelectionPayload {
+            method_type,
+            line_item_ids: dto.line_item_ids,
+            destination,
+            selected_option_id: dto.selected_option_id,
+        })
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct UcpFulfillmentOptionDto {
+    pub id: String,
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub carrier: Option<String>,
+    pub amount_minor: i64,
+}
+
+impl From<FulfillmentOption> for UcpFulfillmentOptionDto {
+    fn from(option: FulfillmentOption) -> Self {
+        Self {
+            id: option.id,
+            title: option.title,
+            description: option.description,
+            carrier: option.carrier,
+            amount_minor: option.amount_minor,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct UcpFulfillmentGroupDto {
+    pub id: String,
+    pub line_item_ids: Vec<String>,
+    pub options: Vec<UcpFulfillmentOptionDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected_option_id: Option<String>,
+}
+
+impl From<FulfillmentGroup> for UcpFulfillmentGroupDto {
+    fn from(group: FulfillmentGroup) -> Self {
+        Self {
+            id: group.id,
+            line_item_ids: group.line_item_ids,
+            options: group
+                .options
+                .into_iter()
+                .map(UcpFulfillmentOptionDto::from)
+                .collect(),
+            selected_option_id: group.selected_option_id,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct UcpFulfillmentMethodDto {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub method_type: UcpFulfillmentMethodTypeDto,
+    pub line_item_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected_destination_id: Option<String>,
+    pub groups: Vec<UcpFulfillmentGroupDto>,
+}
+
+impl From<FulfillmentMethod> for UcpFulfillmentMethodDto {
+    fn from(method: FulfillmentMethod) -> Self {
+        Self {
+            id: method.id,
+            method_type: method.method_type.into(),
+            line_item_ids: method.line_item_ids,
+            selected_destination_id: method.selected_destination_id,
+            groups: method
+                .groups
+                .into_iter()
+                .map(UcpFulfillmentGroupDto::from)
+                .collect(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct UcpFulfillmentDto {
+    pub methods: Vec<UcpFulfillmentMethodDto>,
+}
+
+impl From<FulfillmentState> for UcpFulfillmentDto {
+    fn from(state: FulfillmentState) -> Self {
+        Self {
+            methods: state
+                .methods
+                .into_iter()
+                .map(UcpFulfillmentMethodDto::from)
+                .collect(),
         }
     }
 }

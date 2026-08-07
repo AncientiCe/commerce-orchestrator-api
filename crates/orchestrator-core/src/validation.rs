@@ -69,6 +69,17 @@ pub fn validate_cart_command(cmd: &CartCommand) -> ValidationResult {
                 errors.push("adjustment code required".to_string());
             }
         }
+        CartCommand::SetFulfillmentSelection(p) => {
+            if p.destination.id().is_empty() {
+                errors.push("fulfillment destination id required".to_string());
+            }
+            if let crate::fulfillment::FulfillmentDestination::Retail { name, .. } = &p.destination
+            {
+                if name.trim().is_empty() {
+                    errors.push("retail location name required".to_string());
+                }
+            }
+        }
     }
     if errors.is_empty() {
         ValidationResult::ok()

@@ -31,6 +31,11 @@ pub enum ApiError {
     #[error("invalid request: {0}")]
     BadRequest(String),
 
+    /// Bad request with an explicit, protocol-defined error code (e.g. ACP `idempotency_key_required`)
+    /// that must be preserved verbatim in the response body rather than mapped to a generic code.
+    #[error("invalid request: {0}")]
+    BadRequestWithCode(String, String),
+
     #[error("unauthorized")]
     Unauthorized,
 
@@ -53,6 +58,9 @@ impl IntoResponse for ApiError {
         let (status, code, message): (StatusCode, String, String) = match &self {
             ApiError::BadRequest(msg) => {
                 (StatusCode::BAD_REQUEST, "BAD_REQUEST".into(), msg.clone())
+            }
+            ApiError::BadRequestWithCode(msg, code) => {
+                (StatusCode::BAD_REQUEST, code.clone(), msg.clone())
             }
             ApiError::Unauthorized => (
                 StatusCode::UNAUTHORIZED,

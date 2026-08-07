@@ -33,6 +33,8 @@ fn minimal_cart() -> CartProjection {
         total_minor: 1000,
         geo_ok: false,
         status: CartStatus::Draft,
+        fulfillment: None,
+        fulfillment_minor: 0,
     }
 }
 
@@ -258,6 +260,7 @@ async fn receipt_generate_returns_content() {
             subtotal_minor: 1000,
             tax_minor: 80,
             discount_minor: 0,
+            fulfillment_minor: 0,
             total_minor: 1080,
         },
         payment_reference: Some("ref".to_string()),

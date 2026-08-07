@@ -26,7 +26,7 @@ Before cutting a release (e.g. GitHub tag and release notes), complete the follo
 
 ## Release
 
-- [ ] Create and push tag (e.g. `v0.7.0`): `git tag v0.7.0` then `git push origin v0.7.0`.
+- [ ] Create and push tag (e.g. `v0.8.0`): `git tag v0.8.0` then `git push origin v0.8.0`.
 - [ ] Create GitHub release with notes from `CHANGELOG.md` and attach any artifacts if applicable.
 - [ ] For source-only release: no crates.io publish; document the tag and “Install from source” in the release notes.
 

@@ -250,6 +250,8 @@ impl Runner {
                     total_minor: 0,
                     geo_ok: true,
                     status: CartStatus::Draft,
+                    fulfillment: None,
+                    fulfillment_minor: 0,
                 };
                 self.event_store
                     .append_cart_event(
@@ -358,6 +360,84 @@ impl Runner {
                     CartStreamEvent::AdjustmentApplied { code: payload.code },
                 )
                 .await
+            }
+            CartCommand::SetFulfillmentSelection(payload) => {
+                let id = cart_id.ok_or(RunnerError::MissingCartId)?;
+                let mut projection = self
+                    .event_store
+                    .get_cart_snapshot(&id)
+                    .await
+                    .ok_or(RunnerError::CartNotFound)?;
+                let line_item_ids = if payload.line_item_ids.is_empty() {
+                    projection
+                        .lines
+                        .iter()
+                        .map(|l| l.line_id.clone())
+                        .collect::<Vec<_>>()
+                } else {
+                    for line_id in &payload.line_item_ids {
+                        if !projection.lines.iter().any(|l| &l.line_id == line_id) {
+                            return Err(RunnerError::LineNotFound);
+                        }
+                    }
+                    payload.line_item_ids.clone()
+                };
+
+                let options =
+                    orchestrator_core::fulfillment::default_options_for_method(payload.method_type);
+                if let Some(selected) = payload.selected_option_id.as_ref() {
+                    if !options.iter().any(|o| &o.id == selected) {
+                        return Err(RunnerError::FulfillmentOptionNotFound);
+                    }
+                }
+                let selected_amount = payload
+                    .selected_option_id
+                    .as_ref()
+                    .and_then(|selected| options.iter().find(|o| &o.id == selected))
+                    .map(|o| o.amount_minor)
+                    .unwrap_or(0);
+
+                let group = orchestrator_core::fulfillment::FulfillmentGroup {
+                    id: format!("fg_{}", Uuid::new_v4()),
+                    line_item_ids: line_item_ids.clone(),
+                    options,
+                    selected_option_id: payload.selected_option_id.clone(),
+                };
+                let method = orchestrator_core::fulfillment::FulfillmentMethod {
+                    id: format!("fm_{}", Uuid::new_v4()),
+                    method_type: payload.method_type,
+                    line_item_ids,
+                    selected_destination_id: Some(payload.destination.id().to_string()),
+                    destinations: vec![payload.destination.clone()],
+                    groups: vec![group],
+                };
+
+                let mut state = projection.fulfillment.take().unwrap_or_default();
+                state
+                    .methods
+                    .retain(|m| m.method_type != payload.method_type);
+                state.methods.push(method);
+                projection.fulfillment = Some(state);
+                projection.fulfillment_minor = selected_amount;
+                projection.total_minor =
+                    projection.subtotal_minor + projection.tax_minor + projection.fulfillment_minor;
+                projection.version += 1;
+
+                self.event_store
+                    .append_cart_event(
+                        id,
+                        CartStreamEvent::FulfillmentSelected {
+                            method_type: payload.method_type,
+                            selected_option_id: payload.selected_option_id.clone(),
+                            amount_minor: selected_amount,
+                        },
+                    )
+                    .await?;
+                self.event_store
+                    .put_cart_snapshot(projection.clone())
+                    .await?;
+                orchestrator_observability::incr("cart_fulfillment_selection_total");
+                Ok(projection)
             }
             CartCommand::GetCart(payload) => self
                 .event_store
@@ -475,6 +555,7 @@ impl Runner {
                     subtotal_minor: cart.subtotal_minor,
                     tax_minor: cart.tax_minor,
                     discount_minor: 0,
+                    fulfillment_minor: cart.fulfillment_minor,
                     total_minor: cart.total_minor,
                 },
                 payment_reference: None,
@@ -503,6 +584,7 @@ impl Runner {
                     subtotal_minor: cart.subtotal_minor,
                     tax_minor: cart.tax_minor,
                     discount_minor: 0,
+                    fulfillment_minor: cart.fulfillment_minor,
                     total_minor: cart.total_minor,
                 },
                 payment_reference: Some(auth.reference),
@@ -557,6 +639,7 @@ impl Runner {
                     subtotal_minor: cart.subtotal_minor,
                     tax_minor: cart.tax_minor,
                     discount_minor: 0,
+                    fulfillment_minor: cart.fulfillment_minor,
                     total_minor: cart.total_minor,
                 },
                 events: vec![OrderEvent {
@@ -585,6 +668,7 @@ impl Runner {
                 subtotal_minor: cart.subtotal_minor,
                 tax_minor: cart.tax_minor,
                 discount_minor: 0,
+                fulfillment_minor: cart.fulfillment_minor,
                 total_minor: cart.total_minor,
             },
             payment_reference: committed.payment_reference,
@@ -890,7 +974,8 @@ impl Runner {
 
         let tax = self.providers.tax.resolve_tax(&projection).await?;
         projection.tax_minor = tax.total_tax_minor;
-        projection.total_minor = projection.subtotal_minor + projection.tax_minor;
+        projection.total_minor =
+            projection.subtotal_minor + projection.tax_minor + projection.fulfillment_minor;
         self.transition_cart(cart_id, CartEvent::TaxResolved)
             .await?;
         self.event_store
@@ -978,6 +1063,8 @@ pub enum RunnerError {
     CartNotFound,
     #[error("cart line was not found")]
     LineNotFound,
+    #[error("fulfillment option was not found")]
+    FulfillmentOptionNotFound,
     #[error("request validation failed: {0:?}")]
     Validation(Vec<String>),
     #[error("idempotent request is currently in-flight")]

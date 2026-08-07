@@ -496,6 +496,7 @@ fn cart_command_operation(cmd: &CartCommand) -> &'static str {
         CartCommand::GetCart(_) => "cart_get",
         CartCommand::StartCheckout(_) => "cart_start_checkout",
         CartCommand::CancelCart(_) => "cart_cancel",
+        CartCommand::SetFulfillmentSelection(_) => "cart_set_fulfillment",
         _ => "cart_unknown",
     }
 }

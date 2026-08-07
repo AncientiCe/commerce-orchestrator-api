@@ -90,6 +90,11 @@ impl CapabilityManifest {
                     extends: Some(CapabilityId("dev.ucp.shopping.checkout".to_string())),
                 },
                 CapabilityDescriptor {
+                    id: CapabilityId("dev.ucp.shopping.fulfillment".to_string()),
+                    version: version.to_string(),
+                    extends: Some(CapabilityId("dev.ucp.shopping.checkout".to_string())),
+                },
+                CapabilityDescriptor {
                     id: CapabilityId("dev.ucp.identity.linking".to_string()),
                     version: version.to_string(),
                     extends: None,

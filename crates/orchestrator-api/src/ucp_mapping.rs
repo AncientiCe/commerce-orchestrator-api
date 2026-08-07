@@ -87,6 +87,7 @@ pub fn build_well_known_manifest_with_version(
                 ("dev.ucp.shopping.payment_handlers".to_string(), true),
                 ("dev.ucp.security.signatures".to_string(), true),
                 ("dev.ucp.shopping.checkout.embedded".to_string(), true),
+                ("dev.ucp.shopping.fulfillment".to_string(), true),
             ])),
             signing_keys: Some(default_signing_keys()),
             payment_handlers: Some(default_payment_handlers()),
@@ -177,6 +178,18 @@ fn core_capabilities(version: &str) -> BTreeMap<String, Vec<UcpCapabilityBinding
                 version,
                 "checkout/discounts",
                 "shopping/discount.json",
+                Some(vec![
+                    "dev.ucp.shopping.checkout".to_string(),
+                    "dev.ucp.shopping.cart".to_string(),
+                ]),
+            )],
+        ),
+        (
+            "dev.ucp.shopping.fulfillment".to_string(),
+            vec![capability(
+                version,
+                "fulfillment",
+                "shopping/fulfillment.json",
                 Some(vec![
                     "dev.ucp.shopping.checkout".to_string(),
                     "dev.ucp.shopping.cart".to_string(),

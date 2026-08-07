@@ -1,5 +1,6 @@
 //! Cart stream event types for event sourcing.
 
+use orchestrator_core::fulfillment::FulfillmentMethodType;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -22,6 +23,11 @@ pub enum CartStreamEvent {
     },
     AdjustmentApplied {
         code: String,
+    },
+    FulfillmentSelected {
+        method_type: FulfillmentMethodType,
+        selected_option_id: Option<String>,
+        amount_minor: i64,
     },
     Repriced,
     Retaxed {

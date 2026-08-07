@@ -8,7 +8,7 @@ use crate::dto::*;
 #[openapi(
     info(
         title = "Commerce Orchestrator API",
-        version = "0.7.0",
+        version = "0.8.0",
         description = "REST API surface for cart orchestration and checkout."
     ),
     components(schemas(

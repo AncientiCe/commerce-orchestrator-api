@@ -23,6 +23,7 @@ See [consumer-integration.md](consumer-integration.md) for the high-level integr
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/.well-known/ucp` | Capability discovery. Defaults to UCP `2026-04-08` with profile-shaped `services` and `capabilities`; `?ucp_version=2026-01-23` and `?ucp_version=2026-01-11` return compatible legacy manifests. No auth required. |
+| `GET` | `/.well-known/acp.json` | ACP discovery document: `protocol` (name/version/supported_versions), `api_base_url`, `transports`, and `capabilities.services` (`checkout`, `carts`, `delegate_payment`). No auth required. |
 
 ### Cart and checkout
 
@@ -33,20 +34,26 @@ See [consumer-integration.md](consumer-integration.md) for the high-level integr
 | `GET` | `/api/v1/ucp/cart/:id` | UCP-native cart lookup. |
 | `PUT` | `/api/v1/ucp/cart/:id` | UCP-native cart line replacement/update. |
 | `POST` | `/api/v1/ucp/cart/:id/cancel` | UCP-native backed cart cancellation. |
+| `POST` | `/api/v1/ucp/cart/:id/fulfillment` | UCP fulfillment extension (`dev.ucp.shopping.fulfillment`): quote shipping/pickup options for a destination, or select one. Returns the UCP cart envelope with `fulfillment` and `fulfillment_minor`. |
 | `POST` | `/api/v1/ucp/checkout` | UCP checkout session create (cart + start_checkout). |
 | `GET` | `/api/v1/ucp/checkout/:id` | UCP checkout session lookup. |
 | `PUT` | `/api/v1/ucp/checkout/:id` | UCP checkout session line update. |
 | `POST` | `/api/v1/ucp/checkout/:id/complete` | Complete UCP checkout (execute checkout). |
 | `POST` | `/api/v1/ucp/checkout/:id/cancel` | Cancel UCP checkout session. |
 | `POST` | `/api/v1/ucp/checkout/:id/embedded-link` | UCP embedded transport: returns a short-lived, signed handoff URL (`embedded_url`, `checkout_session_id`, `expires_at`) for completing checkout on the merchant's hosted embedded surface. 404 if the checkout does not exist. |
+| `POST` | `/api/v1/ucp/checkout/:id/fulfillment` | UCP fulfillment extension for a checkout session; same request/response shape as the cart fulfillment endpoint. |
 | `GET` | `/api/v1/ucp/payment-handlers` | List configured payment handlers. |
 | `GET` | `/api/v1/ucp/payment-handlers/:id` | Get a payment handler by id. |
-| `POST` | `/api/v1/acp/checkout_sessions` | ACP create checkout session. Requires `API-Version: 2026-04-17`. |
+| `POST` | `/api/v1/acp/checkout_sessions` | ACP create checkout session. Requires `API-Version: 2026-04-17` and `Idempotency-Key`. |
 | `GET` | `/api/v1/acp/checkout_sessions/:id` | ACP get checkout session. |
 | `PUT` | `/api/v1/acp/checkout_sessions/:id` | ACP update checkout session lines. |
-| `POST` | `/api/v1/acp/checkout_sessions/:id/complete` | ACP complete session (checkout execute). |
-| `POST` | `/api/v1/acp/checkout_sessions/:id/cancel` | ACP cancel session. |
-| `POST` | `/api/v1/acp/delegate_payment` | ACP delegate payment token exchange. |
+| `POST` | `/api/v1/acp/checkout_sessions/:id/complete` | ACP complete session (checkout execute). Requires `Idempotency-Key`. |
+| `POST` | `/api/v1/acp/checkout_sessions/:id/cancel` | ACP cancel session. Requires `Idempotency-Key`. |
+| `POST` | `/api/v1/acp/delegate_payment` | ACP delegate payment token exchange. Requires `Idempotency-Key`. |
+| `POST` | `/api/v1/acp/carts` | ACP Cart capability: create a pre-checkout cart. Requires `API-Version: 2026-04-17` and `Idempotency-Key`. |
+| `GET` | `/api/v1/acp/carts/:id` | ACP get cart. |
+| `PUT` | `/api/v1/acp/carts/:id` | ACP update cart lines. |
+| `POST` | `/api/v1/acp/carts/:id/cancel` | ACP cancel cart. Requires `Idempotency-Key`. |
 | `POST` | `/api/v1/checkout/execute` | Execute checkout for a cart. Body: `CheckoutRequestDto`. Requires auth in production. |
 | `POST` | `/api/v1/a2a/checkout` | A2A envelope checkout. Send `A2A-Version: 1.0` (or `0.3`). |
 | `POST` | `/api/v1/a2a/cart` | A2A envelope cart command. Send `A2A-Version: 1.0` (or `0.3`). |
@@ -126,6 +133,32 @@ MPP note:
 
 **Response (success):** Transaction result with `transaction_id`, `status`, `totals_breakdown`, `payment_reference`, `receipt_payload`, `correlation_id`, `payment_state`, `order_id`.
 
+### Fulfillment selection (POST /api/v1/ucp/cart/:id/fulfillment)
+
+**Request:** `method_type` (`shipping` or `pickup`), `destination`, optional `line_item_ids` (defaults to all lines), optional `selected_option_id`.
+
+- Shipping destination: `{ "id": "dest_1", "street_address": "...", "address_locality": "...", "address_region": "...", "address_country": "...", "postal_code": "..." }`.
+- Pickup (retail) destination: `{ "id": "dest_1", "name": "<store name>" }`.
+
+Calling without `selected_option_id` returns quoted options for the method type without changing `total_minor`. Calling again with `selected_option_id` set to one of the quoted option ids selects it, adds its `amount_minor` to `total_minor` via `fulfillment_minor`, and replaces any prior selection for that method type.
+
+```json
+{
+  "method_type": "shipping",
+  "destination": {
+    "id": "dest_1",
+    "street_address": "1 Market St",
+    "address_locality": "San Francisco",
+    "address_region": "CA",
+    "address_country": "US",
+    "postal_code": "94105"
+  },
+  "selected_option_id": "express"
+}
+```
+
+**Response (success):** UCP cart envelope including `fulfillment.methods[].groups[].options` (quoted options with `amount_minor`) and `fulfillment.methods[].groups[].selected_option_id` once selected. Selecting an option id that was not part of the quoted set returns an error rather than a silent no-op.
+
 ### Identity linking (POST /api/v1/a2a/identity/link)
 
 **Request:** A2A envelope with `capability` and `payload`:
@@ -152,6 +185,8 @@ Failed requests return JSON:
 ```
 
 Common codes: `BAD_REQUEST`, `UNAUTHORIZED`, `FORBIDDEN`, `NOT_FOUND`, `VALIDATION_ERROR`, `IDEMPOTENCY_CONFLICT`, `PAYMENT_ERROR`, `STORE_ERROR`, `RUNNER_ERROR`. Use the HTTP status code (4xx/5xx) and `code` for handling.
+
+ACP-specific: every mutating ACP POST route (`checkout_sessions` create/complete/cancel, `delegate_payment`, `carts` create/cancel) requires a non-empty `Idempotency-Key` header; a missing or blank header returns `400` with `code: idempotency_key_required`.
 
 ---
 

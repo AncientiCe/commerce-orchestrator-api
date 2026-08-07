@@ -1,5 +1,6 @@
 //! Cart and transaction request/response contracts.
 
+use crate::fulfillment::{FulfillmentDestination, FulfillmentMethodType, FulfillmentState};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -15,6 +16,7 @@ pub enum CartCommand {
     GetCart(GetCartPayload),
     StartCheckout(StartCheckoutPayload),
     CancelCart(CancelCartPayload),
+    SetFulfillmentSelection(Box<SetFulfillmentSelectionPayload>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -59,6 +61,20 @@ pub struct StartCheckoutPayload {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CancelCartPayload {
     pub cart_id: CartId,
+}
+
+/// Select a shipping/pickup destination and (optionally) a quoted fulfillment option for a set
+/// of line items. Part of the UCP fulfillment extension (`dev.ucp.shopping.fulfillment`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SetFulfillmentSelectionPayload {
+    pub method_type: FulfillmentMethodType,
+    /// Line items this selection covers; empty means all current cart lines.
+    #[serde(default)]
+    pub line_item_ids: Vec<String>,
+    pub destination: FulfillmentDestination,
+    /// Option id to select immediately; `None` returns quotes without selecting one.
+    #[serde(default)]
+    pub selected_option_id: Option<String>,
 }
 
 /// Cart/checkout identifier.
@@ -139,6 +155,12 @@ pub struct CartProjection {
     pub total_minor: i64,
     pub geo_ok: bool,
     pub status: CartStatus,
+    /// UCP fulfillment extension state (shipping/pickup methods, destinations, options).
+    #[serde(default)]
+    pub fulfillment: Option<FulfillmentState>,
+    /// Amount of the currently selected fulfillment option, included in `total_minor`.
+    #[serde(default)]
+    pub fulfillment_minor: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -254,6 +276,8 @@ pub struct TotalsBreakdown {
     pub subtotal_minor: i64,
     pub tax_minor: i64,
     pub discount_minor: i64,
+    #[serde(default)]
+    pub fulfillment_minor: i64,
     pub total_minor: i64,
 }
 

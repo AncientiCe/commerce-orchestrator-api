@@ -1,7 +1,11 @@
 use orchestrator_api::OrchestratorFacade;
 use orchestrator_core::contract::{
     AddItemPayload, ApplyAdjustmentPayload, CartCommand, CheckoutRequest, CreateCartPayload,
-    PaymentIntent, PaymentLifecycleRequest, StartCheckoutPayload, TransactionStatus,
+    PaymentIntent, PaymentLifecycleRequest, SetFulfillmentSelectionPayload, StartCheckoutPayload,
+    TransactionStatus,
+};
+use orchestrator_core::fulfillment::{
+    FulfillmentDestination, FulfillmentMethodType, PostalAddress,
 };
 use orchestrator_core::policy::PolicyEngine;
 use provider_contracts::CatalogItem;
@@ -412,6 +416,132 @@ async fn apply_adjustment_reprices_and_updates_cart_version() {
         .expect("apply adjustment");
     assert_eq!(adjusted.version, with_item.version + 1);
     assert!(adjusted.total_minor >= 0);
+}
+
+#[tokio::test]
+async fn set_fulfillment_selection_quotes_and_selects_shipping_option() {
+    let facade = build_facade();
+    let created = facade
+        .dispatch_cart_command(
+            CartCommand::CreateCart(CreateCartPayload {
+                merchant_id: "merchant_1".to_string(),
+                currency: "USD".to_string(),
+            }),
+            None,
+        )
+        .await
+        .expect("create cart");
+    let with_item = facade
+        .dispatch_cart_command(
+            CartCommand::AddItem(AddItemPayload {
+                item_id: "item_1".to_string(),
+                quantity: 1,
+            }),
+            Some(created.cart_id),
+        )
+        .await
+        .expect("add item");
+
+    let quoted = facade
+        .dispatch_cart_command(
+            CartCommand::SetFulfillmentSelection(Box::new(SetFulfillmentSelectionPayload {
+                method_type: FulfillmentMethodType::Shipping,
+                line_item_ids: Vec::new(),
+                destination: FulfillmentDestination::Shipping {
+                    id: "dest_1".to_string(),
+                    address: PostalAddress {
+                        street_address: Some("1 Market St".to_string()),
+                        address_locality: Some("San Francisco".to_string()),
+                        address_region: Some("CA".to_string()),
+                        address_country: Some("US".to_string()),
+                        postal_code: Some("94105".to_string()),
+                        ..Default::default()
+                    },
+                },
+                selected_option_id: None,
+            })),
+            Some(with_item.cart_id),
+        )
+        .await
+        .expect("quote fulfillment");
+    let fulfillment = quoted.fulfillment.as_ref().expect("fulfillment state");
+    assert_eq!(fulfillment.methods.len(), 1);
+    let method = &fulfillment.methods[0];
+    assert_eq!(method.method_type, FulfillmentMethodType::Shipping);
+    let group = &method.groups[0];
+    assert_eq!(group.options.len(), 2);
+    assert_eq!(group.selected_option_id, None);
+    assert_eq!(quoted.fulfillment_minor, 0);
+    assert_eq!(quoted.total_minor, with_item.total_minor);
+
+    let selected = facade
+        .dispatch_cart_command(
+            CartCommand::SetFulfillmentSelection(Box::new(SetFulfillmentSelectionPayload {
+                method_type: FulfillmentMethodType::Shipping,
+                line_item_ids: Vec::new(),
+                destination: FulfillmentDestination::Shipping {
+                    id: "dest_1".to_string(),
+                    address: PostalAddress::default(),
+                },
+                selected_option_id: Some("express".to_string()),
+            })),
+            Some(with_item.cart_id),
+        )
+        .await
+        .expect("select fulfillment option");
+    assert_eq!(selected.fulfillment_minor, 1_000);
+    assert_eq!(
+        selected.total_minor,
+        with_item.total_minor + 1_000,
+        "total must include the selected fulfillment option amount"
+    );
+    let selected_method = &selected.fulfillment.as_ref().unwrap().methods[0];
+    assert_eq!(
+        selected_method.groups[0].selected_option_id.as_deref(),
+        Some("express")
+    );
+}
+
+#[tokio::test]
+async fn set_fulfillment_selection_rejects_unknown_option() {
+    let facade = build_facade();
+    let created = facade
+        .dispatch_cart_command(
+            CartCommand::CreateCart(CreateCartPayload {
+                merchant_id: "merchant_1".to_string(),
+                currency: "USD".to_string(),
+            }),
+            None,
+        )
+        .await
+        .expect("create cart");
+    let with_item = facade
+        .dispatch_cart_command(
+            CartCommand::AddItem(AddItemPayload {
+                item_id: "item_1".to_string(),
+                quantity: 1,
+            }),
+            Some(created.cart_id),
+        )
+        .await
+        .expect("add item");
+
+    let err = facade
+        .dispatch_cart_command(
+            CartCommand::SetFulfillmentSelection(Box::new(SetFulfillmentSelectionPayload {
+                method_type: FulfillmentMethodType::Shipping,
+                line_item_ids: Vec::new(),
+                destination: FulfillmentDestination::Shipping {
+                    id: "dest_1".to_string(),
+                    address: PostalAddress::default(),
+                },
+                selected_option_id: Some("does-not-exist".to_string()),
+            })),
+            Some(with_item.cart_id),
+        )
+        .await
+        .expect_err("unknown fulfillment option must fail");
+    assert!(format!("{}", err).contains("fulfillment"));
 }
 
 #[tokio::test]
