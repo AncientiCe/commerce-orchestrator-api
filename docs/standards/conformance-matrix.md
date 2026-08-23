@@ -22,10 +22,13 @@ Status values: **required** (must pass for claimed alignment), **optional** (sup
 | Capability | Status | Acceptance Criteria | Evidence |
 |-------------|--------|---------------------|----------|
 | Well-known discovery endpoint | required | Default `GET /.well-known/ucp` returns `2026-04-08` with profile-shaped `services` and `capabilities`; legacy `ucp_version` requests return compatible manifest shape | `orchestrator_http::discovery` tests, production config tests |
-| Capability IDs | required | Latest profile advertises checkout, cart, catalog.lookup/search, order, discount, identity_linking, and payment_handlers | Same |
+| Capability IDs | required | Latest profile advertises checkout, cart, catalog.lookup/search, order, discount, and payment_handlers; identity_linking appears only when an identity provider is configured | Same; `honest_discovery_test::discovery_hides_identity_linking_until_a_provider_is_configured` |
 | Multi-parent extensions | required | `dev.ucp.shopping.discount` extends both checkout and cart in the latest profile | discovery tests |
 | Advertised capabilities map to implemented routes | required | Every latest advertised capability has a corresponding executable REST, A2A, or MCP operation | Conformance test: capability_route_parity |
-| Signing keys advertisement | required | Discovery includes root-level `signing_keys` JWKs; optional `UCP-Signature` verification when `UCP_SIGNING_SECRET` is set | discovery tests; `verify_ucp_request_signature` |
+| Signing keys advertisement | required | Discovery publishes the operator's real Ed25519 public JWKs in root-level `signing_keys` and sets `dev.ucp.security.signatures` only when signing material is configured; an unsigned deployment advertises neither | `discovery_test::discovery_advertises_acp_signing_and_payment_handlers`, `discovery_test::discovery_omits_signing_keys_when_no_keyring_is_configured`; `orchestrator_api::SigningKeyring` |
+| Response signing | required | Every response carries `Signature: kid=…,alg="ed25519",sig=…` and `Timestamp`, computed over status, timestamp, and body digest, verifiable with the advertised JWK | `ucp_signature_test::responses_are_signed_with_the_active_key`, `ucp_signature_test::rejections_are_signed_too_so_clients_can_trust_them` |
+| Request signature verification | required | With `UCP_AGENT_KEYS` configured, `/api/v1` requests must carry a valid Ed25519 signature over method, path, timestamp, and body within a 300s window; failures return `401` with a specific `SIGNATURE_*` code | `ucp_signature_test` suite; `orchestrator_api::VerifyingKeyring` |
+| Key rotation by `kid` | required | Both signing and verification accept a retired and a current `kid` simultaneously (`UCP_SIGNING_PREVIOUS_KEYS`, multiple `UCP_AGENT_KEYS`) so counterparties can switch without downtime | `ucp_signing::both_keys_verify_during_a_kid_rotation`, `ucp_signature_test::both_kids_are_accepted_during_rotation` |
 | Embedded transport | required | Shopping services advertise a `transport: embedded` binding and `dev.ucp.shopping.checkout.embedded` capability flag; `POST /api/v1/ucp/checkout/:id/embedded-link` returns a short-lived, signed handoff URL for merchant-hosted embedded checkout (404 for an unknown checkout) | discovery tests: `well_known_ucp_advertises_embedded_transport`, `ucp_checkout_embedded_link_returns_signed_handoff_url`, `ucp_checkout_embedded_link_returns_404_for_unknown_checkout`; `orchestrator_api::build_embedded_checkout_link` |
 
 ### Fulfillment (UCP)
@@ -48,7 +51,7 @@ Status values: **required** (must pass for claimed alignment), **optional** (sup
 | Checkout execute | required | POST /api/v1/checkout/execute with cart_id, cart_version, payment_intent, idempotency_key returns transaction result | happy_path, authz tests |
 | Payment lifecycle | required | POST /api/v1/payments/{capture,void,refund} with tenant_id, transaction_id, idempotency_key | API tests |
 | Payment-handler registry | required | Discovery advertises handlers; `GET /api/v1/ucp/payment-handlers` lists/gets configured handlers | discovery tests |
-| Auth and tenant isolation | required | Bearer auth in production; tenant_id and scope checks; cross-tenant idempotency isolation | authz_and_adapters, cross_tenant_idempotency |
+| Auth and tenant isolation | required | Bearer auth in production; tenant_id and scope checks; cross-tenant idempotency isolation; carts are stamped with the caller's tenant at creation and cross-tenant read/mutate/cancel/checkout returns `403 TENANT_MISMATCH`; payment delegation and identity linking take the tenant from the auth context, not the body | authz_and_adapters, cross_tenant_idempotency, `cart_tenancy`, `honest_discovery_test::delegate_payment_refuses_a_tenant_the_caller_is_not` |
 | Order currency + signed totals | required | UCP order responses include required `currency` and totals with signed amount objects | dto / UCP order response |
 
 ### Transport: A2A / MCP (adapter layer)
@@ -60,7 +63,7 @@ Status values: **required** (must pass for claimed alignment), **optional** (sup
 | Identity-linking envelope normalization | required | Incoming identity-linking envelope normalizes into identity-link request and rejects unsupported capabilities | `authz_and_adapters` |
 | A2A order query envelope | required | `POST /api/v1/a2a/orders` accepts A2A envelope with `payload.order_id` and returns order details | api_integration_test |
 | MCP dual-era tool server | required | Legacy `initialize` (`2024-11-05`/`2025-11-25`); modern `server/discover` + `MCP-Protocol-Version` / `_meta` for `2026-07-28` | orchestrator-mcp tests |
-| MCP tool definitions | required | All facade operations exposed as MCP tools with JSON Schema input definitions. **Known gap**: `SetFulfillmentSelection` (added in v0.8.0) is not yet exposed as an MCP tool; tracked for a follow-up release | orchestrator-mcp tool tests |
+| MCP tool definitions | required | All facade operations exposed as MCP tools with JSON Schema input definitions, including `set_fulfillment_selection` (quote-only when `selected_option_id` is omitted). See [MCP binding](../mcp-binding.md) | `tools::tests::tools_list_includes_set_fulfillment_selection`, `tools::tests::set_fulfillment_selection_with_an_option_prices_the_cart` |
 | MCP resource definitions | required | `order://{id}` and `cart://{id}` resources readable via `resources/read` | orchestrator-mcp tests |
 | MCP endpoint in discovery | required | UCP discovery includes `mcp_endpoint` and `mcp_supported_versions` | discovery tests |
 | Delegated capability in handoff | optional | A2AHandoffProfile carries protocol, selected profile version, delegated_capability, and supported profile versions | adapters.rs, authz_and_adapters |
@@ -73,14 +76,14 @@ Status values: **required** (must pass for claimed alignment), **optional** (sup
 | Mandatory Idempotency-Key header | required | Every mutating ACP POST route (`checkout_sessions` create/complete/cancel, `delegate_payment`, `carts` create/cancel) requires a non-empty `Idempotency-Key` header; missing/blank returns `400` with `code: idempotency_key_required` | `api_integration_test::acp_post_routes_require_idempotency_key_header` |
 | Checkout session CRUD | required | `POST/GET/PUT /api/v1/acp/checkout_sessions` (+ cancel) map to cart commands | api_integration_test |
 | Complete session | required | `POST .../complete` maps to start_checkout + execute_checkout_authorized | api_integration_test |
-| Delegate payment | required | `POST /api/v1/acp/delegate_payment` returns delegated payment token response | api_integration_test |
+| Delegate payment | optional | `POST /api/v1/acp/delegate_payment` calls the configured PSP delegation adapter and returns the PSP's delegated token (never the caller's own); returns `501` with `code: NOT_CONFIGURED` when `PAYMENT_DELEGATION_BASE_URL` is unset | `honest_discovery_test::delegate_payment_returns_the_psp_token_when_configured`, `honest_discovery_test::delegate_payment_returns_501_when_no_psp_delegation_is_configured` |
 | Cart Capability | required | `POST/GET/PUT /api/v1/acp/carts` (+ `POST .../cancel`) manage pre-checkout basket state decoupled from the checkout session, backed by the same `CartProjection`; returns `cart_`-prefixed ids and `active`/`canceled` status | `api_integration_test::acp_cart_create_get_update_and_cancel_lifecycle` |
-| Discovery document | required | `GET /.well-known/acp.json` returns `protocol` (name/version/supported_versions), `api_base_url`, `transports`, and `capabilities.services` including `checkout`, `carts`, `delegate_payment` | `discovery_test::well_known_acp_returns_200_and_manifest` |
+| Discovery document | required | `GET /.well-known/acp.json` returns `protocol` (name/version/supported_versions), `api_base_url`, `transports`, and `capabilities.services` with `checkout` and `carts`; `delegate_payment` appears only when a delegation adapter is configured | `discovery_test::well_known_acp_returns_200_and_manifest`, `honest_discovery_test::acp_discovery_hides_delegate_payment_until_a_psp_is_configured` |
 | Discovery advertisement (UCP) | required | Shopping services include `transport: acp` endpoint in `/.well-known/ucp` | discovery tests |
 | Feed API | not_supported_yet | Agent-hosted feed push is out of scope for merchant middleware | conformance review |
 | Native Orders enrichment | not_supported_yet | ACP's order-enrichment fields (carrier tracking, fulfillment events pushed back into ACP orders) are not implemented; order data remains orchestrator-native via `/api/v1/orders` and `/api/v1/ucp/orders` | conformance review |
 | Delegate Authentication (3DS2) | not_supported_yet | ACP delegate-authentication flow (step-up/3DS2 challenge delegation during `delegate_payment`) is not implemented; only token-based delegate payment is supported | conformance review |
-| ACP MCP transport binding | not_supported_yet | ACP's MCP transport binding (exposing ACP capabilities as MCP tools/resources per `docs/mcp-binding.md`) is not implemented; only the REST transport is advertised in `/.well-known/acp.json` | conformance review |
+| ACP MCP transport binding | not_supported_yet | ACP's own MCP transport binding (ACP capabilities re-expressed as MCP tools with OpenRPC descriptors) is not implemented; only the REST transport is advertised in `/.well-known/acp.json`. This is distinct from the orchestrator's native MCP server, which is documented in [MCP binding](../mcp-binding.md) | conformance review |
 
 ### Order Query API
 
@@ -98,7 +101,7 @@ Status values: **required** (must pass for claimed alignment), **optional** (sup
 | Webhook listing | required | `GET /api/v1/webhooks` returns tenant-scoped webhook registrations | api_integration_test |
 | Webhook unregistration | required | `DELETE /api/v1/webhooks/:id` removes a webhook | api_integration_test |
 | HMAC-SHA256 signing | required | WebhookDeliverer signs payloads with `X-Webhook-Signature` using the registration secret | webhooks.rs HMAC test |
-| Outbox delivery via webhooks | required | `WebhookDeliverer` implements `OutboxDeliverer` and delivers to matching registrations | webhooks.rs tests |
+| Outbox delivery via webhooks | required | `WebhookDeliverer` implements `OutboxDeliverer` and delivers to matching registrations **of the tenant that owns the event**; the topic lookup is tenant-scoped in every store | `webhooks.rs::a_topic_lookup_never_crosses_tenants`, `webhook_delivery_metrics_test::another_tenants_endpoint_is_not_called` |
 
 ### Catalog
 

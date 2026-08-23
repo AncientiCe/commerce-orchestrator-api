@@ -5,6 +5,9 @@ use crate::jsonrpc::{
 };
 use orchestrator_api::{AuthContext, OrchestratorFacade};
 use orchestrator_core::contract::*;
+use orchestrator_core::fulfillment::{
+    FulfillmentDestination, FulfillmentMethodType, PostalAddress,
+};
 use std::time::Instant;
 
 pub const MCP_MODERN_VERSION: &str = "2026-07-28";
@@ -85,6 +88,47 @@ pub fn list_tools() -> Vec<ToolDefinition> {
                     "code": { "type": "string" }
                 },
                 "required": ["cart_id", "code"]
+            }),
+        },
+        ToolDefinition {
+            name: "set_fulfillment_selection".to_string(),
+            description: "Quote shipping or pickup options for a cart, and optionally select one. \
+                          Omit selected_option_id to see the quotes before committing."
+                .to_string(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "cart_id": { "type": "string" },
+                    "method_type": { "type": "string", "enum": ["shipping", "pickup"] },
+                    "destination": {
+                        "type": "object",
+                        "description": "Shipping address, or the retail location for pickup (name is then required).",
+                        "properties": {
+                            "id": { "type": "string" },
+                            "name": { "type": "string" },
+                            "street_address": { "type": "string" },
+                            "extended_address": { "type": "string" },
+                            "address_locality": { "type": "string" },
+                            "address_region": { "type": "string" },
+                            "address_country": { "type": "string" },
+                            "postal_code": { "type": "string" },
+                            "first_name": { "type": "string" },
+                            "last_name": { "type": "string" },
+                            "phone_number": { "type": "string" }
+                        },
+                        "required": ["id"]
+                    },
+                    "line_item_ids": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Lines this selection covers; omit to cover the whole cart."
+                    },
+                    "selected_option_id": {
+                        "type": "string",
+                        "description": "Must be an option id the merchant quoted for this cart."
+                    }
+                },
+                "required": ["cart_id", "method_type", "destination"]
             }),
         },
         ToolDefinition {
@@ -259,6 +303,73 @@ fn get_i64(params: &serde_json::Value, key: &str) -> Result<i64, String> {
         .ok_or_else(|| format!("missing required field: {}", key))
 }
 
+/// Build a fulfillment selection from the flat destination shape the REST
+/// `/ucp/cart/:id/fulfillment` endpoint accepts, so agents see one contract
+/// across transports.
+fn fulfillment_selection_payload(
+    args: &serde_json::Value,
+) -> Result<SetFulfillmentSelectionPayload, String> {
+    let method_type = match get_str(args, "method_type")? {
+        "shipping" => FulfillmentMethodType::Shipping,
+        "pickup" => FulfillmentMethodType::Pickup,
+        other => return Err(format!("unsupported method_type: {}", other)),
+    };
+    let destination = args
+        .get("destination")
+        .ok_or_else(|| "missing required field: destination".to_string())?;
+    let id = get_str(destination, "id")?.to_string();
+    let address = PostalAddress {
+        street_address: optional_str(destination, "street_address"),
+        extended_address: optional_str(destination, "extended_address"),
+        address_locality: optional_str(destination, "address_locality"),
+        address_region: optional_str(destination, "address_region"),
+        address_country: optional_str(destination, "address_country"),
+        postal_code: optional_str(destination, "postal_code"),
+        first_name: optional_str(destination, "first_name"),
+        last_name: optional_str(destination, "last_name"),
+        phone_number: optional_str(destination, "phone_number"),
+    };
+    let destination = match method_type {
+        FulfillmentMethodType::Pickup => FulfillmentDestination::Retail {
+            id,
+            name: optional_str(destination, "name")
+                .ok_or_else(|| "destination.name is required for pickup".to_string())?,
+            address: Some(address),
+        },
+        _ => FulfillmentDestination::Shipping { id, address },
+    };
+    let line_item_ids = args
+        .get("line_item_ids")
+        .and_then(|value| value.as_array())
+        .map(|values| {
+            values
+                .iter()
+                .map(|value| {
+                    value
+                        .as_str()
+                        .map(str::to_string)
+                        .ok_or_else(|| "line_item_ids must contain only strings".to_string())
+                })
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .transpose()?
+        .unwrap_or_default();
+
+    Ok(SetFulfillmentSelectionPayload {
+        method_type,
+        line_item_ids,
+        destination,
+        selected_option_id: optional_str(args, "selected_option_id"),
+    })
+}
+
+fn optional_str(params: &serde_json::Value, key: &str) -> Option<String> {
+    params
+        .get(key)
+        .and_then(|value| value.as_str())
+        .map(str::to_string)
+}
+
 /// Handle a JSON-RPC request and return a response. Dispatches MCP methods to facade operations.
 ///
 /// Dual-era support:
@@ -342,7 +453,7 @@ pub async fn handle_mcp_request_with_version(
         "resources/read" => {
             let params = request.params.as_ref().cloned().unwrap_or_default();
             let uri = params.get("uri").and_then(|v| v.as_str()).unwrap_or("");
-            read_resource(uri, facade).await
+            read_resource(uri, facade, auth).await
         }
         "initialize" => {
             if negotiated == MCP_MODERN_VERSION {
@@ -487,12 +598,15 @@ async fn dispatch_tool(
 ) -> Result<serde_json::Value, String> {
     match name {
         "create_cart" => {
+            // The cart is owned by the tenant the caller authenticated as. Left
+            // unset, the cart belonged to nobody and every tenant could read it.
             let cmd = CartCommand::CreateCart(CreateCartPayload {
                 merchant_id: get_str(args, "merchant_id")?.to_string(),
                 currency: get_str(args, "currency")?.to_string(),
+                tenant_id: Some(auth.tenant_id.clone()),
             });
             let proj = facade
-                .dispatch_cart_command(cmd, None)
+                .dispatch_cart_command_for_tenant(&auth.tenant_id, cmd, None)
                 .await
                 .map_err(|e| e.to_string())?;
             serde_json::to_value(proj).map_err(|e| e.to_string())
@@ -504,7 +618,7 @@ async fn dispatch_tool(
                 quantity: get_u64(args, "quantity")? as u32,
             });
             let proj = facade
-                .dispatch_cart_command(cmd, Some(cart_id))
+                .dispatch_cart_command_for_tenant(&auth.tenant_id, cmd, Some(cart_id))
                 .await
                 .map_err(|e| e.to_string())?;
             serde_json::to_value(proj).map_err(|e| e.to_string())
@@ -516,7 +630,7 @@ async fn dispatch_tool(
                 quantity: get_u64(args, "quantity")? as u32,
             });
             let proj = facade
-                .dispatch_cart_command(cmd, Some(cart_id))
+                .dispatch_cart_command_for_tenant(&auth.tenant_id, cmd, Some(cart_id))
                 .await
                 .map_err(|e| e.to_string())?;
             serde_json::to_value(proj).map_err(|e| e.to_string())
@@ -527,7 +641,7 @@ async fn dispatch_tool(
                 line_id: get_str(args, "line_id")?.to_string(),
             });
             let proj = facade
-                .dispatch_cart_command(cmd, Some(cart_id))
+                .dispatch_cart_command_for_tenant(&auth.tenant_id, cmd, Some(cart_id))
                 .await
                 .map_err(|e| e.to_string())?;
             serde_json::to_value(proj).map_err(|e| e.to_string())
@@ -538,7 +652,18 @@ async fn dispatch_tool(
                 code: get_str(args, "code")?.to_string(),
             });
             let proj = facade
-                .dispatch_cart_command(cmd, Some(cart_id))
+                .dispatch_cart_command_for_tenant(&auth.tenant_id, cmd, Some(cart_id))
+                .await
+                .map_err(|e| e.to_string())?;
+            serde_json::to_value(proj).map_err(|e| e.to_string())
+        }
+        "set_fulfillment_selection" => {
+            let cart_id = parse_cart_id(get_str(args, "cart_id")?)?;
+            let cmd = CartCommand::SetFulfillmentSelection(Box::new(
+                fulfillment_selection_payload(args)?,
+            ));
+            let proj = facade
+                .dispatch_cart_command_for_tenant(&auth.tenant_id, cmd, Some(cart_id))
                 .await
                 .map_err(|e| e.to_string())?;
             serde_json::to_value(proj).map_err(|e| e.to_string())
@@ -547,7 +672,7 @@ async fn dispatch_tool(
             let cart_id = parse_cart_id(get_str(args, "cart_id")?)?;
             let cmd = CartCommand::GetCart(GetCartPayload { cart_id });
             let proj = facade
-                .dispatch_cart_command(cmd, Some(cart_id))
+                .dispatch_cart_command_for_tenant(&auth.tenant_id, cmd, Some(cart_id))
                 .await
                 .map_err(|e| e.to_string())?;
             serde_json::to_value(proj).map_err(|e| e.to_string())
@@ -559,7 +684,7 @@ async fn dispatch_tool(
                 cart_version: get_u64(args, "cart_version")?,
             });
             let proj = facade
-                .dispatch_cart_command(cmd, Some(cart_id))
+                .dispatch_cart_command_for_tenant(&auth.tenant_id, cmd, Some(cart_id))
                 .await
                 .map_err(|e| e.to_string())?;
             serde_json::to_value(proj).map_err(|e| e.to_string())
@@ -670,6 +795,7 @@ async fn dispatch_tool(
 async fn read_resource(
     uri: &str,
     facade: &OrchestratorFacade,
+    auth: &AuthContext,
 ) -> Result<serde_json::Value, String> {
     if let Some(order_id) = uri.strip_prefix("order://") {
         let order = facade
@@ -689,7 +815,7 @@ async fn read_resource(
         let cart_id = parse_cart_id(cart_id_str)?;
         let cmd = CartCommand::GetCart(GetCartPayload { cart_id });
         let proj = facade
-            .dispatch_cart_command(cmd, Some(cart_id))
+            .dispatch_cart_command_for_tenant(&auth.tenant_id, cmd, Some(cart_id))
             .await
             .map_err(|e| e.to_string())?;
         let content = serde_json::to_string(&proj).map_err(|e| e.to_string())?;
@@ -798,6 +924,51 @@ mod tests {
         assert_eq!(result["currency"], "USD");
     }
 
+    /// MCP-created carts used to be recorded with no tenant at all, which left
+    /// them outside every tenant check that follows.
+    #[tokio::test]
+    async fn create_cart_records_the_callers_tenant() {
+        let facade = build_facade();
+        let req = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: serde_json::json!(1),
+            method: "tools/call".to_string(),
+            params: Some(serde_json::json!({
+                "name": "create_cart",
+                "arguments": { "merchant_id": "m1", "currency": "USD" }
+            })),
+        };
+        let resp = handle_mcp_request(&req, &facade, &dev_auth()).await;
+        assert!(resp.error.is_none(), "{:?}", resp.error);
+        assert_eq!(resp.result.unwrap()["tenant_id"], "dev");
+    }
+
+    #[tokio::test]
+    async fn a_cart_of_another_tenant_is_not_readable_over_mcp() {
+        let facade = build_facade();
+        let cart = cart_with_one_item(&facade).await;
+        let other_tenant = AuthContext {
+            caller_id: "other".to_string(),
+            tenant_id: "other".to_string(),
+            scopes: vec!["checkout:execute".to_string()],
+        };
+
+        let req = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: serde_json::json!(1),
+            method: "tools/call".to_string(),
+            params: Some(serde_json::json!({
+                "name": "get_cart",
+                "arguments": { "cart_id": cart.cart_id.0.to_string() }
+            })),
+        };
+        let resp = handle_mcp_request(&req, &facade, &other_tenant).await;
+        assert!(
+            resp.error.is_some(),
+            "another tenant must not read this cart through the MCP tool surface"
+        );
+    }
+
     #[tokio::test]
     async fn tool_call_lookup_catalog_item() {
         let facade = build_facade();
@@ -815,6 +986,135 @@ mod tests {
         let result = resp.result.unwrap();
         assert_eq!(result["id"], "item_1");
         assert_eq!(result["price_minor"], 500);
+    }
+
+    async fn cart_with_one_item(facade: &OrchestratorFacade) -> CartProjection {
+        let cart = facade
+            .dispatch_cart_command(
+                CartCommand::CreateCart(CreateCartPayload {
+                    merchant_id: "m1".to_string(),
+                    currency: "USD".to_string(),
+                    tenant_id: Some("dev".to_string()),
+                }),
+                None,
+            )
+            .await
+            .expect("create cart");
+        facade
+            .dispatch_cart_command(
+                CartCommand::AddItem(AddItemPayload {
+                    item_id: "item_1".to_string(),
+                    quantity: 1,
+                }),
+                Some(cart.cart_id),
+            )
+            .await
+            .expect("add item")
+    }
+
+    fn shipping_arguments(cart_id: &CartId, selected: Option<&str>) -> serde_json::Value {
+        let mut args = serde_json::json!({
+            "cart_id": cart_id.0.to_string(),
+            "method_type": "shipping",
+            "destination": {
+                "id": "dest_1",
+                "street_address": "1 Market St",
+                "address_locality": "San Francisco",
+                "address_region": "CA",
+                "address_country": "US",
+                "postal_code": "94105"
+            }
+        });
+        if let Some(option_id) = selected {
+            args["selected_option_id"] = serde_json::json!(option_id);
+        }
+        args
+    }
+
+    #[tokio::test]
+    async fn tools_list_includes_set_fulfillment_selection() {
+        let tools = list_tools();
+        let tool = tools
+            .iter()
+            .find(|t| t.name == "set_fulfillment_selection")
+            .expect("set_fulfillment_selection must be offered over MCP");
+        let required: Vec<&str> = tool.input_schema["required"]
+            .as_array()
+            .expect("required")
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect();
+        for field in ["cart_id", "method_type", "destination"] {
+            assert!(required.contains(&field), "{field} must be required");
+        }
+    }
+
+    #[tokio::test]
+    async fn set_fulfillment_selection_without_an_option_returns_quotes() {
+        let facade = build_facade();
+        let cart = cart_with_one_item(&facade).await;
+        let req = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: serde_json::json!(1),
+            method: "tools/call".to_string(),
+            params: Some(serde_json::json!({
+                "name": "set_fulfillment_selection",
+                "arguments": shipping_arguments(&cart.cart_id, None)
+            })),
+        };
+        let resp = handle_mcp_request(&req, &facade, &dev_auth()).await;
+        assert!(resp.error.is_none(), "got {:?}", resp.error);
+
+        let result = resp.result.expect("projection");
+        let options = result["fulfillment"]["methods"][0]["groups"][0]["options"]
+            .as_array()
+            .expect("quoted options");
+        assert!(
+            options.iter().any(|o| o["id"] == "standard"),
+            "quotes should be returned so the agent can choose: {options:?}"
+        );
+        assert_eq!(
+            result["fulfillment_minor"], 0,
+            "nothing is charged until an option is selected"
+        );
+    }
+
+    #[tokio::test]
+    async fn set_fulfillment_selection_with_an_option_prices_the_cart() {
+        let facade = build_facade();
+        let cart = cart_with_one_item(&facade).await;
+        let req = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: serde_json::json!(1),
+            method: "tools/call".to_string(),
+            params: Some(serde_json::json!({
+                "name": "set_fulfillment_selection",
+                "arguments": shipping_arguments(&cart.cart_id, Some("express"))
+            })),
+        };
+        let resp = handle_mcp_request(&req, &facade, &dev_auth()).await;
+        assert!(resp.error.is_none(), "got {:?}", resp.error);
+        assert_eq!(resp.result.expect("projection")["fulfillment_minor"], 1000);
+    }
+
+    #[tokio::test]
+    async fn set_fulfillment_selection_rejects_an_unknown_option() {
+        let facade = build_facade();
+        let cart = cart_with_one_item(&facade).await;
+        let req = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: serde_json::json!(1),
+            method: "tools/call".to_string(),
+            params: Some(serde_json::json!({
+                "name": "set_fulfillment_selection",
+                "arguments": shipping_arguments(&cart.cart_id, Some("teleport"))
+            })),
+        };
+        let resp = handle_mcp_request(&req, &facade, &dev_auth()).await;
+        assert!(
+            resp.error.is_some(),
+            "an option the merchant never quoted must not be accepted"
+        );
     }
 
     #[tokio::test]

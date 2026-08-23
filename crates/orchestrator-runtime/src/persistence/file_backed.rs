@@ -16,6 +16,7 @@ use crate::inventory::{ReservationRecord, ReservationState};
 use crate::payment_state::PaymentStateStore;
 use crate::store_error::StoreError;
 use crate::store_traits::*;
+use crate::webhooks::{WebhookRegistration, WebhookStore};
 
 fn cart_id_key(cart_id: &CartId) -> String {
     cart_id.0.to_string()
@@ -61,6 +62,7 @@ pub struct PersistentStores {
     order_store: std::sync::Arc<dyn OrderStore>,
     payment_state_store: std::sync::Arc<dyn PaymentStateStore>,
     mandate_dedupe_store: std::sync::Arc<dyn MandateDedupeStore>,
+    webhook_store: std::sync::Arc<dyn WebhookStore>,
 }
 
 impl PersistentStores {
@@ -94,6 +96,9 @@ impl PersistentStores {
     pub fn mandate_dedupe_store(&self) -> std::sync::Arc<dyn MandateDedupeStore> {
         std::sync::Arc::clone(&self.mandate_dedupe_store)
     }
+    pub fn webhook_store(&self) -> std::sync::Arc<dyn WebhookStore> {
+        std::sync::Arc::clone(&self.webhook_store)
+    }
 }
 
 /// Open or create persistent stores at the given directory.
@@ -124,6 +129,8 @@ pub async fn open_persistent_stores(
     );
     let mandate_dedupe_store: std::sync::Arc<dyn MandateDedupeStore> =
         std::sync::Arc::new(FileBackedMandateDedupeStore::open(base.join("mandates.json")).await?);
+    let webhook_store: std::sync::Arc<dyn WebhookStore> =
+        std::sync::Arc::new(FileBackedWebhookStore::open(base.join("webhooks.json")).await?);
     Ok(PersistentStores {
         base,
         event_store,
@@ -136,6 +143,7 @@ pub async fn open_persistent_stores(
         order_store,
         payment_state_store,
         mandate_dedupe_store,
+        webhook_store,
     })
 }
 
@@ -272,6 +280,17 @@ impl IdempotencyStore for FileBackedIdempotencyStore {
             idempotency_key_str(&key),
             IdempotencyState::Completed(result),
         );
+        drop(guard);
+        self.save().await?;
+        Ok(())
+    }
+    async fn release(&self, key: &IdempotencyKey) -> Result<(), StoreError> {
+        let k = idempotency_key_str(key);
+        let mut guard = self.inner.write().await;
+        if !matches!(guard.get(&k), Some(IdempotencyState::InFlight)) {
+            return Ok(());
+        }
+        guard.remove(&k);
         drop(guard);
         self.save().await?;
         Ok(())
@@ -731,6 +750,87 @@ impl MandateDedupeStore for FileBackedMandateDedupeStore {
         drop(guard);
         self.save().await?;
         Ok(true)
+    }
+}
+
+// --- FileBackedWebhookStore ---
+
+#[derive(Clone)]
+struct FileBackedWebhookStore {
+    path: std::path::PathBuf,
+    records:
+        std::sync::Arc<tokio::sync::RwLock<std::collections::HashMap<String, WebhookRegistration>>>,
+}
+
+impl FileBackedWebhookStore {
+    async fn open(path: std::path::PathBuf) -> Result<Self, std::io::Error> {
+        let records = load_json::<std::collections::HashMap<String, WebhookRegistration>>(&path)
+            .await
+            .unwrap_or_default();
+        Ok(Self {
+            path,
+            records: std::sync::Arc::new(tokio::sync::RwLock::new(records)),
+        })
+    }
+
+    async fn save(&self) -> Result<(), std::io::Error> {
+        let guard = self.records.read().await;
+        save_json(&self.path, &*guard).await
+    }
+}
+
+#[async_trait]
+impl WebhookStore for FileBackedWebhookStore {
+    async fn register(&self, registration: WebhookRegistration) -> Result<(), StoreError> {
+        self.records
+            .write()
+            .await
+            .insert(registration.id.clone(), registration);
+        self.save().await?;
+        Ok(())
+    }
+
+    async fn unregister(&self, id: &str) -> Result<bool, StoreError> {
+        let removed = self.records.write().await.remove(id).is_some();
+        if removed {
+            self.save().await?;
+        }
+        Ok(removed)
+    }
+
+    async fn list_by_tenant(
+        &self,
+        tenant_id: &str,
+    ) -> Result<Vec<WebhookRegistration>, StoreError> {
+        let guard = self.records.read().await;
+        Ok(guard
+            .values()
+            .filter(|r| r.tenant_id == tenant_id)
+            .cloned()
+            .collect())
+    }
+
+    async fn get(&self, id: &str) -> Result<Option<WebhookRegistration>, StoreError> {
+        Ok(self.records.read().await.get(id).cloned())
+    }
+
+    async fn list_active_for_topic(
+        &self,
+        tenant_id: &str,
+        topic: &str,
+    ) -> Result<Vec<WebhookRegistration>, StoreError> {
+        let guard = self.records.read().await;
+        Ok(guard
+            .values()
+            .filter(|r| {
+                r.active
+                    && r.tenant_id == tenant_id
+                    && r.event_filter
+                        .as_ref()
+                        .is_none_or(|f| f.iter().any(|t| t == topic))
+            })
+            .cloned()
+            .collect())
     }
 }
 

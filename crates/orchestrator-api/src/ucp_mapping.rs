@@ -8,15 +8,43 @@ use orchestrator_core::{
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+/// What this particular deployment can actually do, as opposed to what the
+/// protocol allows. Discovery is built from this so an agent is never told about
+/// a capability that is not wired up.
+#[derive(Debug, Clone, Default)]
+pub struct AdvertisedCapabilities {
+    /// Public JWKs from the configured keyring. Empty means this deployment does
+    /// not sign, and the manifest says so rather than advertising a key that
+    /// cannot verify anything.
+    pub signing_keys: Vec<SigningKeyDescriptor>,
+    /// True when an identity provider is configured behind identity linking.
+    pub identity_linking: bool,
+}
+
+impl AdvertisedCapabilities {
+    /// Convenience for callers that only have signing material to declare.
+    pub fn with_signing_keys(signing_keys: Vec<SigningKeyDescriptor>) -> Self {
+        Self {
+            signing_keys,
+            identity_linking: false,
+        }
+    }
+}
+
 /// Build discovery manifest for agents (/.well-known/ucp equivalent).
-pub fn build_well_known_manifest(base_url: &str) -> WellKnownUcp {
-    build_well_known_manifest_with_version(base_url, None)
+pub fn build_well_known_manifest(
+    base_url: &str,
+    advertised: &AdvertisedCapabilities,
+) -> WellKnownUcp {
+    build_well_known_manifest_with_version(base_url, None, advertised)
 }
 
 pub fn build_well_known_manifest_with_version(
     base_url: &str,
     requested_version: Option<&str>,
+    advertised: &AdvertisedCapabilities,
 ) -> WellKnownUcp {
+    let signing_keys = advertised.signing_keys.as_slice();
     let selected_version = requested_version
         .filter(|v| UCP_SUPPORTED_VERSIONS.contains(v))
         .unwrap_or(UCP_LATEST_VERSION);
@@ -78,18 +106,25 @@ pub fn build_well_known_manifest_with_version(
                     ],
                 ),
             ])),
-            capabilities: Some(core_capabilities(selected_version)),
+            capabilities: Some(core_capabilities(selected_version, advertised)),
             manifest: None,
             rest_endpoint: None,
             mcp_endpoint: Some(format!("{}/api/v1/mcp/message", base)),
             capability_flags: Some(BTreeMap::from([
                 ("dev.ucp.payments.mpp".to_string(), true),
                 ("dev.ucp.shopping.payment_handlers".to_string(), true),
-                ("dev.ucp.security.signatures".to_string(), true),
+                (
+                    "dev.ucp.security.signatures".to_string(),
+                    !signing_keys.is_empty(),
+                ),
                 ("dev.ucp.shopping.checkout.embedded".to_string(), true),
                 ("dev.ucp.shopping.fulfillment".to_string(), true),
+                (
+                    "dev.ucp.common.identity_linking".to_string(),
+                    advertised.identity_linking,
+                ),
             ])),
-            signing_keys: Some(default_signing_keys()),
+            signing_keys: (!signing_keys.is_empty()).then(|| signing_keys.to_vec()),
             payment_handlers: Some(default_payment_handlers()),
             mcp_supported_versions: Some(vec![
                 "2026-07-28".to_string(),
@@ -135,8 +170,11 @@ fn legacy_well_known_manifest(base: &str, selected_version: &str) -> WellKnownUc
     }
 }
 
-fn core_capabilities(version: &str) -> BTreeMap<String, Vec<UcpCapabilityBinding>> {
-    BTreeMap::from([
+fn core_capabilities(
+    version: &str,
+    advertised: &AdvertisedCapabilities,
+) -> BTreeMap<String, Vec<UcpCapabilityBinding>> {
+    let mut capabilities = BTreeMap::from([
         (
             "dev.ucp.shopping.checkout".to_string(),
             vec![capability(
@@ -197,15 +235,6 @@ fn core_capabilities(version: &str) -> BTreeMap<String, Vec<UcpCapabilityBinding
             )],
         ),
         (
-            "dev.ucp.common.identity_linking".to_string(),
-            vec![capability(
-                version,
-                "identity-linking",
-                "common/identity_linking.json",
-                None,
-            )],
-        ),
-        (
             "dev.ucp.shopping.payment_handlers".to_string(),
             vec![capability(
                 version,
@@ -214,7 +243,19 @@ fn core_capabilities(version: &str) -> BTreeMap<String, Vec<UcpCapabilityBinding
                 None,
             )],
         ),
-    ])
+    ]);
+    if advertised.identity_linking {
+        capabilities.insert(
+            "dev.ucp.common.identity_linking".to_string(),
+            vec![capability(
+                version,
+                "identity-linking",
+                "common/identity_linking.json",
+                None,
+            )],
+        );
+    }
+    capabilities
 }
 
 fn capability(
@@ -233,18 +274,6 @@ fn capability(
 
 fn spec_url(version: &str, slug: &str) -> String {
     format!("https://ucp.dev/{}/specification/{}", version, slug)
-}
-
-fn default_signing_keys() -> Vec<SigningKeyDescriptor> {
-    vec![SigningKeyDescriptor {
-        kid: "orch-default-1".to_string(),
-        kty: "OKP".to_string(),
-        crv: Some("Ed25519".to_string()),
-        alg: "EdDSA".to_string(),
-        // Placeholder public key material for discovery advertisement; replace via ops config.
-        x: Some("11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo".to_string()),
-        use_: Some("sig".to_string()),
-    }]
 }
 
 pub fn default_payment_handlers() -> Vec<PaymentHandlerDescriptor> {
@@ -326,48 +355,6 @@ pub fn cart_id_to_session_id(cart_id: CartId) -> String {
     format!("chk_{}", cart_id.0)
 }
 
-/// Verify a simple HMAC-style request signature header against discovery key kid.
-/// Accepts `UCP-Signature: kid=<kid>;sig=<base64url>` when `UCP_SIGNING_SECRET` is set.
-pub fn verify_ucp_request_signature(
-    signature_header: Option<&str>,
-    body: &[u8],
-) -> Result<(), String> {
-    let secret = match std::env::var("UCP_SIGNING_SECRET") {
-        Ok(s) if !s.is_empty() => s,
-        _ => return Ok(()), // signing optional unless secret configured
-    };
-    let header = signature_header.ok_or_else(|| "missing UCP-Signature header".to_string())?;
-    let mut kid = None;
-    let mut sig = None;
-    for part in header.split(';') {
-        let part = part.trim();
-        if let Some(v) = part.strip_prefix("kid=") {
-            kid = Some(v);
-        } else if let Some(v) = part.strip_prefix("sig=") {
-            sig = Some(v);
-        }
-    }
-    let kid = kid.ok_or_else(|| "UCP-Signature missing kid".to_string())?;
-    let sig = sig.ok_or_else(|| "UCP-Signature missing sig".to_string())?;
-    if kid != "orch-default-1" {
-        return Err(format!("unknown signing key kid '{kid}'"));
-    }
-    let expected = simple_hmac_hex(&secret, body);
-    if expected != sig {
-        return Err("UCP-Signature verification failed".to_string());
-    }
-    Ok(())
-}
-
-fn simple_hmac_hex(secret: &str, body: &[u8]) -> String {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-    let mut hasher = DefaultHasher::new();
-    secret.hash(&mut hasher);
-    body.hash(&mut hasher);
-    format!("{:x}", hasher.finish())
-}
-
 /// Time-to-live for embedded checkout handoff links, in seconds (UCP 2026-04-08 "embedded"
 /// transport / link delegation extension).
 pub const EMBEDDED_CHECKOUT_LINK_TTL_SECONDS: i64 = 900;
@@ -382,7 +369,7 @@ pub struct EmbeddedCheckoutLink {
 }
 
 /// Build an embedded checkout handoff link for the UCP "embedded" transport.
-/// Signed with `UCP_SIGNING_SECRET` when configured, matching `verify_ucp_request_signature`.
+/// The token is an HMAC-SHA256 over the session and expiry, keyed by `UCP_SIGNING_SECRET`.
 pub fn build_embedded_checkout_link(base_url: &str, cart_id: CartId) -> EmbeddedCheckoutLink {
     let base = base_url.trim_end_matches('/');
     let session_id = cart_id_to_session_id(cart_id);
@@ -403,8 +390,15 @@ fn embedded_link_token(session_id: &str, expires_at: i64) -> String {
 }
 
 fn signed_token(session_id: &str, expires_at: i64, secret: &str) -> String {
-    let payload = format!("{session_id}:{expires_at}");
-    simple_hmac_hex(secret, payload.as_bytes())
+    use hmac::{Mac, SimpleHmac};
+    let mut mac = SimpleHmac::<sha2::Sha256>::new_from_slice(secret.as_bytes())
+        .expect("HMAC accepts keys of any length");
+    mac.update(format!("{session_id}:{expires_at}").as_bytes());
+    mac.finalize()
+        .into_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 fn now_unix_timestamp() -> i64 {

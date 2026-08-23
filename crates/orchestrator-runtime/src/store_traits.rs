@@ -35,6 +35,10 @@ pub trait IdempotencyStore: Send + Sync {
         key: IdempotencyKey,
         result: TransactionResult,
     ) -> Result<(), StoreError>;
+    /// Drop an in-flight claim that never reached a terminal outcome, so the
+    /// caller can retry with the same key after fixing their request. Claims
+    /// that already completed are left untouched.
+    async fn release(&self, key: &IdempotencyKey) -> Result<(), StoreError>;
 }
 
 /// Atomic commit boundary.
@@ -64,6 +68,11 @@ pub trait ReservationStore: Send + Sync {
 }
 
 /// Outbox for reliable external effects.
+///
+/// Delivery follows claim → deliver → [`ack`](Self::ack) / [`release`](Self::release).
+/// A backend that can lose work by removing a message before it is delivered must
+/// override [`claim`](Self::claim) with a lease instead of a delete, so a process
+/// that dies mid-delivery leaves the message for the next attempt.
 #[async_trait]
 pub trait OutboxStore: Send + Sync {
     async fn enqueue(&self, message: OutboxMessage) -> Result<(), StoreError>;
@@ -71,6 +80,23 @@ pub trait OutboxStore: Send + Sync {
     async fn len(&self) -> usize;
     async fn is_empty(&self) -> bool {
         self.len().await == 0
+    }
+
+    /// Take the next message for delivery. The default removes it, which is what
+    /// an in-process queue can offer; durable backends lease it instead.
+    async fn claim(&self) -> Result<Option<OutboxMessage>, StoreError> {
+        self.dequeue().await
+    }
+
+    /// Delivery succeeded (or the message was dead-lettered): drop it for good.
+    async fn ack(&self, _message_id: &str) -> Result<(), StoreError> {
+        Ok(())
+    }
+
+    /// Delivery failed: make the message available again, carrying the updated
+    /// attempt count.
+    async fn release(&self, message: OutboxMessage) -> Result<(), StoreError> {
+        self.enqueue(message).await
     }
 }
 

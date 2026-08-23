@@ -1,6 +1,6 @@
 //! Application state for the HTTP server.
 
-use orchestrator_api::{AuthnResolver, OrchestratorFacade};
+use orchestrator_api::{AuthnResolver, OrchestratorFacade, SigningKeyring, VerifyingKeyring};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -15,6 +15,12 @@ pub struct AppState {
     pub shutdown_flag: Arc<AtomicBool>,
     /// Base URL for this service (used in /.well-known/ucp discovery manifest). Defaults to http://127.0.0.1:port from bind.
     pub discovery_base_url: String,
+    /// UCP signing material. `None` means this deployment does not sign or verify
+    /// UCP messages, and discovery says so instead of advertising a key it lacks.
+    pub signing: Option<SigningKeyring>,
+    /// Public keys of agents whose signatures we require and verify. `None` means
+    /// inbound signatures are not required.
+    pub inbound_keys: Option<VerifyingKeyring>,
 }
 
 impl AppState {
@@ -25,7 +31,21 @@ impl AppState {
             allow_dev_auth: true,
             shutdown_flag: Arc::new(AtomicBool::new(false)),
             discovery_base_url: "http://127.0.0.1:8080".to_string(),
+            signing: None,
+            inbound_keys: None,
         }
+    }
+
+    /// Attach UCP signing material so responses are signed with the active key.
+    pub fn with_signing(mut self, signing: SigningKeyring) -> Self {
+        self.signing = Some(signing);
+        self
+    }
+
+    /// Require and verify inbound agent signatures against these public keys.
+    pub fn with_inbound_verification(mut self, keys: VerifyingKeyring) -> Self {
+        self.inbound_keys = Some(keys);
+        self
     }
 
     /// Set the base URL used in the discovery manifest (/.well-known/ucp). Call when deploying behind a known public URL.

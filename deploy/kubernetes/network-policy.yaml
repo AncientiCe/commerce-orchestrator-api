@@ -38,3 +38,7 @@ spec:
           port: 80
         - protocol: TCP
           port: 443
+    # PostgreSQL: all durable state (events, outbox, orders, webhooks) lives here.
+    - ports:
+        - protocol: TCP
+          port: 5432

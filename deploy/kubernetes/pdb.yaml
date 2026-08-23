@@ -3,7 +3,9 @@ kind: PodDisruptionBudget
 metadata:
   name: orchestrator-api
 spec:
-  minAvailable: 1
+  # Matches the deployment baseline so voluntary disruptions cannot drop the
+  # service to a single replica.
+  minAvailable: 2
   selector:
     matchLabels:
       app: orchestrator-api

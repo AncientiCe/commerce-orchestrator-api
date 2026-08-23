@@ -91,12 +91,16 @@ impl IntoResponse for ApiError {
 }
 
 fn orchestrator_error_to_http(e: &FacadeError) -> (StatusCode, &'static str) {
-    use orchestrator_api::FacadeError::{Ap2Verification, Authz, IdentityLink, Runner};
+    use orchestrator_api::FacadeError::{
+        Ap2Verification, Authz, IdentityLink, NotConfigured, PaymentDelegation, Runner,
+    };
     use orchestrator_runtime::RunnerError;
     match e {
         Authz(_) => (StatusCode::FORBIDDEN, "AUTHZ_ERROR"),
         Ap2Verification(_) => (StatusCode::BAD_REQUEST, "AP2_VERIFICATION_ERROR"),
         IdentityLink(_) => (StatusCode::BAD_REQUEST, "IDENTITY_LINK_ERROR"),
+        PaymentDelegation(_) => (StatusCode::BAD_GATEWAY, "PAYMENT_DELEGATION_ERROR"),
+        NotConfigured(_) => (StatusCode::NOT_IMPLEMENTED, "NOT_CONFIGURED"),
         Runner(r) => match r {
             RunnerError::Store(_) => (StatusCode::INTERNAL_SERVER_ERROR, "STORE_ERROR"),
             RunnerError::Payment(_) => (StatusCode::UNPROCESSABLE_ENTITY, "PAYMENT_ERROR"),
@@ -108,8 +112,36 @@ fn orchestrator_error_to_http(e: &FacadeError) -> (StatusCode, &'static str) {
             RunnerError::CartVersionConflict { .. } => {
                 (StatusCode::CONFLICT, "CART_VERSION_CONFLICT")
             }
+            RunnerError::AmountMismatch { .. } => {
+                (StatusCode::UNPROCESSABLE_ENTITY, "AMOUNT_MISMATCH")
+            }
+            // Both are refusals, not faults: without these they fell through to
+            // the catch-all and a policy rejection looked like a server error.
+            RunnerError::CartTenantMismatch => (StatusCode::FORBIDDEN, "TENANT_MISMATCH"),
+            RunnerError::GeoBlocked => (StatusCode::FORBIDDEN, "GEO_BLOCKED"),
             RunnerError::MissingCartId => (StatusCode::BAD_REQUEST, "MISSING_CART_ID"),
             _ => (StatusCode::INTERNAL_SERVER_ERROR, "RUNNER_ERROR"),
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use orchestrator_runtime::RunnerError;
+
+    /// A refusal has to look like a refusal. Both of these used to fall through
+    /// to the catch-all and surface as `500 RUNNER_ERROR`.
+    #[test]
+    fn policy_refusals_map_to_forbidden() {
+        let (status, code) =
+            orchestrator_error_to_http(&FacadeError::Runner(RunnerError::GeoBlocked));
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(code, "GEO_BLOCKED");
+
+        let (status, code) =
+            orchestrator_error_to_http(&FacadeError::Runner(RunnerError::CartTenantMismatch));
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(code, "TENANT_MISMATCH");
     }
 }

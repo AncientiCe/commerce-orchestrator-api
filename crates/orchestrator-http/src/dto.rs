@@ -8,6 +8,7 @@ use orchestrator_core::contract::{
     RemoveItemPayload, SetFulfillmentSelectionPayload, StartCheckoutPayload, TransactionResult,
     TransactionStatus, UpdateItemQtyPayload,
 };
+use orchestrator_core::discount::AppliedDiscount;
 use orchestrator_core::fulfillment::{
     FulfillmentDestination, FulfillmentGroup, FulfillmentMethod, FulfillmentMethodType,
     FulfillmentOption, FulfillmentState, PostalAddress,
@@ -72,6 +73,7 @@ impl TryFrom<CartCommandDto> for CartCommand {
             } => CartCommand::CreateCart(CreateCartPayload {
                 merchant_id,
                 currency,
+                tenant_id: None,
             }),
             CartCommandDto::AddItem { item_id, quantity } => {
                 CartCommand::AddItem(AddItemPayload { item_id, quantity })
@@ -689,10 +691,37 @@ pub struct UcpCartResponseDto {
     pub tax_minor: i64,
     #[serde(default)]
     pub fulfillment_minor: i64,
+    /// Total deducted by applied adjustment codes, already reflected in `total_minor`.
+    #[serde(default)]
+    pub discount_minor: i64,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub discounts: Vec<UcpDiscountDto>,
     pub total_minor: i64,
     pub status: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fulfillment: Option<UcpFulfillmentDto>,
+}
+
+/// A discount granted by the pricing provider (`dev.ucp.shopping.discount`).
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct UcpDiscountDto {
+    pub code: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub amount_minor: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line_item_id: Option<String>,
+}
+
+impl From<AppliedDiscount> for UcpDiscountDto {
+    fn from(discount: AppliedDiscount) -> Self {
+        Self {
+            code: discount.code,
+            description: discount.description,
+            amount_minor: discount.amount_minor,
+            line_item_id: discount.line_id,
+        }
+    }
 }
 
 impl From<CartProjection> for UcpCartResponseDto {
@@ -704,11 +733,12 @@ impl From<CartProjection> for UcpCartResponseDto {
             _ => "draft",
         }
         .to_string();
+        let mut capabilities = vec!["dev.ucp.shopping.cart", "dev.ucp.shopping.fulfillment"];
+        if !cart.discounts.is_empty() {
+            capabilities.push("dev.ucp.shopping.discount");
+        }
         Self {
-            ucp: UcpEnvelopeDto::for_capabilities(&[
-                "dev.ucp.shopping.cart",
-                "dev.ucp.shopping.fulfillment",
-            ]),
+            ucp: UcpEnvelopeDto::for_capabilities(&capabilities),
             id: cart.cart_id.0.to_string(),
             version: cart.version,
             currency: cart.currency,
@@ -716,6 +746,12 @@ impl From<CartProjection> for UcpCartResponseDto {
             subtotal_minor: cart.subtotal_minor,
             tax_minor: cart.tax_minor,
             fulfillment_minor: cart.fulfillment_minor,
+            discount_minor: cart.discount_minor,
+            discounts: cart
+                .discounts
+                .into_iter()
+                .map(UcpDiscountDto::from)
+                .collect(),
             total_minor: cart.total_minor,
             status,
             fulfillment: cart.fulfillment.map(UcpFulfillmentDto::from),

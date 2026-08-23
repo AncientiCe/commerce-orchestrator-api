@@ -35,6 +35,11 @@ fn minimal_cart() -> CartProjection {
         status: CartStatus::Draft,
         fulfillment: None,
         fulfillment_minor: 0,
+        adjustment_codes: Vec::new(),
+        discounts: Vec::new(),
+        discount_minor: 0,
+        merchant_id: "m1".to_string(),
+        tenant_id: Some("tenant_1".to_string()),
     }
 }
 
@@ -272,4 +277,73 @@ async fn receipt_generate_returns_content() {
     };
     let payload = adapter.generate(&cart, &result).await.unwrap();
     assert!(payload.content.contains("Receipt #123"));
+}
+
+/// v0.9.0 documents priced discounts, but the HTTP pricing adapter did not
+/// implement `resolve_discounts`, so the trait default returned nothing and every
+/// code was worth zero against a real provider.
+#[tokio::test]
+async fn pricing_adapter_resolves_discounts_through_the_provider() {
+    use provider_contracts::PricingProvider;
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/discounts/resolve"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "discounts": [
+                { "code": "SAVE10", "description": "10% off", "amount_minor": 100 }
+            ]
+        })))
+        .mount(&server)
+        .await;
+
+    let adapter = PricingHttpAdapter::new(server.uri(), ClientConfig::default()).unwrap();
+    let discounts = adapter
+        .resolve_discounts(&minimal_cart(), &["SAVE10".to_string()])
+        .await
+        .expect("discounts resolve");
+
+    assert_eq!(discounts.len(), 1);
+    assert_eq!(discounts[0].code, "SAVE10");
+    assert_eq!(discounts[0].amount_minor, 100);
+}
+
+#[tokio::test]
+async fn pricing_adapter_does_not_call_the_provider_without_codes() {
+    let server = MockServer::start().await;
+    let adapter = PricingHttpAdapter::new(server.uri(), ClientConfig::default()).unwrap();
+
+    let discounts = {
+        use provider_contracts::PricingProvider;
+        adapter
+            .resolve_discounts(&minimal_cart(), &[])
+            .await
+            .unwrap()
+    };
+
+    assert!(discounts.is_empty());
+    assert!(
+        server.received_requests().await.unwrap().is_empty(),
+        "no codes means nothing to price"
+    );
+}
+
+/// A provider that rejects the codes rejects them outright: the orchestrator must
+/// not fall back to granting nothing, which would look like a valid zero discount.
+#[tokio::test]
+async fn a_rejected_discount_call_is_an_error() {
+    use provider_contracts::PricingProvider;
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/discounts/resolve"))
+        .respond_with(ResponseTemplate::new(422))
+        .mount(&server)
+        .await;
+
+    let adapter = PricingHttpAdapter::new(server.uri(), ClientConfig::default()).unwrap();
+    assert!(adapter
+        .resolve_discounts(&minimal_cart(), &["EXPIRED".to_string()])
+        .await
+        .is_err());
 }

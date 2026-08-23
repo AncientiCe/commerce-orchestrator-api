@@ -1,0 +1,20 @@
+# Prometheus Operator ServiceMonitor. Requires the monitoring.coreos.com CRDs;
+# skip this file if you scrape via annotations or a different agent.
+# The orchestrator exposes /metrics on the same port as the API.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: orchestrator-api
+  labels:
+    app: orchestrator-api
+    # Match your Prometheus instance's serviceMonitorSelector.
+    release: kube-prometheus-stack
+spec:
+  selector:
+    matchLabels:
+      app: orchestrator-api
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 10s

@@ -19,10 +19,27 @@ pub enum CartCommand {
     SetFulfillmentSelection(Box<SetFulfillmentSelectionPayload>),
 }
 
+impl CartCommand {
+    /// Attach the caller's authenticated tenant to a cart creation.
+    ///
+    /// Tenancy comes from the transport's auth context, never from the request
+    /// body, so protocol shims call this instead of trusting a wire field.
+    pub fn with_tenant(mut self, tenant_id: &str) -> Self {
+        if let CartCommand::CreateCart(payload) = &mut self {
+            payload.tenant_id = Some(tenant_id.to_string());
+        }
+        self
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CreateCartPayload {
     pub merchant_id: String,
     pub currency: String,
+    /// Owning tenant, taken from the caller's authenticated context rather than
+    /// from the wire, so that policy checks during repricing know whose cart this is.
+    #[serde(default)]
+    pub tenant_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -149,6 +166,12 @@ pub struct CartProjection {
     pub cart_id: CartId,
     pub version: u64,
     pub currency: String,
+    /// Merchant the cart was created for; needed by providers on every reprice.
+    #[serde(default)]
+    pub merchant_id: String,
+    /// Owning tenant, when the cart was created by an authenticated caller.
+    #[serde(default)]
+    pub tenant_id: Option<String>,
     pub lines: Vec<CartLineProjection>,
     pub subtotal_minor: i64,
     pub tax_minor: i64,
@@ -161,6 +184,55 @@ pub struct CartProjection {
     /// Amount of the currently selected fulfillment option, included in `total_minor`.
     #[serde(default)]
     pub fulfillment_minor: i64,
+    /// Adjustment codes the buyer has applied, re-evaluated on every reprice.
+    #[serde(default)]
+    pub adjustment_codes: Vec<String>,
+    /// Discounts the pricing provider granted for those codes.
+    #[serde(default)]
+    pub discounts: Vec<crate::discount::AppliedDiscount>,
+    /// Total discount deducted from `total_minor`, in minor units.
+    #[serde(default)]
+    pub discount_minor: i64,
+}
+
+impl CartProjection {
+    /// Where this cart is being fulfilled, if it has a selected destination.
+    ///
+    /// This is the only location a cart knows about, and it is what geo policy has
+    /// to judge on a reprice: there is no checkout request to borrow a location from
+    /// until the buyer actually checks out. A pickup location counts too — a retail
+    /// destination without an address simply yields nothing to check.
+    pub fn location_hint(&self) -> Option<LocationHint> {
+        let state = self.fulfillment.as_ref()?;
+        state.methods.iter().find_map(|method| {
+            let selected = method.selected_destination_id.as_deref();
+            let destination = method
+                .destinations
+                .iter()
+                .find(|d| Some(d.id()) == selected)
+                .or_else(|| method.destinations.first())?;
+            let address = match destination {
+                crate::fulfillment::FulfillmentDestination::Shipping { address, .. } => {
+                    Some(address)
+                }
+                crate::fulfillment::FulfillmentDestination::Retail { address, .. } => {
+                    address.as_ref()
+                }
+            }?;
+            if address.address_country.is_none()
+                && address.address_region.is_none()
+                && address.postal_code.is_none()
+            {
+                return None;
+            }
+            Some(LocationHint {
+                country_code: address.address_country.clone(),
+                region: address.address_region.clone(),
+                postal_code: address.postal_code.clone(),
+                intent: None,
+            })
+        })
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

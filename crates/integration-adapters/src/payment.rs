@@ -6,10 +6,7 @@ use orchestrator_core::contract::{
 };
 use provider_contracts::{AuthResult, PaymentError, PaymentOperationResult, PaymentProvider};
 
-use crate::client::{
-    build_client, get_with_retry, post_json_with_retry, post_json_with_retry_with_headers,
-    ClientConfig,
-};
+use crate::client::{build_client, get_with_retry, post_json, ClientConfig, RequestOptions};
 use crate::error::AdapterError;
 
 /// Response DTO for authorize.
@@ -106,20 +103,12 @@ impl PaymentProvider for PaymentHttpAdapter {
     async fn authorize(&self, request: &CheckoutRequest) -> Result<AuthResult, PaymentError> {
         let url = self.authorize_url();
         let headers = self.mpp_headers(request);
-        let resp = if headers.is_empty() {
-            post_json_with_retry(&self.client, &url, request, None::<&str>, &self.config).await
-        } else {
-            post_json_with_retry_with_headers(
-                &self.client,
-                &url,
-                request,
-                None::<&str>,
-                &self.config,
-                &headers,
-            )
+        let options = RequestOptions::new()
+            .with_idempotency_key(&request.idempotency_key)
+            .with_headers(&headers);
+        let resp = post_json(&self.client, &url, request, &self.config, &options)
             .await
-        }
-        .map_err(PaymentError::from)?;
+            .map_err(PaymentError::from)?;
         let body: AuthResponse = resp
             .json()
             .await
@@ -132,7 +121,8 @@ impl PaymentProvider for PaymentHttpAdapter {
         request: &PaymentLifecycleRequest,
     ) -> Result<PaymentOperationResult, PaymentError> {
         let url = self.capture_url();
-        let resp = post_json_with_retry(&self.client, &url, request, None::<&str>, &self.config)
+        let options = RequestOptions::new().with_idempotency_key(&request.idempotency_key);
+        let resp = post_json(&self.client, &url, request, &self.config, &options)
             .await
             .map_err(PaymentError::from)?;
         let body: OperationResponse = resp
@@ -147,7 +137,8 @@ impl PaymentProvider for PaymentHttpAdapter {
         request: &PaymentLifecycleRequest,
     ) -> Result<PaymentOperationResult, PaymentError> {
         let url = self.void_url();
-        let resp = post_json_with_retry(&self.client, &url, request, None::<&str>, &self.config)
+        let options = RequestOptions::new().with_idempotency_key(&request.idempotency_key);
+        let resp = post_json(&self.client, &url, request, &self.config, &options)
             .await
             .map_err(PaymentError::from)?;
         let body: OperationResponse = resp
@@ -162,7 +153,8 @@ impl PaymentProvider for PaymentHttpAdapter {
         request: &PaymentLifecycleRequest,
     ) -> Result<PaymentOperationResult, PaymentError> {
         let url = self.refund_url();
-        let resp = post_json_with_retry(&self.client, &url, request, None::<&str>, &self.config)
+        let options = RequestOptions::new().with_idempotency_key(&request.idempotency_key);
+        let resp = post_json(&self.client, &url, request, &self.config, &options)
             .await
             .map_err(PaymentError::from)?;
         let body: OperationResponse = resp

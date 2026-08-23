@@ -14,6 +14,14 @@ pub struct OutboxMessage {
     pub payload: String,
     pub correlation_id: String,
     pub attempts: u32,
+    /// Tenant the event belongs to. Delivery is scoped to this tenant's own
+    /// subscribers: without it a topic lookup is global and one tenant's order
+    /// event fans out to every other tenant's webhooks.
+    ///
+    /// `None` only for rows written before the field existed; those are never
+    /// delivered rather than being broadcast.
+    #[serde(default)]
+    pub tenant_id: Option<String>,
 }
 
 #[derive(Clone, Default)]
@@ -163,6 +171,7 @@ mod tests {
                 payload: "{}".to_string(),
                 correlation_id: "c".to_string(),
                 attempts: 0,
+                tenant_id: Some("t1".to_string()),
             })
             .await;
         let got = outbox.dequeue().await;

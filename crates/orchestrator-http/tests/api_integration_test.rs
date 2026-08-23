@@ -2,11 +2,12 @@
 
 use axum_test::TestServer;
 use http::header::{HeaderName, HeaderValue};
+use http::StatusCode;
 use orchestrator_http::{app, auth::StaticTokenAuthnResolver, AppState};
 use provider_contracts::CatalogItem;
 use provider_mocks::{
-    MockCatalogProvider, MockGeoProvider, MockPaymentProvider, MockPricingProvider,
-    MockReceiptProvider, MockTaxProvider,
+    MockCatalogProvider, MockGeoProvider, MockIdentityLinkProvider, MockPaymentDelegationProvider,
+    MockPaymentProvider, MockPricingProvider, MockReceiptProvider, MockTaxProvider,
 };
 use std::sync::Arc;
 
@@ -26,6 +27,29 @@ fn test_state() -> AppState {
         Arc::new(MockReceiptProvider),
         orchestrator_core::policy::PolicyEngine::default(),
     );
+    AppState::new(facade)
+}
+
+/// State for the two capabilities that need an external system behind them:
+/// PSP payment delegation and identity linking.
+fn test_state_with_optional_providers() -> AppState {
+    let catalog = MockCatalogProvider::default();
+    catalog.add_item(CatalogItem {
+        id: "SKU-1".to_string(),
+        title: "Test Product".to_string(),
+        price_minor: 1000,
+    });
+    let facade = orchestrator_api::OrchestratorFacade::new(
+        Arc::new(catalog),
+        Arc::new(MockPricingProvider),
+        Arc::new(MockTaxProvider),
+        Arc::new(MockGeoProvider),
+        Arc::new(MockPaymentProvider),
+        Arc::new(MockReceiptProvider),
+        orchestrator_core::policy::PolicyEngine::default(),
+    )
+    .with_payment_delegation(Arc::new(MockPaymentDelegationProvider))
+    .with_identity_link_provider(Arc::new(MockIdentityLinkProvider));
     AppState::new(facade)
 }
 
@@ -217,6 +241,7 @@ async fn get_order_returns_order_after_checkout() {
         .await
         .json();
     let version = cart["version"].as_u64().unwrap();
+    let total_minor = cart["total_minor"].as_i64().unwrap();
 
     let checkout = serde_json::json!({
         "tenant_id": "dev",
@@ -225,7 +250,7 @@ async fn get_order_returns_order_after_checkout() {
         "cart_version": version,
         "currency": "USD",
         "payment_intent": {
-            "amount_minor": 1000,
+            "amount_minor": total_minor,
             "token_or_reference": "tok_test"
         },
         "idempotency_key": "order-query-test"
@@ -245,6 +270,58 @@ async fn get_order_returns_order_after_checkout() {
     assert_eq!(order["order_id"].as_str(), Some(order_id));
     assert_eq!(order["status"].as_str(), Some("created"));
     assert_eq!(order["tenant_id"].as_str(), Some("dev"));
+}
+
+#[tokio::test]
+async fn checkout_with_a_mismatched_amount_returns_422_amount_mismatch() {
+    let state = test_state();
+    let app = app::app().with_state(state);
+    let server = TestServer::new(app).unwrap();
+
+    let create = serde_json::json!({
+        "command": { "kind": "create_cart", "merchant_id": "m1", "currency": "USD" }
+    });
+    let cart: serde_json::Value = server
+        .post("/api/v1/cart/commands")
+        .json(&create)
+        .await
+        .json();
+    let cart_id = cart["cart_id"].as_str().unwrap();
+
+    let add = serde_json::json!({
+        "command": { "kind": "add_item", "item_id": "SKU-1", "quantity": 1 },
+        "cart_id": cart_id
+    });
+    let cart: serde_json::Value = server.post("/api/v1/cart/commands").json(&add).await.json();
+    let version = cart["version"].as_u64().unwrap();
+    let total_minor = cart["total_minor"].as_i64().unwrap();
+
+    let checkout = serde_json::json!({
+        "tenant_id": "dev",
+        "merchant_id": "m1",
+        "cart_id": cart_id,
+        "cart_version": version,
+        "currency": "USD",
+        "payment_intent": {
+            "amount_minor": total_minor - 1,
+            "token_or_reference": "tok_test"
+        },
+        "idempotency_key": "amount-mismatch-test"
+    });
+    let response = server
+        .post("/api/v1/checkout/execute")
+        .json(&checkout)
+        .await;
+    response.assert_status(StatusCode::UNPROCESSABLE_ENTITY);
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["code"].as_str(), Some("AMOUNT_MISMATCH"));
+    assert!(
+        body["error"]
+            .as_str()
+            .unwrap()
+            .contains(&total_minor.to_string()),
+        "the error should tell the caller what the cart actually costs"
+    );
 }
 
 #[tokio::test]
@@ -279,6 +356,7 @@ async fn list_orders_returns_tenant_orders() {
         .await
         .json();
     let version = cart["version"].as_u64().unwrap();
+    let total_minor = cart["total_minor"].as_i64().unwrap();
 
     let checkout = serde_json::json!({
         "tenant_id": "dev",
@@ -287,7 +365,7 @@ async fn list_orders_returns_tenant_orders() {
         "cart_version": version,
         "currency": "USD",
         "payment_intent": {
-            "amount_minor": 1000,
+            "amount_minor": total_minor,
             "token_or_reference": "tok_test"
         },
         "idempotency_key": "list-orders-test"
@@ -647,6 +725,7 @@ async fn ucp_order_get_returns_current_order_shape() {
         .await
         .json();
     let version = cart["version"].as_u64().unwrap();
+    let total_minor = cart["total_minor"].as_i64().unwrap();
 
     let checkout = serde_json::json!({
         "tenant_id": "dev",
@@ -655,7 +734,7 @@ async fn ucp_order_get_returns_current_order_shape() {
         "cart_version": version,
         "currency": "USD",
         "payment_intent": {
-            "amount_minor": 1000,
+            "amount_minor": total_minor,
             "token_or_reference": "tok_test"
         },
         "idempotency_key": "ucp-order-test"
@@ -694,14 +773,15 @@ async fn ucp_order_get_returns_current_order_shape() {
 
 #[tokio::test]
 async fn a2a_identity_link_returns_link_result_envelope() {
-    let state = test_state();
+    let state = test_state_with_optional_providers();
     let app = app::app().with_state(state);
     let server = TestServer::new(app).unwrap();
 
     let body = serde_json::json!({
         "capability": "dev.ucp.identity.linking",
+        // Must be the tenant the caller is authenticated as (dev auth here).
         "payload": {
-            "tenant_id": "tenant-1",
+            "tenant_id": "dev",
             "merchant_id": "m1",
             "agent_id": "agent-1",
             "link_token": "tok_123",
@@ -728,7 +808,7 @@ async fn a2a_identity_link_returns_link_result_envelope() {
 
 #[tokio::test]
 async fn acp_checkout_session_lifecycle_and_delegate_payment() {
-    let state = test_state();
+    let state = test_state_with_optional_providers();
     let app = app::app().with_state(state);
     let server = TestServer::new(app).unwrap();
 

@@ -7,6 +7,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-08-20
+
+"Trustworthy Integration": closes the gap between what the orchestrator advertised and what it actually did. Outbound auth to your providers, safe retries, working webhook delivery, correct money, real signatures, and honest discovery. No protocol version changes — UCP `2026-04-08` and ACP `2026-04-17` remain current.
+
+### Added
+
+- **Per-provider outbound authentication**: `none`, `bearer`, `api_key` (custom header), `oauth2_client_credentials` (with token cache and refresh), and `mtls` (client certificate), configured per provider via `<PROVIDER>_AUTH_MODE` / `<PROVIDER>_AUTH_SECRET` and validated at startup. Previously there was no way to authenticate to a downstream provider at all.
+- **Circuit breaker** per provider with half-open probing, exposed as `orchestrator_provider_circuit_state` and circuit trip counters.
+- **Fulfillment rate provider**: `FULFILLMENT_BASE_URL` adapter replaces the built-in rate table, which is now an explicit development fallback.
+- **Postgres webhook store** (migration `0011_webhooks.sql`): webhook registrations survive restarts instead of living only in memory.
+- **Background outbox processor**: spawned at startup with the webhook deliverer wired in, draining on shutdown within `OUTBOX_DRAIN_TIMEOUT_SECS`. Delivery previously never happened in production because the deliverer was never spawned.
+- **Delivery observability**: webhook delivery counters, outbox and dead-letter depth gauges, and a delivery-attempt histogram.
+- **UCP message signing**: real Ed25519 request verification and response signing over canonical bases, with `Signature` and `Timestamp` headers, `kid`-based rotation, and clock-skew rejection. Configured with `UCP_SIGNING_KEY_ID`, `UCP_SIGNING_KEY`, `UCP_SIGNING_PREVIOUS_KEYS`, and `UCP_AGENT_KEYS`.
+- **Payment delegation and identity linking providers**: `PAYMENT_DELEGATION_BASE_URL` and `IDENTITY_LINK_BASE_URL` wire real adapters. Unconfigured, the endpoints return `501 NOT_CONFIGURED` and the capability is not advertised.
+- **Migration Job**: `deploy/kubernetes/job-migrate.yaml` runs the server image with `--migrate` (or `MIGRATE_ONLY=true`) to apply migrations and exit.
+- **Monitoring artifacts**: `deploy/kubernetes/servicemonitor.yaml` and a starter dashboard at `deploy/grafana/orchestrator-dashboard.json`.
+- **`set_fulfillment_selection` MCP tool**, closing the one gap the conformance matrix acknowledged.
+- **`docs/mcp-binding.md`**: transport, version negotiation, tool catalogue, resources, and error codes — referenced by the conformance matrix since v0.6.0 but never written.
+- **Postgres backend tests against a live database** (`postgres_backend_test`) plus a CI job with a Postgres service: migrations, the outbox lease, the tenant-scoped webhook lookup, a full checkout and the `--migrate` path are now executed rather than asserted as SQL strings. They skip themselves when `DATABASE_URL` is unset.
+
+### Changed
+
+- **Retries are no longer blanket**: only `408`, `429`, and `5xx` plus transport errors are retried, `Retry-After` is honoured, backoff is jittered, and payment operations forward a stable `Idempotency-Key` downstream. Previously any non-2xx on payment authorize/capture was retried unconditionally.
+- **Discounts are real**: adjustment codes are priced through the pricing provider (`POST {PRICING_BASE_URL}/discounts/resolve`, implemented by the HTTP adapter, not only by the mocks), `discount_minor` is populated, and applied discounts surface in UCP and ACP responses. It was hardcoded to `0` while the discount capability was advertised.
+- **Checkout integrity gate**: `execute_checkout` re-prices and re-taxes, and rejects a `payment_intent` whose amount does not match the cart total with an `AMOUNT_MISMATCH` error.
+- **Discovery tells the truth**: `dev.ucp.security.signatures` is advertised only with a configured keyring, and `dev.ucp.common.identity_linking` and the ACP `delegate_payment` service only when their providers are configured.
+- **Migrations are multi-replica safe**: applied in one transaction behind a PostgreSQL advisory lock, so concurrently starting replicas cannot race.
+- **Outbox delivery is claim-then-acknowledge** (migration `0012_outbox_lease.sql`): the Postgres queue leases a message and only deletes it once delivery is acknowledged, instead of deleting it as it is handed out. A replica that dies mid-delivery now costs a retry rather than the event; delivery is at-least-once, so webhook handlers should be idempotent on `X-Webhook-Id`.
+- **Failed deliveries back off**: the processor pauses `OUTBOX_RETRY_BACKOFF_MS`, doubled per attempt and capped by `OUTBOX_MAX_RETRY_BACKOFF_SECS`, instead of retrying in a tight loop that spent the whole attempt budget in milliseconds and dead-lettered messages a later retry would have delivered.
+- **A blocked destination blocks the checkout**: `execute_checkout` re-takes the geo verdict and rejects with `GEO_BLOCKED`. The verdict was stored on the cart while the checkout advanced past `GeoValidated` regardless.
+- **Kubernetes manifests match the Postgres contract**: `pvc.yaml` and `PERSISTENCE_PATH` removed, `DATABASE_URL` moved into the Secret, two replicas with matching HPA `minReplicas` and PDB `minAvailable`, read-only root filesystem, and egress to 5432.
+- **OpenAPI version** now derives from the crate version instead of a hand-maintained literal.
+
+### Fixed
+
+- **Geo re-check on repricing** passed an empty tenant and location, silently defeating blocked-country policy.
+- **Embedded link tokens** were signed with a homegrown pseudo-HMAC; they now use HMAC-SHA256.
+- **Counter metric names** were double-suffixed in the Prometheus exposition (`orchestrator_events_total_total`) because the encoder appends `_total` to counter families. Counters are now registered without the suffix, so `/metrics` exposes `orchestrator_events_total`, `orchestrator_operation_calls_total`, and `orchestrator_provider_http_calls_total`.
+- **The PostgreSQL backend could not open a connection at all**: `sqlx-core` was pulled in with `default-features = false`, so no async runtime was enabled and every pool connect panicked with "either the `runtime-async-std` or `runtime-tokio` feature must be enabled". In practice that meant production startup (`DATABASE_URL` is required there), `--migrate`, and the migration Job all panicked. Nothing caught it because no test ever opened a pool.
+- **Migrations could not be applied**: each file was sent through the prepared-statement protocol, which rejects the multi-statement files (`CREATE TABLE` plus its indexes) with "cannot insert multiple commands into a prepared statement". They now go through `raw_sql`.
+- **A half-open circuit breaker could wedge**: a probe that never reported an outcome — an outbound call whose OAuth token fetch failed before the request was sent — left the breaker half-open and rejected every later call. Auth failures are now reported to the breaker, and a probe that does not settle within `PROVIDER_CIRCUIT_PROBE_TIMEOUT_SECS` is superseded.
+- **`h2`** bumped to `0.4.18` for RUSTSEC-2026-0258 (unbounded empty DATA frames).
+
+### Security
+
+- Production **fails closed without signing keys**: the RFC 8037 test-vector default is deleted. Earlier releases published a well-known public test key in `/.well-known/ucp`, so anyone verifying against it failed and anyone trusting it was trusting a public test key.
+- `POST /api/v1/acp/delegate_payment` **no longer echoes the caller's own token back as a delegated token**; it calls the configured PSP or returns `501`.
+- **Cart access is tenant-scoped**: a cart is stamped with the caller's authenticated tenant at creation (including carts created through the MCP `create_cart` tool, which recorded no tenant at all), and every later read, mutation, cancel, start-checkout and checkout is refused for another tenant with `403`. A cart id was previously accepted from any authenticated caller who held it.
+- **Webhook delivery is scoped to the owning tenant**: outbox messages carry their tenant and the topic lookup is filtered by it. The lookup was global, so one tenant's `order.created` was posted to every tenant's registered endpoint.
+- **Payment delegation and identity linking take the tenant from the auth context**, not the request body; a body naming a different tenant is refused with `403`.
+
 ## [0.8.0] - 2026-08-07
 
 ### Added
@@ -163,6 +214,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - File-backed persistence is directory-based JSON; not suitable for high concurrency without external locking.
 
+[0.9.0]: https://github.com/AncientiCe/commerce-orchestrator-api/releases/tag/v0.9.0
 [0.8.0]: https://github.com/AncientiCe/commerce-orchestrator-api/releases/tag/v0.8.0
 [0.7.0]: https://github.com/AncientiCe/commerce-orchestrator-api/releases/tag/v0.7.0
 [0.6.0]: https://github.com/AncientiCe/commerce-orchestrator-api/releases/tag/v0.6.0

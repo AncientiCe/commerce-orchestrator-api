@@ -1,0 +1,55 @@
+# Applies pending database migrations once per release, before the new replicas
+# roll out. The server also migrates on startup under an advisory lock, so this
+# Job is about ordering and visibility, not exclusivity: a failed migration
+# fails here loudly instead of crash-looping across every pod.
+#
+# Run it as a pre-upgrade hook (Helm/Argo) or manually:
+#   kubectl apply -f deploy/kubernetes/job-migrate.yaml
+#   kubectl wait --for=condition=complete job/orchestrator-api-migrate --timeout=5m
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: orchestrator-api-migrate
+  labels:
+    app: orchestrator-api
+    component: migrate
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        app: orchestrator-api
+        component: migrate
+    spec:
+      restartPolicy: Never
+      serviceAccountName: orchestrator-api
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: migrate
+          image: orchestrator-api:0.9.0
+          imagePullPolicy: IfNotPresent
+          args: ["--migrate"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+          envFrom:
+            - configMapRef:
+                name: orchestrator-api
+            - secretRef:
+                name: orchestrator-api-secret
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "50m"
+            limits:
+              memory: "256Mi"
+              cpu: "500m"

@@ -248,6 +248,7 @@ fn cart_value_to_command(v: &serde_json::Value) -> Result<CartCommand, String> {
             Ok(CartCommand::CreateCart(CreateCartPayload {
                 merchant_id,
                 currency,
+                tenant_id: None,
             }))
         }
         "add_item" => {

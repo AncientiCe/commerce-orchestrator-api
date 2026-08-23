@@ -37,6 +37,7 @@ use orchestrator_core::contract::{
     GetCartPayload, RemoveItemPayload, SetFulfillmentSelectionPayload, StartCheckoutPayload,
     UpdateItemQtyPayload,
 };
+use provider_contracts::PaymentDelegationRequest;
 use std::collections::HashSet;
 use std::str::FromStr;
 use uuid::Uuid;
@@ -107,7 +108,7 @@ pub fn routes() -> Router<AppState> {
 }
 
 async fn dispatch_cart_command(
-    AuthContextExtractor(_auth): AuthContextExtractor,
+    AuthContextExtractor(auth): AuthContextExtractor,
     State(state): State<AppState>,
     Json(req): Json<CartCommandRequest>,
 ) -> Result<Json<CartProjectionDto>, ApiError> {
@@ -118,12 +119,15 @@ async fn dispatch_cart_command(
         .map(|s| Uuid::from_str(s).map(CartId))
         .transpose()
         .map_err(|e| ApiError::BadRequest(e.to_string()))?;
-    let projection = state.facade.dispatch_cart_command(cmd, cart_id).await?;
+    let projection = state
+        .facade
+        .dispatch_cart_command_for_tenant(&auth.tenant_id, cmd, cart_id)
+        .await?;
     Ok(Json(projection.into()))
 }
 
 async fn ucp_create_cart(
-    AuthContextExtractor(_auth): AuthContextExtractor,
+    AuthContextExtractor(auth): AuthContextExtractor,
     State(state): State<AppState>,
     Json(req): Json<UcpCartRequestDto>,
 ) -> Result<Json<UcpCartResponseDto>, ApiError> {
@@ -132,10 +136,12 @@ async fn ucp_create_cart(
         .ok_or_else(|| ApiError::BadRequest("merchant_id is required".to_string()))?;
     let mut projection = state
         .facade
-        .dispatch_cart_command(
+        .dispatch_cart_command_for_tenant(
+            &auth.tenant_id,
             CartCommand::CreateCart(CreateCartPayload {
                 merchant_id,
                 currency: req.currency,
+                tenant_id: Some(auth.tenant_id.clone()),
             }),
             None,
         )
@@ -144,7 +150,8 @@ async fn ucp_create_cart(
     for line in req.line_items {
         projection = state
             .facade
-            .dispatch_cart_command(
+            .dispatch_cart_command_for_tenant(
+                &auth.tenant_id,
                 CartCommand::AddItem(AddItemPayload {
                     item_id: line.item.id,
                     quantity: line.quantity,
@@ -158,21 +165,25 @@ async fn ucp_create_cart(
 }
 
 async fn ucp_get_cart(
-    AuthContextExtractor(_auth): AuthContextExtractor,
+    AuthContextExtractor(auth): AuthContextExtractor,
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<UcpCartResponseDto>, ApiError> {
     let cart_id = parse_ucp_cart_id(&id)?;
     let projection = state
         .facade
-        .dispatch_cart_command(CartCommand::GetCart(GetCartPayload { cart_id }), None)
+        .dispatch_cart_command_for_tenant(
+            &auth.tenant_id,
+            CartCommand::GetCart(GetCartPayload { cart_id }),
+            None,
+        )
         .await?;
     orchestrator_observability::incr("ucp_cart_get_total");
     Ok(Json(projection.into()))
 }
 
 async fn ucp_update_cart(
-    AuthContextExtractor(_auth): AuthContextExtractor,
+    AuthContextExtractor(auth): AuthContextExtractor,
     State(state): State<AppState>,
     Path(id): Path<String>,
     Json(req): Json<UcpCartRequestDto>,
@@ -180,7 +191,11 @@ async fn ucp_update_cart(
     let cart_id = parse_ucp_cart_id(&id)?;
     let mut projection = state
         .facade
-        .dispatch_cart_command(CartCommand::GetCart(GetCartPayload { cart_id }), None)
+        .dispatch_cart_command_for_tenant(
+            &auth.tenant_id,
+            CartCommand::GetCart(GetCartPayload { cart_id }),
+            None,
+        )
         .await?;
     let desired_existing: HashSet<String> = req
         .line_items
@@ -197,7 +212,8 @@ async fn ucp_update_cart(
         if !desired_existing.contains(&line_id) {
             projection = state
                 .facade
-                .dispatch_cart_command(
+                .dispatch_cart_command_for_tenant(
+                    &auth.tenant_id,
                     CartCommand::RemoveItem(RemoveItemPayload { line_id }),
                     Some(cart_id),
                 )
@@ -209,7 +225,8 @@ async fn ucp_update_cart(
         projection = if let Some(line_id) = line.id {
             state
                 .facade
-                .dispatch_cart_command(
+                .dispatch_cart_command_for_tenant(
+                    &auth.tenant_id,
                     CartCommand::UpdateItemQty(UpdateItemQtyPayload {
                         line_id,
                         quantity: line.quantity,
@@ -220,7 +237,8 @@ async fn ucp_update_cart(
         } else {
             state
                 .facade
-                .dispatch_cart_command(
+                .dispatch_cart_command_for_tenant(
+                    &auth.tenant_id,
                     CartCommand::AddItem(AddItemPayload {
                         item_id: line.item.id,
                         quantity: line.quantity,
@@ -235,14 +253,18 @@ async fn ucp_update_cart(
 }
 
 async fn ucp_cancel_cart(
-    AuthContextExtractor(_auth): AuthContextExtractor,
+    AuthContextExtractor(auth): AuthContextExtractor,
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<UcpCartResponseDto>, ApiError> {
     let cart_id = parse_ucp_cart_id(&id)?;
     let projection = state
         .facade
-        .dispatch_cart_command(CartCommand::CancelCart(CancelCartPayload { cart_id }), None)
+        .dispatch_cart_command_for_tenant(
+            &auth.tenant_id,
+            CartCommand::CancelCart(CancelCartPayload { cart_id }),
+            None,
+        )
         .await?;
     orchestrator_observability::incr("ucp_cart_cancel_total");
     Ok(Json(projection.into()))
@@ -251,7 +273,7 @@ async fn ucp_cancel_cart(
 /// POST /api/v1/ucp/cart/:id/fulfillment — UCP fulfillment extension (`dev.ucp.shopping.fulfillment`):
 /// quote or select a shipping/pickup destination and option for a cart's line items.
 async fn ucp_set_cart_fulfillment(
-    AuthContextExtractor(_auth): AuthContextExtractor,
+    AuthContextExtractor(auth): AuthContextExtractor,
     State(state): State<AppState>,
     Path(id): Path<String>,
     Json(req): Json<UcpFulfillmentSelectionRequestDto>,
@@ -260,7 +282,8 @@ async fn ucp_set_cart_fulfillment(
     let payload = SetFulfillmentSelectionPayload::try_from(req).map_err(ApiError::BadRequest)?;
     let projection = state
         .facade
-        .dispatch_cart_command(
+        .dispatch_cart_command_for_tenant(
+            &auth.tenant_id,
             CartCommand::SetFulfillmentSelection(Box::new(payload)),
             Some(cart_id),
         )
@@ -381,26 +404,58 @@ fn acp_version_from_headers(headers: &HeaderMap) -> Result<&'static str, ApiErro
 
 /// ACP `2026-04-17` requires a non-empty `Idempotency-Key` header on every mutating POST request;
 /// missing or blank values return `400` with `code: idempotency_key_required`.
-fn require_acp_idempotency_key(headers: &HeaderMap) -> Result<(), ApiError> {
-    let present = headers
+fn require_acp_idempotency_key(headers: &HeaderMap) -> Result<String, ApiError> {
+    headers
         .get("Idempotency-Key")
         .or_else(|| headers.get("idempotency-key"))
         .and_then(|v| v.to_str().ok())
         .map(str::trim)
         .filter(|v| !v.is_empty())
-        .is_some();
-    if present {
-        Ok(())
-    } else {
-        Err(ApiError::BadRequestWithCode(
-            "Idempotency-Key header is required".to_string(),
-            "idempotency_key_required".to_string(),
-        ))
+        .map(str::to_string)
+        .ok_or_else(|| {
+            ApiError::BadRequestWithCode(
+                "Idempotency-Key header is required".to_string(),
+                "idempotency_key_required".to_string(),
+            )
+        })
+}
+
+/// Build the PSP request. `tenant_id` comes from the caller's auth context: the
+/// body's own `tenant_id` is a claim by the caller and is only accepted when it
+/// agrees with it (see [`acp_delegate_payment`]).
+fn delegation_request(
+    req: &AcpDelegatePaymentRequest,
+    tenant_id: &str,
+    idempotency_key: String,
+) -> PaymentDelegationRequest {
+    let metadata = req
+        .metadata
+        .as_ref()
+        .and_then(|value| value.as_object())
+        .map(|map| {
+            map.iter()
+                .map(|(key, value)| {
+                    let value = match value {
+                        serde_json::Value::String(s) => s.clone(),
+                        other => other.to_string(),
+                    };
+                    (key.clone(), value)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    PaymentDelegationRequest {
+        tenant_id: tenant_id.to_string(),
+        token: req.payment_method.token.clone(),
+        method_type: req.payment_method.method_type.clone(),
+        max_amount_minor: req.payment_method.amount_minor,
+        idempotency_key,
+        metadata,
     }
 }
 
 async fn ucp_create_checkout(
-    AuthContextExtractor(_auth): AuthContextExtractor,
+    AuthContextExtractor(auth): AuthContextExtractor,
     State(state): State<AppState>,
     Json(req): Json<UcpCartRequestDto>,
 ) -> Result<Json<UcpCartResponseDto>, ApiError> {
@@ -409,10 +464,12 @@ async fn ucp_create_checkout(
         .ok_or_else(|| ApiError::BadRequest("merchant_id is required".to_string()))?;
     let mut projection = state
         .facade
-        .dispatch_cart_command(
+        .dispatch_cart_command_for_tenant(
+            &auth.tenant_id,
             CartCommand::CreateCart(CreateCartPayload {
                 merchant_id,
                 currency: req.currency,
+                tenant_id: Some(auth.tenant_id.clone()),
             }),
             None,
         )
@@ -421,7 +478,8 @@ async fn ucp_create_checkout(
     for line in req.line_items {
         projection = state
             .facade
-            .dispatch_cart_command(
+            .dispatch_cart_command_for_tenant(
+                &auth.tenant_id,
                 CartCommand::AddItem(AddItemPayload {
                     item_id: line.item.id,
                     quantity: line.quantity,
@@ -432,7 +490,8 @@ async fn ucp_create_checkout(
     }
     projection = state
         .facade
-        .dispatch_cart_command(
+        .dispatch_cart_command_for_tenant(
+            &auth.tenant_id,
             CartCommand::StartCheckout(StartCheckoutPayload {
                 cart_id,
                 cart_version: projection.version,
@@ -445,14 +504,18 @@ async fn ucp_create_checkout(
 }
 
 async fn ucp_get_checkout(
-    AuthContextExtractor(_auth): AuthContextExtractor,
+    AuthContextExtractor(auth): AuthContextExtractor,
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<UcpCartResponseDto>, ApiError> {
     let cart_id = parse_ucp_cart_id(&id)?;
     let projection = state
         .facade
-        .dispatch_cart_command(CartCommand::GetCart(GetCartPayload { cart_id }), None)
+        .dispatch_cart_command_for_tenant(
+            &auth.tenant_id,
+            CartCommand::GetCart(GetCartPayload { cart_id }),
+            None,
+        )
         .await?;
     orchestrator_observability::incr("ucp_checkout_get_total");
     Ok(Json(projection.into()))
@@ -487,14 +550,18 @@ async fn ucp_complete_checkout(
 }
 
 async fn ucp_cancel_checkout(
-    AuthContextExtractor(_auth): AuthContextExtractor,
+    AuthContextExtractor(auth): AuthContextExtractor,
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<UcpCartResponseDto>, ApiError> {
     let cart_id = parse_ucp_cart_id(&id)?;
     let projection = state
         .facade
-        .dispatch_cart_command(CartCommand::CancelCart(CancelCartPayload { cart_id }), None)
+        .dispatch_cart_command_for_tenant(
+            &auth.tenant_id,
+            CartCommand::CancelCart(CancelCartPayload { cart_id }),
+            None,
+        )
         .await?;
     orchestrator_observability::incr("ucp_checkout_cancel_total");
     Ok(Json(projection.into()))
@@ -504,7 +571,7 @@ async fn ucp_cancel_checkout(
 /// Returns a short-lived, signed handoff URL for completing checkout on the merchant's hosted
 /// embedded surface without leaving the embedding agent/client experience.
 async fn ucp_create_embedded_checkout_link(
-    AuthContextExtractor(_auth): AuthContextExtractor,
+    AuthContextExtractor(auth): AuthContextExtractor,
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<UcpEmbeddedCheckoutLinkResponseDto>, ApiError> {
@@ -512,7 +579,11 @@ async fn ucp_create_embedded_checkout_link(
     // Verify the checkout/cart exists before minting a handoff link for it.
     state
         .facade
-        .dispatch_cart_command(CartCommand::GetCart(GetCartPayload { cart_id }), None)
+        .dispatch_cart_command_for_tenant(
+            &auth.tenant_id,
+            CartCommand::GetCart(GetCartPayload { cart_id }),
+            None,
+        )
         .await?;
     let link = build_embedded_checkout_link(&state.discovery_base_url, cart_id);
     orchestrator_observability::incr("ucp_checkout_embedded_link_total");
@@ -544,7 +615,7 @@ async fn ucp_get_payment_handler(
 }
 
 async fn acp_create_session(
-    AuthContextExtractor(_auth): AuthContextExtractor,
+    AuthContextExtractor(auth): AuthContextExtractor,
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(req): Json<AcpCheckoutSessionCreateRequest>,
@@ -553,13 +624,13 @@ async fn acp_create_session(
     require_acp_idempotency_key(&headers)?;
     let mut projection = state
         .facade
-        .dispatch_cart_command(create_cart_command(&req), None)
+        .dispatch_cart_command_for_tenant(&auth.tenant_id, create_cart_command(&req), None)
         .await?;
     let cart_id = projection.cart_id;
     for cmd in add_item_commands(&req) {
         projection = state
             .facade
-            .dispatch_cart_command(cmd, Some(cart_id))
+            .dispatch_cart_command_for_tenant(&auth.tenant_id, cmd, Some(cart_id))
             .await?;
     }
     orchestrator_observability::incr("acp_checkout_session_create_total");
@@ -569,7 +640,7 @@ async fn acp_create_session(
 }
 
 async fn acp_get_session(
-    AuthContextExtractor(_auth): AuthContextExtractor,
+    AuthContextExtractor(auth): AuthContextExtractor,
     State(state): State<AppState>,
     headers: HeaderMap,
     Path(id): Path<String>,
@@ -578,7 +649,7 @@ async fn acp_get_session(
     let cart_id = parse_acp_session_id(&id).map_err(ApiError::BadRequest)?;
     let projection = state
         .facade
-        .dispatch_cart_command(get_cart_command(cart_id), None)
+        .dispatch_cart_command_for_tenant(&auth.tenant_id, get_cart_command(cart_id), None)
         .await?;
     orchestrator_observability::incr("acp_checkout_session_get_total");
     Ok(Json(
@@ -587,7 +658,7 @@ async fn acp_get_session(
 }
 
 async fn acp_update_session(
-    AuthContextExtractor(_auth): AuthContextExtractor,
+    AuthContextExtractor(auth): AuthContextExtractor,
     State(state): State<AppState>,
     headers: HeaderMap,
     Path(id): Path<String>,
@@ -597,7 +668,7 @@ async fn acp_update_session(
     let cart_id = parse_acp_session_id(&id).map_err(ApiError::BadRequest)?;
     let mut projection = state
         .facade
-        .dispatch_cart_command(get_cart_command(cart_id), None)
+        .dispatch_cart_command_for_tenant(&auth.tenant_id, get_cart_command(cart_id), None)
         .await?;
     let desired: HashSet<String> = req
         .line_items
@@ -613,7 +684,8 @@ async fn acp_update_session(
         if !desired.contains(&line_id) {
             projection = state
                 .facade
-                .dispatch_cart_command(
+                .dispatch_cart_command_for_tenant(
+                    &auth.tenant_id,
                     CartCommand::RemoveItem(RemoveItemPayload { line_id }),
                     Some(cart_id),
                 )
@@ -624,7 +696,8 @@ async fn acp_update_session(
         projection = if let Some(line_id) = line.id {
             state
                 .facade
-                .dispatch_cart_command(
+                .dispatch_cart_command_for_tenant(
+                    &auth.tenant_id,
                     CartCommand::UpdateItemQty(UpdateItemQtyPayload {
                         line_id,
                         quantity: line.quantity,
@@ -635,7 +708,8 @@ async fn acp_update_session(
         } else {
             state
                 .facade
-                .dispatch_cart_command(
+                .dispatch_cart_command_for_tenant(
+                    &auth.tenant_id,
                     CartCommand::AddItem(AddItemPayload {
                         item_id: line.item.id,
                         quantity: line.quantity,
@@ -663,11 +737,12 @@ async fn acp_complete_session(
     let cart_id = parse_acp_session_id(&id).map_err(ApiError::BadRequest)?;
     let projection = state
         .facade
-        .dispatch_cart_command(get_cart_command(cart_id), None)
+        .dispatch_cart_command_for_tenant(&auth_ctx.tenant_id, get_cart_command(cart_id), None)
         .await?;
     let _ = state
         .facade
-        .dispatch_cart_command(
+        .dispatch_cart_command_for_tenant(
+            &auth_ctx.tenant_id,
             start_checkout_command(cart_id, projection.version),
             Some(cart_id),
         )
@@ -683,7 +758,7 @@ async fn acp_complete_session(
 }
 
 async fn acp_cancel_session(
-    AuthContextExtractor(_auth): AuthContextExtractor,
+    AuthContextExtractor(auth): AuthContextExtractor,
     State(state): State<AppState>,
     headers: HeaderMap,
     Path(id): Path<String>,
@@ -693,7 +768,7 @@ async fn acp_cancel_session(
     let cart_id = parse_acp_session_id(&id).map_err(ApiError::BadRequest)?;
     let projection = state
         .facade
-        .dispatch_cart_command(cancel_cart_command(cart_id), None)
+        .dispatch_cart_command_for_tenant(&auth.tenant_id, cancel_cart_command(cart_id), None)
         .await?;
     orchestrator_observability::incr("acp_checkout_session_cancel_total");
     Ok(Json(
@@ -704,7 +779,7 @@ async fn acp_cancel_session(
 /// ACP Cart Capability (added `2026-04-17`): pre-checkout basket state, decoupled from the
 /// checkout session. `POST /api/v1/acp/carts` creates a cart with estimated pricing.
 async fn acp_create_cart(
-    AuthContextExtractor(_auth): AuthContextExtractor,
+    AuthContextExtractor(auth): AuthContextExtractor,
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(req): Json<AcpCartCreateRequest>,
@@ -713,13 +788,17 @@ async fn acp_create_cart(
     require_acp_idempotency_key(&headers)?;
     let mut projection = state
         .facade
-        .dispatch_cart_command(create_cart_command_for_acp_cart(&req), None)
+        .dispatch_cart_command_for_tenant(
+            &auth.tenant_id,
+            create_cart_command_for_acp_cart(&req),
+            None,
+        )
         .await?;
     let cart_id = projection.cart_id;
     for cmd in add_item_commands_for_acp_cart(&req) {
         projection = state
             .facade
-            .dispatch_cart_command(cmd, Some(cart_id))
+            .dispatch_cart_command_for_tenant(&auth.tenant_id, cmd, Some(cart_id))
             .await?;
     }
     orchestrator_observability::incr("acp_cart_create_total");
@@ -729,7 +808,7 @@ async fn acp_create_cart(
 }
 
 async fn acp_get_cart(
-    AuthContextExtractor(_auth): AuthContextExtractor,
+    AuthContextExtractor(auth): AuthContextExtractor,
     State(state): State<AppState>,
     headers: HeaderMap,
     Path(id): Path<String>,
@@ -738,7 +817,7 @@ async fn acp_get_cart(
     let cart_id = parse_acp_cart_id(&id).map_err(ApiError::BadRequest)?;
     let projection = state
         .facade
-        .dispatch_cart_command(get_cart_command(cart_id), None)
+        .dispatch_cart_command_for_tenant(&auth.tenant_id, get_cart_command(cart_id), None)
         .await?;
     orchestrator_observability::incr("acp_cart_get_total");
     Ok(Json(
@@ -747,7 +826,7 @@ async fn acp_get_cart(
 }
 
 async fn acp_update_cart_endpoint(
-    AuthContextExtractor(_auth): AuthContextExtractor,
+    AuthContextExtractor(auth): AuthContextExtractor,
     State(state): State<AppState>,
     headers: HeaderMap,
     Path(id): Path<String>,
@@ -757,7 +836,7 @@ async fn acp_update_cart_endpoint(
     let cart_id = parse_acp_cart_id(&id).map_err(ApiError::BadRequest)?;
     let mut projection = state
         .facade
-        .dispatch_cart_command(get_cart_command(cart_id), None)
+        .dispatch_cart_command_for_tenant(&auth.tenant_id, get_cart_command(cart_id), None)
         .await?;
     let desired: HashSet<String> = req
         .line_items
@@ -773,7 +852,8 @@ async fn acp_update_cart_endpoint(
         if !desired.contains(&line_id) {
             projection = state
                 .facade
-                .dispatch_cart_command(
+                .dispatch_cart_command_for_tenant(
+                    &auth.tenant_id,
                     CartCommand::RemoveItem(RemoveItemPayload { line_id }),
                     Some(cart_id),
                 )
@@ -784,7 +864,8 @@ async fn acp_update_cart_endpoint(
         projection = if let Some(line_id) = line.id {
             state
                 .facade
-                .dispatch_cart_command(
+                .dispatch_cart_command_for_tenant(
+                    &auth.tenant_id,
                     CartCommand::UpdateItemQty(UpdateItemQtyPayload {
                         line_id,
                         quantity: line.quantity,
@@ -795,7 +876,8 @@ async fn acp_update_cart_endpoint(
         } else {
             state
                 .facade
-                .dispatch_cart_command(
+                .dispatch_cart_command_for_tenant(
+                    &auth.tenant_id,
                     CartCommand::AddItem(AddItemPayload {
                         item_id: line.item.id,
                         quantity: line.quantity,
@@ -812,7 +894,7 @@ async fn acp_update_cart_endpoint(
 }
 
 async fn acp_cancel_cart_endpoint(
-    AuthContextExtractor(_auth): AuthContextExtractor,
+    AuthContextExtractor(auth): AuthContextExtractor,
     State(state): State<AppState>,
     headers: HeaderMap,
     Path(id): Path<String>,
@@ -822,7 +904,7 @@ async fn acp_cancel_cart_endpoint(
     let cart_id = parse_acp_cart_id(&id).map_err(ApiError::BadRequest)?;
     let projection = state
         .facade
-        .dispatch_cart_command(cancel_cart_command(cart_id), None)
+        .dispatch_cart_command_for_tenant(&auth.tenant_id, cancel_cart_command(cart_id), None)
         .await?;
     orchestrator_observability::incr("acp_cart_cancel_total");
     Ok(Json(
@@ -831,20 +913,31 @@ async fn acp_cancel_cart_endpoint(
 }
 
 async fn acp_delegate_payment(
-    AuthContextExtractor(_auth): AuthContextExtractor,
+    AuthContextExtractor(auth): AuthContextExtractor,
+    State(state): State<AppState>,
     headers: HeaderMap,
     Json(req): Json<AcpDelegatePaymentRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     acp_version_from_headers(&headers)?;
-    require_acp_idempotency_key(&headers)?;
+    let idempotency_key = require_acp_idempotency_key(&headers)?;
     if req.payment_method.token.trim().is_empty() {
         return Err(ApiError::BadRequest(
             "payment_method.token is required".to_string(),
         ));
     }
-    let response = delegate_payment_response(&req);
+    // Delegation mints a spendable token. Taking the tenant from the body would
+    // let any authenticated caller mint one against someone else's account.
+    if !req.tenant_id.trim().is_empty() && req.tenant_id != auth.tenant_id {
+        return Err(ApiError::Forbidden("tenant mismatch".to_string()));
+    }
+    let delegated = state
+        .facade
+        .delegate_payment(delegation_request(&req, &auth.tenant_id, idempotency_key))
+        .await?;
     orchestrator_observability::incr("acp_delegate_payment_total");
-    Ok(Json(serde_json::to_value(response).unwrap()))
+    Ok(Json(
+        serde_json::to_value(delegate_payment_response(&delegated)).unwrap(),
+    ))
 }
 
 async fn execute_checkout(
@@ -882,27 +975,36 @@ async fn a2a_execute_checkout(
 
 /// POST /api/v1/a2a/cart — A2A envelope: { "capability": "...", "payload": { "command": { "kind": "...", ... }, "cart_id": "..."? } }. Same policy as REST.
 async fn a2a_dispatch_cart_command(
-    AuthContextExtractor(_auth): AuthContextExtractor,
+    AuthContextExtractor(auth): AuthContextExtractor,
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(body): Json<serde_json::Value>,
 ) -> Result<Json<CartProjectionDto>, ApiError> {
     let _version = a2a_version_from_headers(&headers)?;
     let (cmd, cart_id) = normalize_a2a_cart_envelope(&body).map_err(ApiError::BadRequest)?;
-    let projection = state.facade.dispatch_cart_command(cmd, cart_id).await?;
+    let projection = state
+        .facade
+        .dispatch_cart_command_for_tenant(&auth.tenant_id, cmd, cart_id)
+        .await?;
     Ok(Json(projection.into()))
 }
 
 /// POST /api/v1/a2a/identity/link — A2A envelope:
 /// `{ "capability": "dev.ucp.identity.linking", "payload": { ... } }`.
 async fn a2a_link_identity(
-    AuthContextExtractor(_auth): AuthContextExtractor,
+    AuthContextExtractor(auth): AuthContextExtractor,
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(body): Json<serde_json::Value>,
 ) -> Result<Json<IdentityLinkResultDto>, ApiError> {
     let _version = a2a_version_from_headers(&headers)?;
-    let request = normalize_a2a_identity_link_envelope(&body).map_err(ApiError::BadRequest)?;
+    let mut request = normalize_a2a_identity_link_envelope(&body).map_err(ApiError::BadRequest)?;
+    // The envelope is written by the caller; a link is created for the tenant they
+    // actually authenticated as.
+    if !request.tenant_id.trim().is_empty() && request.tenant_id != auth.tenant_id {
+        return Err(ApiError::Forbidden("tenant mismatch".to_string()));
+    }
+    request.tenant_id = auth.tenant_id.clone();
     let result = state.facade.link_identity(request).await?;
     Ok(Json(result.into()))
 }

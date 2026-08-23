@@ -26,8 +26,13 @@ pub trait WebhookStore: Send + Sync {
     async fn list_by_tenant(&self, tenant_id: &str)
         -> Result<Vec<WebhookRegistration>, StoreError>;
     async fn get(&self, id: &str) -> Result<Option<WebhookRegistration>, StoreError>;
+    /// Active registrations of one tenant that subscribe to `topic`.
+    ///
+    /// Scoping by tenant is not an optimisation: an unscoped topic lookup sends
+    /// one tenant's events to every other tenant's endpoints.
     async fn list_active_for_topic(
         &self,
+        tenant_id: &str,
         topic: &str,
     ) -> Result<Vec<WebhookRegistration>, StoreError>;
 }
@@ -69,6 +74,7 @@ impl WebhookStore for InMemoryWebhookStore {
 
     async fn list_active_for_topic(
         &self,
+        tenant_id: &str,
         topic: &str,
     ) -> Result<Vec<WebhookRegistration>, StoreError> {
         let guard = self.records.lock().await;
@@ -76,6 +82,7 @@ impl WebhookStore for InMemoryWebhookStore {
             .values()
             .filter(|r| {
                 r.active
+                    && r.tenant_id == tenant_id
                     && r.event_filter
                         .as_ref()
                         .is_none_or(|f| f.iter().any(|t| t == topic))
@@ -114,9 +121,27 @@ impl WebhookDeliverer {
 #[async_trait]
 impl OutboxDeliverer for WebhookDeliverer {
     async fn deliver(&self, message: &OutboxMessage) -> Result<(), OutboxDeliveryError> {
+        // An event with no owning tenant cannot be routed. Delivering it would mean
+        // handing one tenant's order to every subscriber on the topic, so it is
+        // dropped and counted instead.
+        let Some(tenant_id) = message
+            .tenant_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|t| !t.is_empty())
+        else {
+            orchestrator_observability::incr("webhook_delivery_unscoped_total");
+            tracing::warn!(
+                message_id = %message.id,
+                topic = %message.topic,
+                "outbox message carries no tenant; not delivering rather than fanning out across tenants"
+            );
+            return Ok(());
+        };
+
         let registrations = self
             .webhook_store
-            .list_active_for_topic(&message.topic)
+            .list_active_for_topic(tenant_id, &message.topic)
             .await
             .map_err(|e| OutboxDeliveryError(e.to_string()))?;
 
@@ -133,10 +158,11 @@ impl OutboxDeliverer for WebhookDeliverer {
         let body_bytes =
             serde_json::to_vec(&body).map_err(|e| OutboxDeliveryError(e.to_string()))?;
 
-        let started = std::time::Instant::now();
         let mut last_error = None;
         for reg in &registrations {
             let signature = Self::compute_signature(&reg.secret, &body_bytes);
+            // Timed per registration so one slow subscriber does not distort the others.
+            let started = std::time::Instant::now();
             let result = self
                 .client
                 .post(&reg.url)
@@ -155,13 +181,21 @@ impl OutboxDeliverer for WebhookDeliverer {
                         "success",
                         started.elapsed().as_secs_f64(),
                     );
+                    orchestrator_observability::incr("webhook_delivery_success_total");
                 }
                 Ok(resp) => {
-                    let status = resp.status().to_string();
+                    let status = resp.status();
                     orchestrator_observability::observe_operation(
                         "webhook_delivery",
                         "error",
                         started.elapsed().as_secs_f64(),
+                    );
+                    orchestrator_observability::incr("webhook_delivery_failure_total");
+                    tracing::warn!(
+                        webhook_id = %reg.id,
+                        topic = %message.topic,
+                        status = status.as_u16(),
+                        "webhook delivery rejected"
                     );
                     last_error = Some(format!("webhook {} returned {}", reg.url, status));
                 }
@@ -170,6 +204,13 @@ impl OutboxDeliverer for WebhookDeliverer {
                         "webhook_delivery",
                         "error",
                         started.elapsed().as_secs_f64(),
+                    );
+                    orchestrator_observability::incr("webhook_delivery_failure_total");
+                    tracing::warn!(
+                        webhook_id = %reg.id,
+                        topic = %message.topic,
+                        error = %e,
+                        "webhook delivery failed"
                     );
                     last_error = Some(format!("webhook {} failed: {}", reg.url, e));
                 }
@@ -206,8 +247,73 @@ mod tests {
         assert_eq!(hooks.len(), 1);
         assert_eq!(hooks[0].id, "wh_1");
 
-        let active = store.list_active_for_topic("order.created").await.unwrap();
+        let active = store
+            .list_active_for_topic("t1", "order.created")
+            .await
+            .unwrap();
         assert_eq!(active.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_topic_lookup_never_crosses_tenants() {
+        let store = InMemoryWebhookStore::default();
+        for tenant in ["t1", "t2"] {
+            store
+                .register(WebhookRegistration {
+                    id: format!("wh_{}", tenant),
+                    tenant_id: tenant.to_string(),
+                    url: format!("https://{}.example.com/hook", tenant),
+                    secret: "s".to_string(),
+                    event_filter: None,
+                    active: true,
+                })
+                .await
+                .unwrap();
+        }
+
+        let matched = store
+            .list_active_for_topic("t1", "order.created")
+            .await
+            .unwrap();
+        assert_eq!(
+            matched.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
+            vec!["wh_t1"],
+            "t1's event must not reach t2's endpoint"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_untenanted_message_is_not_delivered_to_anyone() {
+        let store = Arc::new(InMemoryWebhookStore::default());
+        store
+            .register(WebhookRegistration {
+                id: "wh_1".to_string(),
+                // A URL that would fail loudly if it were ever called.
+                tenant_id: "t1".to_string(),
+                url: "http://127.0.0.1:1/hook".to_string(),
+                secret: "s".to_string(),
+                event_filter: None,
+                active: true,
+            })
+            .await
+            .unwrap();
+
+        let deliverer = WebhookDeliverer::new(store);
+        let result = deliverer
+            .deliver(&OutboxMessage {
+                id: "msg_1".to_string(),
+                topic: "order.created".to_string(),
+                payload: "ord_1".to_string(),
+                correlation_id: "c".to_string(),
+                attempts: 0,
+                tenant_id: None,
+            })
+            .await;
+
+        assert!(
+            result.is_ok(),
+            "an untenanted message is dropped, not retried forever"
+        );
     }
 
     #[tokio::test]
@@ -246,11 +352,14 @@ mod tests {
             .await
             .unwrap();
 
-        let matched = store.list_active_for_topic("order.created").await.unwrap();
+        let matched = store
+            .list_active_for_topic("t1", "order.created")
+            .await
+            .unwrap();
         assert!(matched.is_empty());
 
         let matched = store
-            .list_active_for_topic("payment.captured")
+            .list_active_for_topic("t1", "payment.captured")
             .await
             .unwrap();
         assert_eq!(matched.len(), 1);

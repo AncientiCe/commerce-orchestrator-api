@@ -13,7 +13,9 @@ use orchestrator_core::policy::PolicyEngine;
 use orchestrator_core::{UCP_LATEST_VERSION, UCP_SUPPORTED_VERSIONS};
 use orchestrator_runtime::{ProviderSet, Runner, RunnerError};
 use provider_contracts::{
-    CatalogProvider, GeoProvider, PaymentOperationResult, PaymentProvider, PricingProvider,
+    CatalogProvider, DelegatedPayment, FulfillmentProvider, GeoProvider, IdentityLinkProvider,
+    IdentityLinkRequest as ProviderIdentityLinkRequest, PaymentDelegationProvider,
+    PaymentDelegationRequest, PaymentOperationResult, PaymentProvider, PricingProvider,
     ReceiptProvider, TaxProvider,
 };
 use std::sync::Arc;
@@ -25,6 +27,12 @@ pub struct OrchestratorFacade {
     runner: Runner,
     /// When true, checkout requires valid AP2 artifacts (consent proof, payment_handler_id); fail closed if missing.
     ap2_strict: bool,
+    /// PSP that mints delegated payment tokens. `None` means this deployment does
+    /// not offer delegation, and says so in discovery and at the endpoint.
+    payment_delegation: Option<Arc<dyn PaymentDelegationProvider>>,
+    /// Identity system that binds an agent to a platform identity. `None` means
+    /// identity linking is not offered here.
+    identity_link: Option<Arc<dyn IdentityLinkProvider>>,
 }
 
 impl OrchestratorFacade {
@@ -44,10 +52,13 @@ impl OrchestratorFacade {
             geo,
             payment,
             receipt,
+            fulfillment: None,
         };
         Self {
             runner: Runner::new(providers, policy),
             ap2_strict: false,
+            payment_delegation: None,
+            identity_link: None,
         }
     }
 
@@ -56,6 +67,51 @@ impl OrchestratorFacade {
     pub fn with_ap2_strict(mut self, strict: bool) -> Self {
         self.ap2_strict = strict;
         self
+    }
+
+    /// Route fulfillment rating to a provider instead of the built-in static rate table.
+    pub fn with_fulfillment_provider(mut self, provider: Arc<dyn FulfillmentProvider>) -> Self {
+        self.runner = self.runner.with_fulfillment_provider(provider);
+        self
+    }
+
+    /// Delegate payment tokens through a real PSP, enabling `POST /acp/delegate_payment`.
+    pub fn with_payment_delegation(mut self, provider: Arc<dyn PaymentDelegationProvider>) -> Self {
+        self.payment_delegation = Some(provider);
+        self
+    }
+
+    /// Link identities through a real identity system, enabling identity linking.
+    pub fn with_identity_link_provider(mut self, provider: Arc<dyn IdentityLinkProvider>) -> Self {
+        self.identity_link = Some(provider);
+        self
+    }
+
+    /// Whether this deployment can actually delegate payment.
+    pub fn supports_payment_delegation(&self) -> bool {
+        self.payment_delegation.is_some()
+    }
+
+    /// Whether this deployment can actually link identities.
+    pub fn supports_identity_linking(&self) -> bool {
+        self.identity_link.is_some()
+    }
+
+    /// Deliver outbox messages to this orchestrator's registered webhooks.
+    pub fn with_webhook_delivery(mut self) -> Self {
+        let deliverer = orchestrator_runtime::webhook_deliverer_for(&self.runner);
+        self.runner = self.runner.with_outbox_deliverer(deliverer);
+        self
+    }
+
+    /// Start the background outbox processor. The returned handle completes once
+    /// `shutdown` is set and the queue has drained.
+    pub fn spawn_outbox_processor(
+        &self,
+        config: orchestrator_runtime::OutboxProcessorConfig,
+        shutdown: tokio::sync::watch::Receiver<bool>,
+    ) -> tokio::task::JoinHandle<()> {
+        orchestrator_runtime::OutboxProcessor::new(self.runner.clone(), config).spawn(shutdown)
     }
 
     /// Create a facade with persistent file-backed stores (for production).
@@ -77,11 +133,14 @@ impl OrchestratorFacade {
             geo,
             payment,
             receipt,
+            fulfillment: None,
         };
         let runner = Runner::new_persistent(providers, policy, base_path).await?;
         Ok(Self {
             runner,
             ap2_strict: false,
+            payment_delegation: None,
+            identity_link: None,
         })
     }
 
@@ -104,11 +163,14 @@ impl OrchestratorFacade {
             geo,
             payment,
             receipt,
+            fulfillment: None,
         };
         let runner = Runner::new_postgres(providers, policy, database_url).await?;
         Ok(Self {
             runner,
             ap2_strict: false,
+            payment_delegation: None,
+            identity_link: None,
         })
     }
 
@@ -128,6 +190,45 @@ impl OrchestratorFacade {
         let status = if result.is_ok() { "success" } else { "error" };
         orchestrator_observability::observe_operation(op, status, started.elapsed().as_secs_f64());
         result
+    }
+
+    /// Dispatch a cart command on behalf of an authenticated caller.
+    ///
+    /// A cart id is guessable-in-principle and is presented by whoever holds it,
+    /// so it is not an authorization. Creation stamps the caller's tenant onto the
+    /// cart; every other command is refused unless the cart already belongs to
+    /// that tenant. Protocol shims (REST, UCP, ACP, A2A, MCP) must use this
+    /// instead of [`Self::dispatch_cart_command`], which trusts its caller.
+    pub async fn dispatch_cart_command_for_tenant(
+        &self,
+        tenant_id: &str,
+        cmd: CartCommand,
+        cart_id: Option<CartId>,
+    ) -> Result<CartProjection, FacadeError> {
+        let cmd = cmd.with_tenant(tenant_id);
+        if let Some(target) = cart_id.or_else(|| cart_id_from_command(&cmd)) {
+            self.assert_cart_belongs_to(tenant_id, &target).await?;
+        }
+        self.dispatch_cart_command(cmd, cart_id).await
+    }
+
+    /// Refuse to touch a cart owned by another tenant. A cart with no owner
+    /// recorded is treated as inaccessible rather than public.
+    async fn assert_cart_belongs_to(
+        &self,
+        tenant_id: &str,
+        cart_id: &CartId,
+    ) -> Result<(), FacadeError> {
+        let Some(cart) = self.runner.cart_snapshot(cart_id).await else {
+            // Let the command itself report "not found", so behaviour for a
+            // missing cart is unchanged.
+            return Ok(());
+        };
+        if cart.tenant_id.as_deref() == Some(tenant_id) {
+            return Ok(());
+        }
+        orchestrator_observability::incr("cart_tenant_mismatch_total");
+        Err(FacadeError::Authz(AuthzError::TenantMismatch))
     }
 
     /// Execute checkout for a cart.
@@ -422,8 +523,9 @@ impl OrchestratorFacade {
         result
     }
 
-    /// Link a platform identity to an agent-facing commerce context.
-    /// This lightweight endpoint keeps compatibility while exposing standardized identity-linking.
+    /// Link a platform identity to an agent-facing commerce context via the
+    /// configured identity provider. Without one, this deployment does not offer
+    /// identity linking and says so rather than inventing a link id.
     pub async fn link_identity(
         &self,
         request: IdentityLinkRequest,
@@ -447,22 +549,92 @@ impl OrchestratorFacade {
             ));
         }
 
-        let result = IdentityLinkResult {
-            ucp_version: UCP_LATEST_VERSION.to_string(),
-            supported_versions: UCP_SUPPORTED_VERSIONS
-                .iter()
-                .map(|v| (*v).to_string())
-                .collect(),
-            link_id: format!("idlink_{}", uuid::Uuid::new_v4()),
-            status: "linked".to_string(),
+        let Some(provider) = self.identity_link.as_ref() else {
+            orchestrator_observability::incr("identity_link_not_configured_total");
+            orchestrator_observability::observe_operation(
+                "identity_link",
+                "not_configured",
+                started.elapsed().as_secs_f64(),
+            );
+            return Err(FacadeError::NotConfigured(
+                "identity linking (set IDENTITY_LINK_BASE_URL)",
+            ));
         };
+
+        let record = provider
+            .link(&ProviderIdentityLinkRequest {
+                tenant_id: request.tenant_id,
+                merchant_id: request.merchant_id,
+                agent_id: request.agent_id,
+                link_token: request.link_token,
+            })
+            .await;
+        let record = match record {
+            Ok(record) => record,
+            Err(error) => {
+                orchestrator_observability::incr("identity_link_errors_total");
+                orchestrator_observability::observe_operation(
+                    "identity_link",
+                    "error",
+                    started.elapsed().as_secs_f64(),
+                );
+                return Err(FacadeError::IdentityLink(error.to_string()));
+            }
+        };
+
         orchestrator_observability::incr("identity_link_success_total");
         orchestrator_observability::observe_operation(
             "identity_link",
             "success",
             started.elapsed().as_secs_f64(),
         );
-        Ok(result)
+        Ok(IdentityLinkResult {
+            ucp_version: UCP_LATEST_VERSION.to_string(),
+            supported_versions: UCP_SUPPORTED_VERSIONS
+                .iter()
+                .map(|v| (*v).to_string())
+                .collect(),
+            link_id: record.link_id,
+            status: record.status,
+        })
+    }
+
+    /// Exchange the caller's payment credential for a delegated one at the PSP.
+    pub async fn delegate_payment(
+        &self,
+        request: PaymentDelegationRequest,
+    ) -> Result<DelegatedPayment, FacadeError> {
+        let started = Instant::now();
+        orchestrator_observability::incr("payment_delegation_requests_total");
+
+        let Some(provider) = self.payment_delegation.as_ref() else {
+            orchestrator_observability::incr("payment_delegation_not_configured_total");
+            orchestrator_observability::observe_operation(
+                "payment_delegation",
+                "not_configured",
+                started.elapsed().as_secs_f64(),
+            );
+            return Err(FacadeError::NotConfigured(
+                "payment delegation (set PAYMENT_DELEGATION_BASE_URL)",
+            ));
+        };
+
+        let result = provider
+            .delegate(&request)
+            .await
+            .map_err(|error| FacadeError::PaymentDelegation(error.to_string()));
+        let status = if result.is_ok() { "success" } else { "error" };
+        if result.is_err() {
+            orchestrator_observability::incr("payment_delegation_errors_total");
+        } else {
+            orchestrator_observability::incr("payment_delegation_success_total");
+        }
+        orchestrator_observability::observe_operation(
+            "payment_delegation",
+            status,
+            started.elapsed().as_secs_f64(),
+        );
+        result
     }
 }
 
@@ -484,6 +656,20 @@ pub enum FacadeError {
     Ap2Verification(#[from] Ap2VerificationError),
     #[error("identity linking failed: {0}")]
     IdentityLink(String),
+    #[error("payment delegation failed: {0}")]
+    PaymentDelegation(String),
+    #[error("this deployment does not offer {0}")]
+    NotConfigured(&'static str),
+}
+
+/// The cart a command addresses, for commands that carry the id in their payload.
+fn cart_id_from_command(cmd: &CartCommand) -> Option<CartId> {
+    match cmd {
+        CartCommand::GetCart(payload) => Some(payload.cart_id),
+        CartCommand::StartCheckout(payload) => Some(payload.cart_id),
+        CartCommand::CancelCart(payload) => Some(payload.cart_id),
+        _ => None,
+    }
 }
 
 fn cart_command_operation(cmd: &CartCommand) -> &'static str {

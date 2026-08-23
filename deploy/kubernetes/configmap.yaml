@@ -1,5 +1,5 @@
-# ConfigMap: non-sensitive runtime config (component API URLs, server, persistence).
-# Override values per environment; secrets go in secret.yaml.
+# ConfigMap: non-sensitive runtime config (component API URLs, server).
+# Override values per environment; credentials and keys go in secret.yaml.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -11,8 +11,6 @@ data:
   BIND_ADDR: "0.0.0.0:8080"
   RUST_LOG: "info"
   PUBLIC_BASE_URL: "https://orchestrator.example.com"
-  # Persistence path inside the container (e.g. emptyDir or PVC mount).
-  PERSISTENCE_PATH: "/data"
   # Downstream component API base URLs (no trailing slash). Replace with your service URLs.
   CATALOG_BASE_URL: "http://catalog-service:8080"
   PRICING_BASE_URL: "http://pricing-service:8080"
@@ -20,3 +18,13 @@ data:
   GEO_BASE_URL: "http://geo-service:8080"
   PAYMENT_BASE_URL: "http://payment-service:8080"
   RECEIPT_BASE_URL: "http://receipt-service:8080"
+  # Optional providers. Leave unset to keep the capability unadvertised and the
+  # endpoint returning 501 NOT_CONFIGURED rather than faking a result.
+  # FULFILLMENT_BASE_URL: "http://fulfillment-service:8080"
+  # PAYMENT_DELEGATION_BASE_URL: "http://psp-delegation:8080"
+  # IDENTITY_LINK_BASE_URL: "http://identity-service:8080"
+  # Outbox processor: poll interval, batch size, and shutdown drain budget.
+  OUTBOX_INTERVAL_MS: "1000"
+  OUTBOX_BATCH_SIZE: "50"
+  OUTBOX_MAX_ATTEMPTS: "8"
+  OUTBOX_DRAIN_TIMEOUT_SECS: "30"

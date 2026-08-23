@@ -7,6 +7,7 @@ pub mod authn;
 pub mod authz;
 pub mod facade;
 pub mod pii;
+pub mod signing;
 pub mod ucp_mapping;
 
 pub use acp_mapping::*;
@@ -16,4 +17,5 @@ pub use authn::*;
 pub use authz::*;
 pub use facade::*;
 pub use pii::*;
+pub use signing::*;
 pub use ucp_mapping::*;

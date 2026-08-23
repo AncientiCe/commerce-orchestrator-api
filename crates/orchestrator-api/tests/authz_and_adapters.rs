@@ -2,8 +2,9 @@ use orchestrator_api::{
     authorize_checkout, build_well_known_manifest_with_version, extract_ap2_metadata,
     extract_mpp_metadata, is_supported_a2a_profile_version, negotiate_a2a_version,
     normalize_a2a_checkout_envelope, normalize_a2a_identity_link_envelope, redact_checkout_request,
-    verify_ap2_strict, A2AHandoffProfile, AuthContext, FacadeError, OrchestratorFacade,
-    UcpCheckoutEnvelope, A2A_PROFILE_VERSION, AP2_PROTOCOL_VERSION,
+    verify_ap2_strict, A2AHandoffProfile, AdvertisedCapabilities, AuthContext, FacadeError,
+    OrchestratorFacade, SigningKeyring, UcpCheckoutEnvelope, A2A_PROFILE_VERSION,
+    AP2_PROTOCOL_VERSION,
 };
 use orchestrator_core::contract::{
     AddItemPayload, CartCommand, CartId, CheckoutRequest, CreateCartPayload, CustomerHint,
@@ -240,6 +241,7 @@ fn selects_supported_ucp_version_when_requested() {
     let manifest = build_well_known_manifest_with_version(
         "https://orchestrator.example.com",
         Some("2026-01-11"),
+        &AdvertisedCapabilities::default(),
     );
     assert_eq!(manifest.ucp.version, "2026-01-11");
     assert_eq!(
@@ -271,6 +273,7 @@ async fn ap2_strict_rejects_missing_consent_and_handler() {
             CartCommand::CreateCart(CreateCartPayload {
                 merchant_id: "m".to_string(),
                 currency: "USD".to_string(),
+                tenant_id: None,
             }),
             None,
         )
@@ -335,6 +338,7 @@ async fn ap2_strict_accepts_structured_consent_proof() {
             CartCommand::CreateCart(CreateCartPayload {
                 merchant_id: "m".to_string(),
                 currency: "USD".to_string(),
+                tenant_id: None,
             }),
             None,
         )
@@ -401,6 +405,7 @@ async fn ap2_strict_rejects_expired_or_mismatched_consent_proof() {
             CartCommand::CreateCart(CreateCartPayload {
                 merchant_id: "m".to_string(),
                 currency: "USD".to_string(),
+                tenant_id: None,
             }),
             None,
         )
@@ -490,6 +495,7 @@ async fn ap2_strict_rejects_mandate_replay() {
             CartCommand::CreateCart(CreateCartPayload {
                 merchant_id: "m".to_string(),
                 currency: "USD".to_string(),
+                tenant_id: None,
             }),
             None,
         )
@@ -511,6 +517,7 @@ async fn ap2_strict_rejects_mandate_replay() {
             CartCommand::CreateCart(CreateCartPayload {
                 merchant_id: "m".to_string(),
                 currency: "USD".to_string(),
+                tenant_id: None,
             }),
             None,
         )
@@ -599,6 +606,7 @@ async fn authorized_checkout_succeeds_for_matching_tenant() {
             CartCommand::CreateCart(CreateCartPayload {
                 merchant_id: "m".to_string(),
                 currency: "USD".to_string(),
+                tenant_id: None,
             }),
             None,
         )
@@ -704,6 +712,7 @@ async fn cross_tenant_idempotency_isolation() {
             CartCommand::CreateCart(CreateCartPayload {
                 merchant_id: "m".to_string(),
                 currency: "USD".to_string(),
+                tenant_id: None,
             }),
             None,
         )
@@ -734,6 +743,7 @@ async fn cross_tenant_idempotency_isolation() {
             CartCommand::CreateCart(CreateCartPayload {
                 merchant_id: "m".to_string(),
                 currency: "USD".to_string(),
+                tenant_id: None,
             }),
             None,
         )
@@ -832,6 +842,7 @@ async fn execute_checkout_rejects_stale_cart_version() {
             CartCommand::CreateCart(CreateCartPayload {
                 merchant_id: "m".to_string(),
                 currency: "USD".to_string(),
+                tenant_id: None,
             }),
             None,
         )
@@ -1001,10 +1012,24 @@ fn ap2_0_2_rejects_hnp_when_amount_exceeds_open_constraint() {
 
 #[test]
 fn discovery_advertises_signing_keys_payment_handlers_and_protocol_versions() {
-    let manifest = build_well_known_manifest_with_version("https://example.com", None);
+    let keyring = SigningKeyring::from_seeds(
+        "orch-2026-a",
+        "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+        &[],
+    )
+    .expect("keyring");
+    let manifest = build_well_known_manifest_with_version(
+        "https://example.com",
+        None,
+        &AdvertisedCapabilities::with_signing_keys(keyring.public_jwks()),
+    );
     let flags = manifest.ucp.capability_flags.expect("flags");
     assert_eq!(flags.get("dev.ucp.payments.mpp"), Some(&true));
-    assert!(!manifest.ucp.signing_keys.as_ref().unwrap().is_empty());
+    assert_eq!(flags.get("dev.ucp.security.signatures"), Some(&true));
+    assert_eq!(
+        manifest.ucp.signing_keys.as_ref().unwrap()[0].kid,
+        "orch-2026-a"
+    );
     assert!(!manifest.ucp.payment_handlers.as_ref().unwrap().is_empty());
     assert_eq!(manifest.ucp.a2a_profile_version.as_deref(), Some("1.0"));
     assert_eq!(manifest.ucp.ap2_protocol_version.as_deref(), Some("0.2"));

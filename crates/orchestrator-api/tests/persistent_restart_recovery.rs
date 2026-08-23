@@ -48,6 +48,7 @@ async fn persistent_runner_restart_returns_same_idempotent_result() {
             CartCommand::CreateCart(CreateCartPayload {
                 merchant_id: "merchant_1".to_string(),
                 currency: "USD".to_string(),
+                tenant_id: Some("tenant_1".to_string()),
             }),
             None,
         )
@@ -160,6 +161,7 @@ async fn payment_lifecycle_state_survives_restart() {
             CartCommand::CreateCart(CreateCartPayload {
                 merchant_id: "merchant_1".to_string(),
                 currency: "USD".to_string(),
+                tenant_id: Some("tenant_1".to_string()),
             }),
             None,
         )

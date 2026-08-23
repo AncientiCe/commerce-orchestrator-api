@@ -2,6 +2,7 @@
 
 use async_trait::async_trait;
 use orchestrator_core::contract::CartProjection;
+use orchestrator_core::discount::AppliedDiscount;
 use provider_contracts::{LinePrice, PricingError, PricingProvider};
 
 use crate::client::{build_client, post_json_with_retry, ClientConfig};
@@ -18,6 +19,41 @@ pub struct LinePriceDto {
     pub line_id: String,
     pub unit_price_minor: i64,
     pub total_minor: i64,
+}
+
+/// Response DTO from the pricing API's discount evaluation.
+#[derive(Debug, serde::Deserialize)]
+pub struct ResolveDiscountsResponse {
+    #[serde(default)]
+    pub discounts: Vec<AppliedDiscountDto>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct AppliedDiscountDto {
+    pub code: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    pub amount_minor: i64,
+    #[serde(default)]
+    pub line_id: Option<String>,
+}
+
+impl From<AppliedDiscountDto> for AppliedDiscount {
+    fn from(d: AppliedDiscountDto) -> Self {
+        AppliedDiscount {
+            code: d.code,
+            description: d.description,
+            amount_minor: d.amount_minor,
+            line_id: d.line_id,
+        }
+    }
+}
+
+/// Request body sent to the pricing API when evaluating adjustment codes.
+#[derive(Debug, serde::Serialize)]
+struct ResolveDiscountsRequest<'a> {
+    cart: &'a CartProjection,
+    codes: &'a [String],
 }
 
 impl From<LinePriceDto> for LinePrice {
@@ -52,6 +88,11 @@ impl PricingHttpAdapter {
         let base = self.base_url.trim_end_matches('/');
         format!("{}/prices/resolve", base)
     }
+
+    fn discounts_url(&self) -> String {
+        let base = self.base_url.trim_end_matches('/');
+        format!("{}/discounts/resolve", base)
+    }
 }
 
 #[async_trait]
@@ -66,5 +107,34 @@ impl PricingProvider for PricingHttpAdapter {
             .await
             .map_err(|e| PricingError::Failed(format!("invalid pricing response: {}", e)))?;
         Ok(body.prices.into_iter().map(LinePrice::from).collect())
+    }
+
+    /// Ask the pricing service what the buyer's codes are worth.
+    ///
+    /// The trait default grants nothing, so without this the whole discount
+    /// feature silently evaluated to zero against a real pricing provider while
+    /// the capability was still advertised.
+    async fn resolve_discounts(
+        &self,
+        cart: &CartProjection,
+        codes: &[String],
+    ) -> Result<Vec<AppliedDiscount>, PricingError> {
+        if codes.is_empty() {
+            return Ok(Vec::new());
+        }
+        let url = self.discounts_url();
+        let request = ResolveDiscountsRequest { cart, codes };
+        let resp = post_json_with_retry(&self.client, &url, &request, None::<&str>, &self.config)
+            .await
+            .map_err(PricingError::from)?;
+        let body: ResolveDiscountsResponse = resp
+            .json()
+            .await
+            .map_err(|e| PricingError::Failed(format!("invalid discount response: {}", e)))?;
+        Ok(body
+            .discounts
+            .into_iter()
+            .map(AppliedDiscount::from)
+            .collect())
     }
 }

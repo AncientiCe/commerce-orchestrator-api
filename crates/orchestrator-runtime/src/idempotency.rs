@@ -79,4 +79,11 @@ impl IdempotencyStore for InMemoryIdempotencyStore {
         guard.insert(key, IdempotencyState::Completed(result));
         Ok(())
     }
+    async fn release(&self, key: &IdempotencyKey) -> Result<(), StoreError> {
+        let mut guard = self.inner.lock().await;
+        if matches!(guard.get(key), Some(IdempotencyState::InFlight)) {
+            guard.remove(key);
+        }
+        Ok(())
+    }
 }

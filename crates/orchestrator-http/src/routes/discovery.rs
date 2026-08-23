@@ -8,7 +8,9 @@ use axum::{
 use serde::Deserialize;
 
 use crate::state::AppState;
-use orchestrator_api::{build_acp_discovery_document, build_well_known_manifest_with_version};
+use orchestrator_api::{
+    build_acp_discovery_document, build_well_known_manifest_with_version, AdvertisedCapabilities,
+};
 
 /// GET /.well-known/ucp — returns JSON manifest with version, services, capabilities, and rest_endpoint.
 /// No auth required; used by agents and clients for capability discovery.
@@ -16,9 +18,18 @@ pub async fn well_known_ucp(
     State(state): State<AppState>,
     Query(params): Query<DiscoveryQuery>,
 ) -> impl IntoResponse {
+    let advertised = AdvertisedCapabilities {
+        signing_keys: state
+            .signing
+            .as_ref()
+            .map(|keyring| keyring.public_jwks())
+            .unwrap_or_default(),
+        identity_linking: state.facade.supports_identity_linking(),
+    };
     let manifest = build_well_known_manifest_with_version(
         &state.discovery_base_url,
         params.ucp_version.as_deref(),
+        &advertised,
     );
     let selected = manifest.ucp.version.replace('-', "_");
     orchestrator_observability::incr(&format!(
@@ -38,7 +49,10 @@ pub async fn well_known_ucp(
 /// GET /.well-known/acp.json — ACP discovery document (protocol version, REST base URL,
 /// transports, and supported services/extensions). No auth required.
 pub async fn well_known_acp(State(state): State<AppState>) -> impl IntoResponse {
-    let document = build_acp_discovery_document(&state.discovery_base_url);
+    let document = build_acp_discovery_document(
+        &state.discovery_base_url,
+        state.facade.supports_payment_delegation(),
+    );
     orchestrator_observability::incr("acp_discovery_document_total");
     Json(document)
 }

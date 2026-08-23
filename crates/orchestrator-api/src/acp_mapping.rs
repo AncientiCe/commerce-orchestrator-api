@@ -5,6 +5,7 @@ use orchestrator_core::contract::{
     CreateCartPayload, CustomerHint, GetCartPayload, PaymentIntent, PaymentMethodType,
     StartCheckoutPayload,
 };
+use provider_contracts::DelegatedPayment;
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 use uuid::Uuid;
@@ -158,6 +159,9 @@ pub struct AcpSessionLine {
 pub struct AcpTotals {
     pub subtotal_minor: i64,
     pub tax_minor: i64,
+    /// Total deducted by applied adjustment codes, already reflected in `total_minor`.
+    #[serde(default)]
+    pub discount_minor: i64,
     pub total_minor: i64,
 }
 
@@ -166,6 +170,8 @@ pub struct AcpDelegatePaymentResponse {
     pub id: String,
     pub status: String,
     pub token: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<String>,
     pub api_version: String,
 }
 
@@ -228,6 +234,7 @@ pub fn create_cart_command_for_acp_cart(req: &AcpCartCreateRequest) -> CartComma
     CartCommand::CreateCart(CreateCartPayload {
         merchant_id: req.merchant_id.clone(),
         currency: req.currency.clone(),
+        tenant_id: None,
     })
 }
 
@@ -265,6 +272,7 @@ pub fn projection_to_acp_cart(projection: &CartProjection) -> AcpCartResponse {
         totals: AcpTotals {
             subtotal_minor: projection.subtotal_minor,
             tax_minor: projection.tax_minor,
+            discount_minor: projection.discount_minor,
             total_minor: projection.total_minor,
         },
         api_version: ACP_API_VERSION.to_string(),
@@ -294,6 +302,7 @@ pub fn projection_to_acp_session(projection: &CartProjection) -> AcpCheckoutSess
         totals: AcpTotals {
             subtotal_minor: projection.subtotal_minor,
             tax_minor: projection.tax_minor,
+            discount_minor: projection.discount_minor,
             total_minor: projection.total_minor,
         },
         api_version: ACP_API_VERSION.to_string(),
@@ -304,6 +313,7 @@ pub fn create_cart_command(req: &AcpCheckoutSessionCreateRequest) -> CartCommand
     CartCommand::CreateCart(CreateCartPayload {
         merchant_id: req.merchant_id.clone(),
         currency: req.currency.clone(),
+        tenant_id: None,
     })
 }
 
@@ -404,8 +414,17 @@ pub struct AcpDiscoveryDocument {
     pub capabilities: AcpDiscoveryCapabilities,
 }
 
-pub fn build_acp_discovery_document(base_url: &str) -> AcpDiscoveryDocument {
+/// `payment_delegation` reflects whether a PSP delegation adapter is wired in;
+/// the service is only advertised when the endpoint can actually do something.
+pub fn build_acp_discovery_document(
+    base_url: &str,
+    payment_delegation: bool,
+) -> AcpDiscoveryDocument {
     let base = base_url.trim_end_matches('/');
+    let mut services = vec!["checkout".to_string(), "carts".to_string()];
+    if payment_delegation {
+        services.push("delegate_payment".to_string());
+    }
     AcpDiscoveryDocument {
         protocol: AcpDiscoveryProtocol {
             name: "acp".to_string(),
@@ -420,21 +439,20 @@ pub fn build_acp_discovery_document(base_url: &str) -> AcpDiscoveryDocument {
         api_base_url: format!("{base}/api/v1/acp"),
         transports: vec!["rest".to_string()],
         capabilities: AcpDiscoveryCapabilities {
-            services: vec![
-                "checkout".to_string(),
-                "carts".to_string(),
-                "delegate_payment".to_string(),
-            ],
+            services,
             extensions: vec![],
         },
     }
 }
 
-pub fn delegate_payment_response(req: &AcpDelegatePaymentRequest) -> AcpDelegatePaymentResponse {
+/// Map the PSP's delegated credential onto the ACP response shape. The token is
+/// the PSP's, never the caller's own — echoing that back would delegate nothing.
+pub fn delegate_payment_response(delegated: &DelegatedPayment) -> AcpDelegatePaymentResponse {
     AcpDelegatePaymentResponse {
-        id: format!("dpay_{}", Uuid::new_v4()),
-        status: "delegated".to_string(),
-        token: req.payment_method.token.clone(),
+        id: delegated.id.clone(),
+        status: delegated.status.clone(),
+        token: delegated.token.clone(),
+        expires_at: delegated.expires_at.clone(),
         api_version: ACP_API_VERSION.to_string(),
     }
 }

@@ -5,7 +5,7 @@ Before cutting a release (e.g. GitHub tag and release notes), complete the follo
 ## Pre-release
 
 - [ ] All pipelines pass before push/release:
-  - **CI** (`.github/workflows/ci.yml`): format, clippy, tests, release-gate.
+  - **CI** (`.github/workflows/ci.yml`): format, clippy, tests, Postgres backend, release-gate.
   - **Audit** (`.github/workflows/audit.yml`): `cargo audit` (dependency vulnerabilities).
 - [ ] For first version / branch protection: require both **CI** and **Audit** as status checks so no push or merge succeeds until both pass.
 - [ ] `CHANGELOG.md` is updated for the release version and date.
@@ -17,6 +17,15 @@ Before cutting a release (e.g. GitHub tag and release notes), complete the follo
 ## Acceptance
 
 - [ ] `cargo test --workspace` passes locally.
+- [ ] Postgres backend tests pass against a live database — they skip silently without `DATABASE_URL`, so running them is not optional before a release:
+
+  ```sh
+  docker compose up -d postgres
+  DATABASE_URL=postgres://orchestrator:secret@localhost:5432/orchestrator \
+    cargo test -p orchestrator-runtime --test postgres_backend_test
+  DATABASE_URL=postgres://orchestrator:secret@localhost:5432/orchestrator \
+    cargo run -p orchestrator-http --bin orchestrator-server -- --migrate
+  ```
 - [ ] Security and authz tests pass (`authorize_checkout`, tenant mismatch, missing scope, cross-tenant idempotency; API integration tests for 401 when auth required and missing/invalid token).
 - [ ] Conformance tests pass: `cargo test -p orchestrator-http --test discovery_test` and `cargo test -p orchestrator-api --test authz_and_adapters` (discovery, A2A, AP2 strict).
 - [ ] Persistent restart-recovery test passes (`persistent_runner_restart_returns_same_idempotent_result`).
@@ -26,7 +35,7 @@ Before cutting a release (e.g. GitHub tag and release notes), complete the follo
 
 ## Release
 
-- [ ] Create and push tag (e.g. `v0.8.0`): `git tag v0.8.0` then `git push origin v0.8.0`.
+- [ ] Create and push tag (e.g. `v0.9.0`): `git tag v0.9.0` then `git push origin v0.9.0`.
 - [ ] Create GitHub release with notes from `CHANGELOG.md` and attach any artifacts if applicable.
 - [ ] For source-only release: no crates.io publish; document the tag and “Install from source” in the release notes.
 

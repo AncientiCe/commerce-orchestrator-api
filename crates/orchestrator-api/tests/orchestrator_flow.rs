@@ -41,6 +41,7 @@ async fn completes_happy_path_transaction() {
             CartCommand::CreateCart(CreateCartPayload {
                 merchant_id: "merchant_1".to_string(),
                 currency: "USD".to_string(),
+                tenant_id: Some("tenant_1".to_string()),
             }),
             None,
         )
@@ -113,6 +114,7 @@ async fn idempotency_returns_same_terminal_outcome() {
             CartCommand::CreateCart(CreateCartPayload {
                 merchant_id: "merchant_1".to_string(),
                 currency: "USD".to_string(),
+                tenant_id: Some("tenant_1".to_string()),
             }),
             None,
         )
@@ -166,6 +168,7 @@ async fn capture_payment_idempotent_under_same_key() {
             CartCommand::CreateCart(CreateCartPayload {
                 merchant_id: "merchant_1".to_string(),
                 currency: "USD".to_string(),
+                tenant_id: Some("tenant_1".to_string()),
             }),
             None,
         )
@@ -234,6 +237,7 @@ async fn run_reconciliation_returns_no_mismatch_when_in_sync() {
             CartCommand::CreateCart(CreateCartPayload {
                 merchant_id: "merchant_1".to_string(),
                 currency: "USD".to_string(),
+                tenant_id: Some("tenant_1".to_string()),
             }),
             None,
         )
@@ -316,6 +320,7 @@ async fn dead_letter_replay_roundtrip() {
             CartCommand::CreateCart(CreateCartPayload {
                 merchant_id: "merchant_1".to_string(),
                 currency: "USD".to_string(),
+                tenant_id: Some("tenant_1".to_string()),
             }),
             None,
         )
@@ -390,6 +395,7 @@ async fn apply_adjustment_reprices_and_updates_cart_version() {
             CartCommand::CreateCart(CreateCartPayload {
                 merchant_id: "merchant_1".to_string(),
                 currency: "USD".to_string(),
+                tenant_id: Some("tenant_1".to_string()),
             }),
             None,
         )
@@ -426,6 +432,7 @@ async fn set_fulfillment_selection_quotes_and_selects_shipping_option() {
             CartCommand::CreateCart(CreateCartPayload {
                 merchant_id: "merchant_1".to_string(),
                 currency: "USD".to_string(),
+                tenant_id: Some("tenant_1".to_string()),
             }),
             None,
         )
@@ -510,6 +517,7 @@ async fn set_fulfillment_selection_rejects_unknown_option() {
             CartCommand::CreateCart(CreateCartPayload {
                 merchant_id: "merchant_1".to_string(),
                 currency: "USD".to_string(),
+                tenant_id: Some("tenant_1".to_string()),
             }),
             None,
         )
@@ -552,6 +560,7 @@ async fn apply_item_adjustment_rejects_unknown_item() {
             CartCommand::CreateCart(CreateCartPayload {
                 merchant_id: "merchant_1".to_string(),
                 currency: "USD".to_string(),
+                tenant_id: Some("tenant_1".to_string()),
             }),
             None,
         )

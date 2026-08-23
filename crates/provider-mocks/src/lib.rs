@@ -1,6 +1,7 @@
 //! Mock providers for tests and examples.
 
 pub mod catalog;
+pub mod delegation;
 pub mod geo;
 pub mod payment;
 pub mod pricing;
@@ -8,6 +9,7 @@ pub mod receipt;
 pub mod tax;
 
 pub use catalog::*;
+pub use delegation::*;
 pub use geo::*;
 pub use payment::*;
 pub use pricing::*;

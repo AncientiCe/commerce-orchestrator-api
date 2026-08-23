@@ -21,8 +21,8 @@ use orchestrator_core::state_machine::{
 };
 use orchestrator_core::validation::{validate_cart_command, validate_checkout_request};
 use provider_contracts::{
-    CatalogProvider, GeoProvider, PaymentOperationResult, PaymentProvider, PricingProvider,
-    ReceiptProvider, TaxProvider,
+    CatalogProvider, FulfillmentProvider, FulfillmentQuoteRequest, GeoProvider,
+    PaymentOperationResult, PaymentProvider, PricingProvider, ReceiptProvider, TaxProvider,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -101,6 +101,9 @@ pub struct ProviderSet {
     pub geo: Arc<dyn GeoProvider>,
     pub payment: Arc<dyn PaymentProvider>,
     pub receipt: Arc<dyn ReceiptProvider>,
+    /// Rating provider for shipping and pickup. When absent the built-in static
+    /// rate table is used, which is only suitable for development.
+    pub fulfillment: Option<Arc<dyn FulfillmentProvider>>,
 }
 
 #[derive(Clone)]
@@ -142,6 +145,12 @@ impl Runner {
         )
     }
 
+    /// Route fulfillment rating to a provider instead of the built-in static rate table.
+    pub fn with_fulfillment_provider(mut self, provider: Arc<dyn FulfillmentProvider>) -> Self {
+        self.providers.fulfillment = Some(provider);
+        self
+    }
+
     /// Create a runner with persistent file-backed stores (for production).
     pub async fn new_persistent(
         providers: ProviderSet,
@@ -161,7 +170,7 @@ impl Runner {
             order_store: stores.order_store(),
             payment_state_store: stores.payment_state_store(),
             mandate_dedupe_store: stores.mandate_dedupe_store(),
-            webhook_store: Arc::new(InMemoryWebhookStore::default()),
+            webhook_store: stores.webhook_store(),
             policy,
             outbox_deliverer: None,
         })
@@ -186,7 +195,7 @@ impl Runner {
             order_store: stores.order_store(),
             payment_state_store: stores.payment_state_store(),
             mandate_dedupe_store: stores.mandate_dedupe_store(),
-            webhook_store: Arc::new(InMemoryWebhookStore::default()),
+            webhook_store: stores.webhook_store(),
             policy,
             outbox_deliverer: None,
         })
@@ -244,6 +253,8 @@ impl Runner {
                     cart_id: id,
                     version: 1,
                     currency: payload.currency.clone(),
+                    merchant_id: payload.merchant_id.clone(),
+                    tenant_id: payload.tenant_id.clone(),
                     lines: Vec::new(),
                     subtotal_minor: 0,
                     tax_minor: 0,
@@ -252,6 +263,9 @@ impl Runner {
                     status: CartStatus::Draft,
                     fulfillment: None,
                     fulfillment_minor: 0,
+                    adjustment_codes: Vec::new(),
+                    discounts: Vec::new(),
+                    discount_minor: 0,
                 };
                 self.event_store
                     .append_cart_event(
@@ -353,6 +367,9 @@ impl Runner {
                     .await
                     .ok_or(RunnerError::CartNotFound)?;
                 self.validate_adjustment(&payload.code).await?;
+                if !projection.adjustment_codes.contains(&payload.code) {
+                    projection.adjustment_codes.push(payload.code.clone());
+                }
                 projection.version += 1;
                 self.mutate_and_recalculate(
                     id,
@@ -383,8 +400,26 @@ impl Runner {
                     payload.line_item_ids.clone()
                 };
 
-                let options =
-                    orchestrator_core::fulfillment::default_options_for_method(payload.method_type);
+                let options = match self.providers.fulfillment.as_ref() {
+                    Some(provider) => {
+                        let quote = FulfillmentQuoteRequest {
+                            method_type: payload.method_type,
+                            destination: payload.destination.clone(),
+                            line_item_ids: line_item_ids.clone(),
+                        };
+                        let started = std::time::Instant::now();
+                        let result = provider.quote_options(&projection, &quote).await;
+                        orchestrator_observability::observe_operation(
+                            "fulfillment_quote",
+                            if result.is_ok() { "success" } else { "error" },
+                            started.elapsed().as_secs_f64(),
+                        );
+                        result.map_err(|e| RunnerError::FulfillmentQuote(e.to_string()))?
+                    }
+                    None => orchestrator_core::fulfillment::default_options_for_method(
+                        payload.method_type,
+                    ),
+                };
                 if let Some(selected) = payload.selected_option_id.as_ref() {
                     if !options.iter().any(|o| &o.id == selected) {
                         return Err(RunnerError::FulfillmentOptionNotFound);
@@ -419,8 +454,9 @@ impl Runner {
                 state.methods.push(method);
                 projection.fulfillment = Some(state);
                 projection.fulfillment_minor = selected_amount;
-                projection.total_minor =
-                    projection.subtotal_minor + projection.tax_minor + projection.fulfillment_minor;
+                self.apply_discounts(&mut projection).await?;
+                // The destination just changed, so the geo verdict on this cart is stale.
+                projection.geo_ok = self.check_geo(&projection).await?;
                 projection.version += 1;
 
                 self.event_store
@@ -511,18 +547,15 @@ impl Runner {
             };
         }
 
-        let cart = self
-            .event_store
-            .get_cart_snapshot(&request.cart_id)
-            .await
-            .ok_or(RunnerError::CartNotFound)?;
-
-        if cart.version != request.cart_version {
-            return Err(RunnerError::CartVersionConflict {
-                expected: request.cart_version,
-                current: cart.version,
-            });
-        }
+        let cart = match self.settle_cart_for_checkout(&request).await {
+            Ok(cart) => cart,
+            Err(e) => {
+                // Nothing was charged, so the caller keeps their idempotency key
+                // and can retry once they have fixed the request.
+                self.idempotency.release(&idempotency_key).await?;
+                return Err(e);
+            }
+        };
 
         for line in &cart.lines {
             self.reservation_store
@@ -554,7 +587,7 @@ impl Runner {
                 totals_breakdown: TotalsBreakdown {
                     subtotal_minor: cart.subtotal_minor,
                     tax_minor: cart.tax_minor,
-                    discount_minor: 0,
+                    discount_minor: cart.discount_minor,
                     fulfillment_minor: cart.fulfillment_minor,
                     total_minor: cart.total_minor,
                 },
@@ -583,7 +616,7 @@ impl Runner {
                 totals_breakdown: TotalsBreakdown {
                     subtotal_minor: cart.subtotal_minor,
                     tax_minor: cart.tax_minor,
-                    discount_minor: 0,
+                    discount_minor: cart.discount_minor,
                     fulfillment_minor: cart.fulfillment_minor,
                     total_minor: cart.total_minor,
                 },
@@ -638,7 +671,7 @@ impl Runner {
                 totals: TotalsBreakdown {
                     subtotal_minor: cart.subtotal_minor,
                     tax_minor: cart.tax_minor,
-                    discount_minor: 0,
+                    discount_minor: cart.discount_minor,
                     fulfillment_minor: cart.fulfillment_minor,
                     total_minor: cart.total_minor,
                 },
@@ -667,7 +700,7 @@ impl Runner {
             totals_breakdown: TotalsBreakdown {
                 subtotal_minor: cart.subtotal_minor,
                 tax_minor: cart.tax_minor,
-                discount_minor: 0,
+                discount_minor: cart.discount_minor,
                 fulfillment_minor: cart.fulfillment_minor,
                 total_minor: cart.total_minor,
             },
@@ -695,6 +728,8 @@ impl Runner {
                 payload: order_id,
                 correlation_id: result.correlation_id.to_string(),
                 attempts: 0,
+                // Delivery is scoped to this tenant's own subscribers.
+                tenant_id: Some(request.tenant_id.clone()),
             })
             .await?;
 
@@ -711,23 +746,56 @@ impl Runner {
     /// on success the message is consumed; on failure attempts are incremented and the message is re-enqueued or moved to dead-letter.
     /// Without a deliverer, attempts are incremented and the message is re-enqueued or dead-lettered (queue churn only).
     pub async fn process_outbox_once(&self, max_attempts: u32) -> Result<(), RunnerError> {
-        if let Some(mut msg) = self.outbox.dequeue().await? {
-            let delivery_failed = if let Some(deliverer) = &self.outbox_deliverer {
-                deliverer.deliver(&msg).await.is_err()
-            } else {
-                true
-            };
-            if delivery_failed {
-                msg.attempts += 1;
-                if msg.attempts > max_attempts {
-                    orchestrator_observability::incr("outbox_dead_letter_total");
-                    self.dead_letter.put(msg).await?;
-                } else {
-                    self.outbox.enqueue(msg).await?;
-                }
-            }
-        }
+        self.process_outbox_once_reporting(max_attempts).await?;
         Ok(())
+    }
+
+    /// Same as [`Self::process_outbox_once`] but reports what happened, so a
+    /// caller driving the queue in a loop can pause after a failure instead of
+    /// burning the whole attempt budget in a tight spin.
+    ///
+    /// The message is claimed rather than removed, and is only acknowledged once
+    /// it has been delivered or dead-lettered: a process that dies mid-delivery
+    /// costs a retry, not the event.
+    pub async fn process_outbox_once_reporting(
+        &self,
+        max_attempts: u32,
+    ) -> Result<OutboxOutcome, RunnerError> {
+        let Some(mut msg) = self.outbox.claim().await? else {
+            return Ok(OutboxOutcome::Idle);
+        };
+        let delivery_failed = if let Some(deliverer) = &self.outbox_deliverer {
+            deliverer.deliver(&msg).await.is_err()
+        } else {
+            true
+        };
+        if delivery_failed {
+            msg.attempts += 1;
+            if msg.attempts > max_attempts {
+                orchestrator_observability::incr("outbox_dead_letter_total");
+                orchestrator_observability::observe_delivery_attempts(
+                    "outbox_delivery",
+                    "dead_letter",
+                    msg.attempts,
+                );
+                let message_id = msg.id.clone();
+                self.dead_letter.put(msg).await?;
+                self.outbox.ack(&message_id).await?;
+                return Ok(OutboxOutcome::DeadLettered);
+            }
+            let attempts = msg.attempts;
+            self.outbox.release(msg).await?;
+            return Ok(OutboxOutcome::Retrying { attempts });
+        }
+        // `attempts` counts prior failures, so the successful try is one more.
+        orchestrator_observability::observe_delivery_attempts(
+            "outbox_delivery",
+            "success",
+            msg.attempts + 1,
+        );
+        orchestrator_observability::incr("outbox_delivered_total");
+        self.outbox.ack(&msg.id).await?;
+        Ok(OutboxOutcome::Delivered)
     }
 
     /// Attach an optional outbox deliverer so that [Self::process_outbox_once] attempts real delivery.
@@ -757,6 +825,12 @@ impl Runner {
 
     pub async fn accept_incoming_event_once(&self, message_id: &str) -> Result<bool, RunnerError> {
         Ok(self.inbox.accept_once(message_id).await?)
+    }
+
+    /// The cart's stored projection, for callers that must check who owns a cart
+    /// before acting on it.
+    pub async fn cart_snapshot(&self, cart_id: &CartId) -> Option<CartProjection> {
+        self.event_store.get_cart_snapshot(cart_id).await
     }
 
     pub async fn outbox_len(&self) -> usize {
@@ -974,8 +1048,7 @@ impl Runner {
 
         let tax = self.providers.tax.resolve_tax(&projection).await?;
         projection.tax_minor = tax.total_tax_minor;
-        projection.total_minor =
-            projection.subtotal_minor + projection.tax_minor + projection.fulfillment_minor;
+        self.apply_discounts(&mut projection).await?;
         self.transition_cart(cart_id, CartEvent::TaxResolved)
             .await?;
         self.event_store
@@ -987,40 +1060,14 @@ impl Runner {
             )
             .await?;
 
-        let geo = self
-            .providers
-            .geo
-            .check(
-                &projection,
-                &CheckoutRequest {
-                    tenant_id: String::new(),
-                    merchant_id: String::new(),
-                    cart_id,
-                    cart_version: projection.version,
-                    currency: projection.currency.clone(),
-                    customer: None,
-                    location: None,
-                    payment_intent: PaymentIntent {
-                        amount_minor: projection.total_minor,
-                        token_or_reference: String::new(),
-                        ap2_consent_proof: None,
-                        payment_handler_id: None,
-                        payment_method_type: None,
-                        mpp_method: None,
-                        mpp_intent: None,
-                    },
-                    idempotency_key: String::new(),
-                },
-            )
-            .await?;
-        projection.geo_ok = geo.allowed;
+        projection.geo_ok = self.check_geo(&projection).await?;
         self.transition_cart(cart_id, CartEvent::GeoValidated)
             .await?;
         self.event_store
             .append_cart_event(
                 cart_id,
                 CartStreamEvent::GeoChecked {
-                    allowed: geo.allowed,
+                    allowed: projection.geo_ok,
                 },
             )
             .await?;
@@ -1042,6 +1089,146 @@ impl Runner {
         Ok(())
     }
 
+    /// Load the cart for a checkout, re-price it, and refuse to proceed unless the
+    /// payment intent is for exactly what the cart now costs.
+    ///
+    /// The snapshot can be arbitrarily old: prices, tax rates and discount
+    /// eligibility all move underneath it. Charging a stale snapshot total is how
+    /// a merchant ends up under-collecting, so the provider round-trip is repeated
+    /// here and the fresh total is the one that must be paid.
+    async fn settle_cart_for_checkout(
+        &self,
+        request: &CheckoutRequest,
+    ) -> Result<CartProjection, RunnerError> {
+        let mut cart = self
+            .event_store
+            .get_cart_snapshot(&request.cart_id)
+            .await
+            .ok_or(RunnerError::CartNotFound)?;
+
+        // A cart id is a bearer capability unless the owner is checked: a caller
+        // authenticated for one tenant must not be able to check out another
+        // tenant's cart.
+        if let Some(owner) = cart.tenant_id.as_deref() {
+            if owner != request.tenant_id {
+                orchestrator_observability::incr("checkout_tenant_mismatch_total");
+                return Err(RunnerError::CartTenantMismatch);
+            }
+        }
+
+        if cart.version != request.cart_version {
+            return Err(RunnerError::CartVersionConflict {
+                expected: request.cart_version,
+                current: cart.version,
+            });
+        }
+
+        let started = std::time::Instant::now();
+        let repriced = self.reprice_for_checkout(&mut cart).await;
+        orchestrator_observability::observe_operation(
+            "checkout_reprice",
+            if repriced.is_ok() { "success" } else { "error" },
+            started.elapsed().as_secs_f64(),
+        );
+        repriced?;
+
+        // The geo verdict is re-taken here and it is binding. Storing a
+        // `geo_ok: false` cart and then completing the checkout anyway is how a
+        // blocked destination used to get through.
+        cart.geo_ok = self.check_geo(&cart).await?;
+        self.event_store.put_cart_snapshot(cart.clone()).await?;
+        if !cart.geo_ok {
+            return Err(RunnerError::GeoBlocked);
+        }
+
+        if request.payment_intent.amount_minor != cart.total_minor {
+            orchestrator_observability::incr("checkout_amount_mismatch_total");
+            return Err(RunnerError::AmountMismatch {
+                expected_minor: cart.total_minor,
+                provided_minor: request.payment_intent.amount_minor,
+            });
+        }
+
+        Ok(cart)
+    }
+
+    /// Refresh line prices, tax and discounts on a cart that is already at checkout.
+    ///
+    /// Unlike `mutate_and_recalculate` this emits no cart lifecycle events and does
+    /// not advance the cart state machine: the cart is not changing, we are only
+    /// re-reading what it costs right now.
+    async fn reprice_for_checkout(&self, cart: &mut CartProjection) -> Result<(), RunnerError> {
+        let priced_lines = self.providers.pricing.resolve_prices(cart).await?;
+        for priced in priced_lines {
+            if let Some(line) = cart.lines.iter_mut().find(|l| l.line_id == priced.line_id) {
+                line.unit_price_minor = priced.unit_price_minor;
+                line.total_minor = priced.total_minor;
+            }
+        }
+        cart.subtotal_minor = cart.lines.iter().map(|l| l.total_minor).sum();
+
+        let tax = self.providers.tax.resolve_tax(cart).await?;
+        cart.tax_minor = tax.total_tax_minor;
+
+        self.apply_discounts(cart).await
+    }
+
+    /// Ask the geo provider whether this cart may proceed, using the cart's own
+    /// tenant, merchant and destination.
+    async fn check_geo(&self, cart: &CartProjection) -> Result<bool, RunnerError> {
+        let request = geo_check_request(cart);
+        let started = std::time::Instant::now();
+        let result = self.providers.geo.check(cart, &request).await;
+        orchestrator_observability::observe_operation(
+            "cart_geo_check",
+            if result.is_ok() { "success" } else { "error" },
+            started.elapsed().as_secs_f64(),
+        );
+        let allowed = result?.allowed;
+        if !allowed {
+            orchestrator_observability::incr("cart_geo_blocked_total");
+        }
+        Ok(allowed)
+    }
+
+    /// Re-evaluate the cart's adjustment codes and fold the result into the total.
+    ///
+    /// Runs after pricing, tax and fulfillment so the provider sees the amounts it
+    /// is discounting, and so a discount can be clamped to what is actually owed.
+    async fn apply_discounts(&self, projection: &mut CartProjection) -> Result<(), RunnerError> {
+        let gross = projection.subtotal_minor + projection.tax_minor + projection.fulfillment_minor;
+
+        if projection.adjustment_codes.is_empty() {
+            projection.discounts.clear();
+            projection.discount_minor = 0;
+            projection.total_minor = gross;
+            return Ok(());
+        }
+
+        let started = std::time::Instant::now();
+        let result = self
+            .providers
+            .pricing
+            .resolve_discounts(projection, &projection.adjustment_codes)
+            .await;
+        orchestrator_observability::observe_operation(
+            "pricing_resolve_discounts",
+            if result.is_ok() { "success" } else { "error" },
+            started.elapsed().as_secs_f64(),
+        );
+        let discounts = result?;
+
+        projection.discount_minor =
+            orchestrator_core::discount::total_discount_minor(&discounts, gross);
+        projection.discounts = discounts;
+        projection.total_minor = gross - projection.discount_minor;
+
+        if projection.discount_minor > 0 {
+            orchestrator_observability::incr("cart_discount_applied_total");
+        }
+        Ok(())
+    }
+
     async fn validate_adjustment(&self, code: &str) -> Result<(), RunnerError> {
         // Item-level discount codes are encoded as `item:<item_id>:<campaign>`.
         if let Some(item_id) = code
@@ -1055,6 +1242,46 @@ impl Runner {
     }
 }
 
+/// Build the request a geo provider sees when a cart is repriced.
+///
+/// There is no real checkout request at this point, so the cart itself supplies
+/// the tenant, merchant and destination. Passing blanks here would hide the cart's
+/// shipping country from the provider and quietly allow blocked destinations.
+fn geo_check_request(cart: &CartProjection) -> CheckoutRequest {
+    CheckoutRequest {
+        tenant_id: cart.tenant_id.clone().unwrap_or_default(),
+        merchant_id: cart.merchant_id.clone(),
+        cart_id: cart.cart_id,
+        cart_version: cart.version,
+        currency: cart.currency.clone(),
+        customer: None,
+        location: cart.location_hint(),
+        payment_intent: PaymentIntent {
+            amount_minor: cart.total_minor,
+            token_or_reference: String::new(),
+            ap2_consent_proof: None,
+            payment_handler_id: None,
+            payment_method_type: None,
+            mpp_method: None,
+            mpp_intent: None,
+        },
+        idempotency_key: String::new(),
+    }
+}
+
+/// What one pass over the outbox did, so a driving loop can pace itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutboxOutcome {
+    /// Nothing was pending.
+    Idle,
+    /// Delivered and acknowledged.
+    Delivered,
+    /// Delivery failed; the message is queued again with this many attempts spent.
+    Retrying { attempts: u32 },
+    /// Out of attempts: the message moved to the dead-letter store.
+    DeadLettered,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum RunnerError {
     #[error("cart id is required for this operation")]
@@ -1065,6 +1292,8 @@ pub enum RunnerError {
     LineNotFound,
     #[error("fulfillment option was not found")]
     FulfillmentOptionNotFound,
+    #[error("fulfillment rating failed: {0}")]
+    FulfillmentQuote(String),
     #[error("request validation failed: {0:?}")]
     Validation(Vec<String>),
     #[error("idempotent request is currently in-flight")]
@@ -1073,6 +1302,17 @@ pub enum RunnerError {
     InvalidStateTransition,
     #[error("cart version conflict: request expected version {expected}, current cart version is {current}")]
     CartVersionConflict { expected: u64, current: u64 },
+    #[error("cart belongs to another tenant")]
+    CartTenantMismatch,
+    #[error("geo policy blocked this cart's destination")]
+    GeoBlocked,
+    #[error(
+        "payment intent amount {provided_minor} does not match the cart total {expected_minor}"
+    )]
+    AmountMismatch {
+        expected_minor: i64,
+        provided_minor: i64,
+    },
     #[error("unsupported non-exhaustive command variant")]
     UnsupportedCommand,
     #[error("store persistence error: {0}")]

@@ -33,6 +33,7 @@ utoipa-axum = "0.2"
 
 [dev-dependencies]
 provider-mocks = { path = "../provider-mocks" }
+async-trait = "0.1"
 tower = "0.4"
 axum-test = "16"
 http = "1"

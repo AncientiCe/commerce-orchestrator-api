@@ -50,6 +50,7 @@ pub async fn run_happy_path_checkout(
             CartCommand::CreateCart(CreateCartPayload {
                 merchant_id: "merchant_demo".to_string(),
                 currency: "USD".to_string(),
+                tenant_id: Some("tenant_demo".to_string()),
             }),
             None,
         )

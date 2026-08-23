@@ -4,8 +4,8 @@ use axum_test::TestServer;
 use http::header::{HeaderName, HeaderValue};
 use orchestrator_http::{app, AppState};
 use provider_mocks::{
-    MockCatalogProvider, MockGeoProvider, MockPaymentProvider, MockPricingProvider,
-    MockReceiptProvider, MockTaxProvider,
+    MockCatalogProvider, MockGeoProvider, MockIdentityLinkProvider, MockPaymentDelegationProvider,
+    MockPaymentProvider, MockPricingProvider, MockReceiptProvider, MockTaxProvider,
 };
 use std::sync::Arc;
 
@@ -23,9 +23,36 @@ fn test_state_with_base_url(base_url: &str) -> AppState {
     AppState::new(facade).with_discovery_base_url(base_url.to_string())
 }
 
+/// A deployment with the optional PSP delegation and identity systems wired in,
+/// which is what makes those two capabilities appear in discovery.
+fn fully_configured_state(base_url: &str) -> AppState {
+    let facade = orchestrator_api::OrchestratorFacade::new(
+        Arc::new(MockCatalogProvider::default()),
+        Arc::new(MockPricingProvider),
+        Arc::new(MockTaxProvider),
+        Arc::new(MockGeoProvider),
+        Arc::new(MockPaymentProvider),
+        Arc::new(MockReceiptProvider),
+        orchestrator_core::policy::PolicyEngine::default(),
+    )
+    .with_payment_delegation(Arc::new(MockPaymentDelegationProvider))
+    .with_identity_link_provider(Arc::new(MockIdentityLinkProvider));
+    AppState::new(facade).with_discovery_base_url(base_url.to_string())
+}
+
+fn test_state_with_signing(base_url: &str) -> AppState {
+    let keyring = orchestrator_api::SigningKeyring::from_seeds(
+        "orch-test-a",
+        "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+        &[],
+    )
+    .expect("keyring");
+    test_state_with_base_url(base_url).with_signing(keyring)
+}
+
 #[tokio::test]
 async fn well_known_acp_returns_200_and_manifest() {
-    let state = test_state_with_base_url("https://orchestrator.example.com");
+    let state = fully_configured_state("https://orchestrator.example.com");
     let app = app::app().with_state(state);
     let server = TestServer::new(app).unwrap();
 
@@ -133,7 +160,7 @@ async fn well_known_ucp_returns_200_and_manifest() {
 
 #[tokio::test]
 async fn well_known_ucp_advertises_current_core_capabilities() {
-    let state = test_state_with_base_url("http://localhost:8080");
+    let state = fully_configured_state("http://localhost:8080");
     let app = app::app().with_state(state);
     let server = TestServer::new(app).unwrap();
 
@@ -369,7 +396,7 @@ async fn a2a_checkout_envelope_requires_valid_payload() {
 
 #[tokio::test]
 async fn discovery_advertises_acp_signing_and_payment_handlers() {
-    let state = test_state_with_base_url("http://localhost:8080");
+    let state = test_state_with_signing("http://localhost:8080");
     let app = app::app().with_state(state);
     let server = TestServer::new(app).unwrap();
 
@@ -394,6 +421,29 @@ async fn discovery_advertises_acp_signing_and_payment_handlers() {
         .as_array()
         .unwrap();
     assert!(services.iter().any(|s| s["transport"] == "acp"));
+    assert_eq!(
+        json["ucp"]["capability_flags"]["dev.ucp.security.signatures"],
+        true
+    );
+}
+
+#[tokio::test]
+async fn discovery_omits_signing_keys_when_no_keyring_is_configured() {
+    let state = test_state_with_base_url("http://localhost:8080");
+    let app = app::app().with_state(state);
+    let server = TestServer::new(app).unwrap();
+
+    let response = server.get("/.well-known/ucp").await;
+    response.assert_status_ok();
+    let json: serde_json::Value = response.json();
+    assert!(
+        json["ucp"].get("signing_keys").is_none() || json["ucp"]["signing_keys"].is_null(),
+        "unsigned deployments must not advertise a signing key"
+    );
+    assert_ne!(
+        json["ucp"]["capability_flags"]["dev.ucp.security.signatures"],
+        true
+    );
 }
 
 #[tokio::test]

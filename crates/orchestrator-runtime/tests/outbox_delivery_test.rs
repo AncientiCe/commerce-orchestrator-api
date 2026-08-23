@@ -31,6 +31,7 @@ fn mock_providers() -> (ProviderSet, Arc<MockCatalogProvider>) {
         geo: Arc::new(MockGeoProvider),
         payment: Arc::new(MockPaymentProvider),
         receipt: Arc::new(MockReceiptProvider),
+        fulfillment: None,
     };
     (providers, catalog)
 }
@@ -66,6 +67,7 @@ async fn outbox_delivery_success_consumes_message() {
             CartCommand::CreateCart(CreateCartPayload {
                 merchant_id: "m".to_string(),
                 currency: "USD".to_string(),
+                tenant_id: Some("t".to_string()),
             }),
             None,
         )
@@ -138,6 +140,7 @@ async fn outbox_delivery_failure_increments_attempts_then_dead_letter() {
             CartCommand::CreateCart(CreateCartPayload {
                 merchant_id: "m".to_string(),
                 currency: "USD".to_string(),
+                tenant_id: Some("t".to_string()),
             }),
             None,
         )

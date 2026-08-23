@@ -8,9 +8,10 @@ pub mod error;
 pub mod observability;
 pub mod openapi;
 pub mod routes;
+pub mod signing;
 pub mod state;
 
-pub use app::{app, serve};
+pub use app::{app, serve, signed_router};
 pub use auth::{AuthContextExtractor, OptionalAuthContext, StaticTokenAuthnResolver};
 pub use config::{
     default_config_path, ComponentsConfig, EnvProfile, HttpClientConfig, ProductionConfig,

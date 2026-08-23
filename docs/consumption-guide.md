@@ -16,6 +16,63 @@ See [consumer-integration.md](consumer-integration.md) for the high-level integr
   Authorization: Bearer <your-token>
   ```
 
+## Message signing (UCP `2026-04-08`)
+
+Bearer auth answers *who is calling*; message signing answers *was this exact message altered*. The two are independent — a signed request still needs its `Authorization` header.
+
+### Verifying our responses
+
+When the deployment is configured with `UCP_SIGNING_KEY_ID` and `UCP_SIGNING_KEY` (mandatory in production), every response carries:
+
+```http
+Signature: kid="orch-2026-a",alg="ed25519",sig="<base64url>"
+Timestamp: 1760000000
+```
+
+The signature is Ed25519 over this exact byte string, newline-separated:
+
+```
+<http status code>
+<Timestamp header value>
+<lowercase hex SHA-256 of the response body>
+```
+
+Fetch the public key from `/.well-known/ucp` → `ucp.signing_keys`, an array of JWKs (`kty: OKP`, `crv: Ed25519`, `x` base64url). Match the `kid` from the header. A deployment with no signing material advertises **no** `signing_keys` and sets no `dev.ucp.security.signatures` capability flag — there is no default key, so an unsigned deployment is honest about being unsigned rather than publishing a key everybody shares.
+
+### Signing your requests
+
+If the operator has configured `UCP_AGENT_KEYS` with your public key, every `/api/v1` request must be signed; unsigned calls get `401`. Discovery and health endpoints stay open, because you must read discovery before you can sign anything.
+
+Send the same two headers. The request base is:
+
+```
+<HTTP method, uppercase>
+<path with query string>
+<Timestamp header value>
+<lowercase hex SHA-256 of the request body>
+```
+
+Timestamps must be within **300 seconds** of the orchestrator's clock in either direction, which is what stops a captured request from being replayed later.
+
+### Rotation
+
+Both directions are keyed by `kid`. To rotate ours, set the new key as `UCP_SIGNING_KEY_ID`/`UCP_SIGNING_KEY` and list the old one in `UCP_SIGNING_PREVIOUS_KEYS` (`kid:seed`); both appear in discovery until you drop the old entry. To rotate yours, ask the operator to list both `kid:public_key` pairs in `UCP_AGENT_KEYS`, switch, then have the old one removed.
+
+### Signature errors
+
+All arrive as `401` with a `code` field:
+
+| Code | Meaning |
+|------|---------|
+| `SIGNATURE_REQUIRED` | No `Signature` header on a deployment that requires one. |
+| `SIGNATURE_TIMESTAMP_REQUIRED` | `Signature` present but `Timestamp` missing. |
+| `SIGNATURE_TIMESTAMP_INVALID` | `Timestamp` is not unix seconds. |
+| `SIGNATURE_TIMESTAMP_STALE` | Outside the 300s window — check your clock. |
+| `SIGNATURE_MALFORMED` | Header is not `kid=…,alg=…,sig=…`, or the signature is not base64. |
+| `SIGNATURE_ALGORITHM_UNSUPPORTED` | Only `ed25519` is accepted. |
+| `SIGNATURE_UNKNOWN_KID` | The `kid` is not configured on this deployment. |
+| `SIGNATURE_INVALID` | The signature does not match method, path, timestamp, and body. |
+
 ## Endpoints
 
 ### Discovery (UCP-style)
@@ -49,7 +106,7 @@ See [consumer-integration.md](consumer-integration.md) for the high-level integr
 | `PUT` | `/api/v1/acp/checkout_sessions/:id` | ACP update checkout session lines. |
 | `POST` | `/api/v1/acp/checkout_sessions/:id/complete` | ACP complete session (checkout execute). Requires `Idempotency-Key`. |
 | `POST` | `/api/v1/acp/checkout_sessions/:id/cancel` | ACP cancel session. Requires `Idempotency-Key`. |
-| `POST` | `/api/v1/acp/delegate_payment` | ACP delegate payment token exchange. Requires `Idempotency-Key`. |
+| `POST` | `/api/v1/acp/delegate_payment` | ACP delegate payment token exchange, performed by the configured PSP. Requires `Idempotency-Key`. Returns `501 NOT_CONFIGURED` when no delegation adapter is configured. |
 | `POST` | `/api/v1/acp/carts` | ACP Cart capability: create a pre-checkout cart. Requires `API-Version: 2026-04-17` and `Idempotency-Key`. |
 | `GET` | `/api/v1/acp/carts/:id` | ACP get cart. |
 | `PUT` | `/api/v1/acp/carts/:id` | ACP update cart lines. |
@@ -57,7 +114,7 @@ See [consumer-integration.md](consumer-integration.md) for the high-level integr
 | `POST` | `/api/v1/checkout/execute` | Execute checkout for a cart. Body: `CheckoutRequestDto`. Requires auth in production. |
 | `POST` | `/api/v1/a2a/checkout` | A2A envelope checkout. Send `A2A-Version: 1.0` (or `0.3`). |
 | `POST` | `/api/v1/a2a/cart` | A2A envelope cart command. Send `A2A-Version: 1.0` (or `0.3`). |
-| `POST` | `/api/v1/a2a/identity/link` | A2A envelope: `{ "capability": "dev.ucp.common.identity_linking", "payload": { "tenant_id": "...", "merchant_id": "...", "agent_id": "...", "link_token": "...", "user_reference": "..."? } }`. Legacy identity capability names remain accepted. |
+| `POST` | `/api/v1/a2a/identity/link` | A2A envelope: `{ "capability": "dev.ucp.common.identity_linking", "payload": { "tenant_id": "...", "merchant_id": "...", "agent_id": "...", "link_token": "...", "user_reference": "..."? } }`. Legacy identity capability names remain accepted. Returns `501 NOT_CONFIGURED` when no identity provider is configured. |
 
 ### Catalog and orders
 
@@ -107,6 +164,12 @@ All request/response bodies are JSON.
 
 **Request:** `{ "command": { "kind": "<command_kind>", ... }, "cart_id": "<uuid or null>" }`
 
+A cart belongs to the tenant that created it, taken from your access token and
+not from the request body. Reading, changing, cancelling, starting checkout on, or
+checking out a cart that belongs to another tenant returns `403` with
+`code: TENANT_MISMATCH` — a cart id on its own grants nothing. This applies to
+every surface: REST, UCP, ACP, A2A and the MCP tools.
+
 Command kinds and their fields:
 
 - `create_cart`: `merchant_id`, `currency`
@@ -118,7 +181,24 @@ Command kinds and their fields:
 - `start_checkout`: `cart_id`, `cart_version`
 - `cancel_cart`: `cart_id`
 
-**Response (success):** Cart projection with `cart_id`, `version`, `currency`, `lines`, `subtotal_minor`, `tax_minor`, `total_minor`, `geo_ok`, `status`.
+**Response (success):** Cart projection with `cart_id`, `version`, `currency`, `lines`, `subtotal_minor`, `tax_minor`, `fulfillment_minor`, `discount_minor`, `discounts`, `total_minor`, `geo_ok`, `status`.
+
+#### Discounts (`apply_adjustment`)
+
+An `apply_adjustment` code is stored on the cart and re-evaluated by your pricing
+provider on every reprice, via `PricingProvider::resolve_discounts`. The provider
+decides what a code is worth; the orchestrator never invents a discount.
+
+- The provider returns zero or more discounts, each with `code`, optional `description`, `amount_minor` and optional `line_id`.
+- Returning an error rejects the code, and the `apply_adjustment` command fails with a `pricing` error. Use this for expired or ineligible campaigns.
+- `discount_minor` is the sum of granted discounts, clamped so that `total_minor` can never go below zero.
+- `total_minor = subtotal_minor + tax_minor + fulfillment_minor - discount_minor`.
+- Because codes are re-evaluated on every reprice, a discount that stops being valid after a cart change disappears from the next projection.
+
+A provider that does not implement `resolve_discounts` grants nothing, so codes
+are accepted and recorded but change no money. UCP cart responses carry
+`discount_minor` plus a `discounts` array, and advertise `dev.ucp.shopping.discount`
+when at least one discount applies; ACP session totals carry `discount_minor`.
 
 ### Checkout execute (POST /api/v1/checkout/execute)
 
@@ -133,6 +213,32 @@ MPP note:
 
 **Response (success):** Transaction result with `transaction_id`, `status`, `totals_breakdown`, `payment_reference`, `receipt_payload`, `correlation_id`, `payment_state`, `order_id`.
 
+#### Amount integrity
+
+Before anything is authorized, the orchestrator re-runs pricing, tax and discount
+resolution against your providers and refreshes the cart snapshot. The refreshed
+total — not the total the cart happened to be carrying — is what may be charged.
+
+- `payment_intent.amount_minor` must equal that total exactly. Anything else is refused with `422` and code `AMOUNT_MISMATCH`; the message states the amount the cart actually costs.
+- A rejected request does **not** consume its `idempotency_key`, so the caller can immediately retry with the corrected amount under the same key.
+- A stale price is therefore caught at checkout rather than silently under-collected. Re-read the cart (`get_cart`) to see the refreshed totals; `cart_version` is unchanged because the cart's contents did not change.
+
+```mermaid
+sequenceDiagram
+  participant Agent
+  participant Orchestrator
+  participant Providers as Pricing / Tax
+  Agent->>Orchestrator: POST /checkout/execute (amount_minor)
+  Orchestrator->>Providers: re-price, re-tax, re-discount
+  Providers-->>Orchestrator: current total
+  alt amount_minor == current total
+    Orchestrator->>Orchestrator: authorize and capture
+    Orchestrator-->>Agent: 200 transaction result
+  else mismatch
+    Orchestrator-->>Agent: 422 AMOUNT_MISMATCH (idempotency key released)
+  end
+```
+
 ### Fulfillment selection (POST /api/v1/ucp/cart/:id/fulfillment)
 
 **Request:** `method_type` (`shipping` or `pickup`), `destination`, optional `line_item_ids` (defaults to all lines), optional `selected_option_id`.
@@ -141,6 +247,16 @@ MPP note:
 - Pickup (retail) destination: `{ "id": "dest_1", "name": "<store name>" }`.
 
 Calling without `selected_option_id` returns quoted options for the method type without changing `total_minor`. Calling again with `selected_option_id` set to one of the quoted option ids selects it, adds its `amount_minor` to `total_minor` via `fulfillment_minor`, and replaces any prior selection for that method type.
+
+The selected destination is also the location your geo provider sees. Setting or
+changing a destination re-runs the geo check immediately, and every later reprice
+passes the cart's destination country, region and postal code — along with the
+cart's tenant and merchant — so a blocked destination shows up as `geo_ok: false`
+rather than passing unnoticed.
+
+The verdict is binding. `execute_checkout` re-takes it and refuses a blocked
+destination with `403` and `code: GEO_BLOCKED`; nothing is authorized and the
+cart keeps `geo_ok: false`.
 
 ```json
 {
@@ -184,7 +300,7 @@ Failed requests return JSON:
 { "error": "<message>", "code": "<CODE>" }
 ```
 
-Common codes: `BAD_REQUEST`, `UNAUTHORIZED`, `FORBIDDEN`, `NOT_FOUND`, `VALIDATION_ERROR`, `IDEMPOTENCY_CONFLICT`, `PAYMENT_ERROR`, `STORE_ERROR`, `RUNNER_ERROR`. Use the HTTP status code (4xx/5xx) and `code` for handling.
+Common codes: `BAD_REQUEST`, `UNAUTHORIZED`, `FORBIDDEN`, `NOT_FOUND`, `VALIDATION_ERROR`, `IDEMPOTENCY_CONFLICT`, `PAYMENT_ERROR`, `AMOUNT_MISMATCH`, `TENANT_MISMATCH` (`403`, the cart or resource belongs to another tenant), `GEO_BLOCKED` (`403`, your geo provider refused the cart's destination), `STORE_ERROR`, `RUNNER_ERROR`, `NOT_CONFIGURED` (`501`, the deployment does not offer that capability), `PAYMENT_DELEGATION_ERROR` (`502`, the PSP failed). Use the HTTP status code (4xx/5xx) and `code` for handling.
 
 ACP-specific: every mutating ACP POST route (`checkout_sessions` create/complete/cancel, `delegate_payment`, `carts` create/cancel) requires a non-empty `Idempotency-Key` header; a missing or blank header returns `400` with `code: idempotency_key_required`.
 
@@ -208,8 +324,9 @@ The orchestrator is a middleware API layer. Operators configure where each downs
 | `GEO_BASE_URL` | Geo service base URL. |
 | `PAYMENT_BASE_URL` | Payment service base URL. |
 | `RECEIPT_BASE_URL` | Receipt service base URL. |
+| `UCP_SIGNING_KEY_ID`, `UCP_SIGNING_KEY` | Ed25519 signing material; production will not start without them. |
 
-Optional: `AUTH_TENANT_ID`, `AUTH_CALLER_ID` (default `prod` for static mode), `AP2_TRUSTED_ISSUERS` (comma-separated allowlist for strict AP2 issuer checks and JWT issuer checks). Config can be loaded from a file (`CONFIG_FILE` or `config.yaml`) with env overrides.
+Optional: `AUTH_TENANT_ID`, `AUTH_CALLER_ID` (default `prod` for static mode), `AP2_TRUSTED_ISSUERS` (comma-separated allowlist for strict AP2 issuer checks and JWT issuer checks), `UCP_SIGNING_PREVIOUS_KEYS` and `UCP_AGENT_KEYS` (see [Message signing](#message-signing-ucp-2026-04-08)), `FULFILLMENT_BASE_URL`, `PAYMENT_DELEGATION_BASE_URL`, and `IDENTITY_LINK_BASE_URL`. Capabilities backed by an optional service are advertised only when that service is configured; the endpoint returns `501` with `code: NOT_CONFIGURED` otherwise. Config can be loaded from a file (`CONFIG_FILE` or `config.yaml`) with env overrides.
 
 AP2 note: this release aligns with AP2 **0.2** (closed mandates plus optional open/HNP mandates with amount and currency constraints). Strict mode remains fail-closed.
 

@@ -1,7 +1,7 @@
 //! Error normalization from HTTP/client failures to provider and domain errors.
 
 use provider_contracts::{
-    CatalogError, GeoError, PaymentError, PricingError, ReceiptError, TaxError,
+    CatalogError, FulfillmentError, GeoError, PaymentError, PricingError, ReceiptError, TaxError,
 };
 use std::time::Duration;
 use thiserror::Error;
@@ -20,6 +20,9 @@ pub enum AdapterError {
 
     #[error("invalid JSON: {0}")]
     Json(String),
+
+    #[error("circuit open for provider {0}: not attempting call")]
+    CircuitOpen(String),
 
     #[error("configuration error: {0}")]
     Config(String),
@@ -58,5 +61,11 @@ impl From<AdapterError> for PaymentError {
 impl From<AdapterError> for ReceiptError {
     fn from(e: AdapterError) -> Self {
         ReceiptError::Failed(e.to_string())
+    }
+}
+
+impl From<AdapterError> for FulfillmentError {
+    fn from(e: AdapterError) -> Self {
+        FulfillmentError::Failed(e.to_string())
     }
 }

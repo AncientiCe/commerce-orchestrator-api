@@ -8,7 +8,7 @@ use crate::dto::*;
 #[openapi(
     info(
         title = "Commerce Orchestrator API",
-        version = "0.8.0",
+        version = env!("CARGO_PKG_VERSION"),
         description = "REST API surface for cart orchestration and checkout."
     ),
     components(schemas(
@@ -46,4 +46,20 @@ pub fn openapi_json() -> Result<String, String> {
     ApiDoc::openapi()
         .to_json()
         .map_err(|error| format!("openapi serialization failed: {}", error))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_published_spec_reports_the_release_version() {
+        let spec: serde_json::Value =
+            serde_json::from_str(&openapi_json().expect("openapi")).expect("valid json");
+        assert_eq!(
+            spec["info"]["version"].as_str(),
+            Some(env!("CARGO_PKG_VERSION")),
+            "consumers pin against this version; it must not drift from the crate"
+        );
+    }
 }
