@@ -54,6 +54,7 @@ These are part of the current UCP release and are **not** advertised in discover
 | Fractional quantities (`measure.json`, sale basis) | not_supported_yet | Quantities are integers |
 | Buyer consent (`dev.ucp.consent.*`), loyalty, policies, attribution, permalink | not_supported_yet | |
 | Signed webhooks (RFC 9421) | not_supported_yet | Webhooks are signed with HMAC `X-Webhook-Signature`; UCP requires business-to-platform webhooks to carry message signatures |
+| Cart / checkout / order response bodies | not_supported_yet | Only the profile and `fulfillment` objects are validated against the official schemas. The cart, checkout and order bodies are not yet; known deviation: order `totals[].amount` is an object `{ "amount": n }` where UCP's `signed_amount` is a plain integer, and orders lack the required `checkout_id`/`fulfillment` members |
 
 ### Fulfillment (UCP)
 
@@ -92,6 +93,7 @@ These are part of the current UCP release and are **not** advertised in discover
 | MCP tool definitions | required | All facade operations exposed as MCP tools with JSON Schema input definitions, including `set_fulfillment_selection` (quote-only when `selected_option_id` is omitted). See [MCP binding](../mcp-binding.md) | `tools::tests::tools_list_includes_set_fulfillment_selection`, `tools::tests::set_fulfillment_selection_with_an_option_prices_the_cart` |
 | MCP resource definitions | required | `order://{id}` and `cart://{id}` resources readable via `resources/read` | orchestrator-mcp tests |
 | MCP endpoint in discovery | required | `/.well-known/ucp` → `orchestrator.mcp_endpoint` and `orchestrator.mcp_supported_versions` | discovery tests |
+| A2A 1.0 Agent Card and core operations | not_supported_yet | There is no `/.well-known/agent-card.json` and no A2A `SendMessage`/`GetTask` (JSON-RPC or `application/a2a+json` HTTP binding); `/api/v1/a2a/*` accepts orchestrator-native capability envelopes with `A2A-Version` negotiation. A generic A2A 1.0 client cannot discover or call the orchestrator yet | conformance review |
 | Delegated capability in handoff | optional | A2AHandoffProfile carries protocol, selected profile version, delegated_capability, and supported profile versions | adapters.rs, authz_and_adapters |
 
 ### ACP (Agentic Commerce Protocol)
