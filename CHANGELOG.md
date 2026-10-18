@@ -54,7 +54,7 @@ This release changes wire formats that clients read. Before you upgrade:
 
 ### Known limitations
 
-Recorded in the [conformance matrix](docs/standards/conformance-matrix.md) as `not_supported_yet`: UCP's MCP and A2A bindings, `UCP-Agent` platform profile negotiation, `actions[]`/3DS2, `$requestConstraints`, split payments and payment terms, location, consent, loyalty, RFC 9421-signed webhooks, and Web Bot Auth. A2A streaming, push notifications, and tasks are not offered either.
+Recorded in the [conformance matrix](https://github.com/AncientiCe/commerce-orchestrator-api/blob/v0.10.0/docs/standards/conformance-matrix.md) as `not_supported_yet`: UCP's MCP and A2A bindings, `UCP-Agent` platform profile negotiation, `actions[]`/3DS2, `$requestConstraints`, split payments and payment terms, location, consent, loyalty, RFC 9421-signed webhooks, and Web Bot Auth. A2A streaming, push notifications, and tasks are not offered either.
 
 ## [0.9.0] - 2026-08-20
 
