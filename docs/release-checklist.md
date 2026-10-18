@@ -37,14 +37,7 @@ Before cutting a release (e.g. GitHub tag and release notes), complete the follo
 
 - [ ] Push the release commit and wait until **CI** and **Audit** pass on that exact commit. Only then tag it.
 - [ ] Create and push an annotated tag (e.g. `v0.10.0`): `git tag -a v0.10.0 -m "v0.10.0"` then `git push origin v0.10.0`.
-- [ ] Create the GitHub release with that version's `CHANGELOG.md` section as its notes. There is no separate notes file; the CHANGELOG is the single source. Use absolute links in the section, because relative ones break on the release page:
-
-  ```sh
-  V=0.10.0
-  awk -v v="$V" 'index($0, "## [" v "]") == 1 {f=1; next} /^## \[/ {f=0} f' CHANGELOG.md \
-    | gh release create "v$V" --verify-tag --title "v$V" --notes-file -
-  ```
-
+- [ ] Nothing else to do for the GitHub release: pushing the tag runs the **Release** workflow (`.github/workflows/release.yml`), which publishes the release with that version's `CHANGELOG.md` section copied verbatim as its notes. It fails, and publishes nothing, if `CHANGELOG.md` has no `## [x.y.z]` section for the tag. The notes come from `CHANGELOG.md` as it is at the tagged commit, so get the section right before tagging, and use absolute links, because relative ones break on the release page.
 - [ ] Source-only release: nothing is published to crates.io; consumers pin the tag (see [consumer integration](consumer-integration.md)).
 
 ## Post-release
