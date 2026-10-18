@@ -124,6 +124,8 @@ Codes follow the UCP signatures specification:
 | `PUT` | `/api/v1/acp/carts/:id` | ACP update cart lines. |
 | `POST` | `/api/v1/acp/carts/:id/cancel` | ACP cancel cart. Requires `Idempotency-Key`. |
 | `POST` | `/api/v1/checkout/execute` | Execute checkout for a cart. Body: `CheckoutRequestDto`. Requires auth in production. |
+| `POST` | `/api/v1/a2a/message:send` | A2A 1.0 `SendMessage` (HTTP+JSON binding, `A2A-Version: 1.0` required). See [A2A 1.0](#a2a-10-agent-card-and-sendmessage). |
+| `GET`/`POST` | `/api/v1/a2a/tasks/:id`, `/api/v1/a2a/tasks/:id:cancel` | A2A task operations; always `404 TASK_NOT_FOUND`, because this agent replies with messages and never creates tasks. |
 | `POST` | `/api/v1/a2a/checkout` | A2A envelope checkout. Send `A2A-Version: 1.0` (or `0.3`). |
 | `POST` | `/api/v1/a2a/cart` | A2A envelope cart command. Send `A2A-Version: 1.0` (or `0.3`). |
 | `POST` | `/api/v1/a2a/identity/link` | A2A envelope: `{ "capability": "dev.ucp.common.identity_linking", "payload": { "tenant_id": "...", "merchant_id": "...", "agent_id": "...", "link_token": "...", "user_reference": "..."? } }`. Legacy identity capability names remain accepted. Returns `501 NOT_CONFIGURED` when no identity provider is configured. |
@@ -311,6 +313,47 @@ cart keeps `geo_ok: false`.
   }]
 }
 ```
+
+### A2A 1.0: Agent Card and SendMessage
+
+`GET /.well-known/agent-card.json` (public, cacheable) is the A2A 1.0 Agent Card. It lists one interface — `{base}/api/v1/a2a`, `protocolBinding: HTTP+JSON`, `protocolVersion: 1.0` — and the skills this deployment can run: `cart`, `checkout`, `order-lookup`, and `identity-linking` when an identity provider is configured. When the deployment requires bearer auth, the card says so in `securitySchemes`/`securityRequirements`. `/.well-known/ucp` links it as `orchestrator.a2a_agent_card`.
+
+`POST /api/v1/a2a/message:send` carries one of the existing capability envelopes in a DataPart and answers synchronously with an agent Message whose DataPart holds the result (the same body the matching `/a2a/*` route returns). Which skill runs is read from the envelope: an identity capability links identity, `payload.order_id` looks up an order, `payload.command` runs a cart command, anything else is a checkout. Pass `contextId` to thread several messages; a new one is assigned otherwise.
+
+```mermaid
+sequenceDiagram
+    participant C as A2A client
+    participant O as Orchestrator
+    C->>O: GET /.well-known/agent-card.json
+    O-->>C: AgentCard (HTTP+JSON interface, skills)
+    C->>O: POST /api/v1/a2a/message:send (A2A-Version: 1.0, DataPart envelope)
+    O->>O: same normalizer, authz, idempotency as /a2a/* routes
+    O-->>C: {"message": {"role": "ROLE_AGENT", "parts": [{"data": result}]}}
+```
+
+```http
+POST /api/v1/a2a/message:send HTTP/1.1
+A2A-Version: 1.0
+Content-Type: application/a2a+json
+Authorization: Bearer <token>
+
+{"message": {"messageId": "msg-1", "role": "ROLE_USER", "contextId": "ctx-7",
+  "parts": [{"mediaType": "application/json", "data": {
+    "capability": "dev.ucp.shopping.checkout",
+    "payload": {"command": {"kind": "create_cart", "merchant_id": "m1", "currency": "USD"}}}}]}}
+```
+
+Errors use A2A's `google.rpc.Status` shape, `{"error": {"code", "status", "message", "details": [{"@type": "type.googleapis.com/google.rpc.ErrorInfo", "reason", "domain"}]}}`:
+
+| HTTP | `reason` | When |
+|------|----------|------|
+| 400 | `VERSION_NOT_SUPPORTED` | `A2A-Version` is missing (A2A reads that as `0.3`) or not `1.0` |
+| 400 | `INVALID_PARAMS` | Not JSON, no `messageId`, role not `ROLE_USER`, or no DataPart |
+| 400 | `UNSUPPORTED_OPERATION` | Any operation other than `message:send`, including `message:stream` |
+| 404 | `TASK_NOT_FOUND` | Task operations, or a message that names a `taskId` |
+| 4xx/5xx | orchestrator code (e.g. `NOT_FOUND`, `AMOUNT_MISMATCH`), domain `commerce-orchestrator` | The operation itself failed; the HTTP status matches the REST route |
+
+Streaming, push notifications, the extended card and Agent Card signatures are not offered; the card says so.
 
 ### Identity linking (POST /api/v1/a2a/identity/link)
 

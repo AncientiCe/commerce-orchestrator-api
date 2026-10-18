@@ -7,7 +7,7 @@ This document records target protocol versions and the Commerce Orchestrator's c
 | Protocol | Target Version | Spec / Reference |
 |----------|----------------|------------------|
 | UCP business profile | **2026-08-25** (with `2026-04-08`, `2026-01-23` and `2026-01-11` profiles linked from `supported_versions`) | [UCP spec](https://ucp.dev/2026-08-25/specification/overview/); profile validated against the official `profile.json#/$defs/business_schema`; UCP REST binding; RFC 9421 signatures |
-| A2A (Agent-to-Agent) | **1.0** (patch **1.0.1**; retain `0.3` compatibility) | Delegated capability handoff; `A2A-Version` negotiation; envelope normalization |
+| A2A (Agent-to-Agent) | **1.0** (patch **1.0.1**; `0.3` envelopes retained) | [A2A spec](https://a2a-protocol.org/latest/specification/); Agent Card, HTTP+JSON `SendMessage`; `A2A-Version` negotiation on the envelope routes |
 | MCP (Model Context Protocol) | **Dual-era**: `2026-07-28` modern + `2025-11-25` / `2024-11-05` legacy | `server/discover` + per-request version meta; legacy `initialize` retained |
 | AP2 (Agent Payments Protocol) | **0.2** | [AP2 spec](https://ap2-protocol.org/); closed + open (HNP) mandates, VDCs |
 | ACP (Agentic Commerce Protocol) | **2026-04-17** | [ACP OpenAPI](https://github.com/agentic-commerce-protocol/agentic-commerce-protocol); merchant-hosted checkout sessions, Cart capability, delegate payment, mandatory `Idempotency-Key`, and `/.well-known/acp.json` discovery |
@@ -44,7 +44,7 @@ These are part of the current UCP release and are **not** advertised in discover
 | Capability | Status | Notes |
 |-------------|--------|-------|
 | UCP MCP binding (`services/shopping/mcp.openrpc.json`) | not_supported_yet | UCP's MCP tools (`create_checkout`, `update_cart`, `search_catalog`, …) differ from the orchestrator's native MCP tools; the native server is advertised under `orchestrator.mcp_endpoint` instead |
-| UCP A2A binding | not_supported_yet | The `/api/v1/a2a/*` envelopes are orchestrator-native; there is no A2A 1.0 Agent Card or `SendMessage` endpoint (see A2A section) |
+| UCP A2A binding | not_supported_yet | The orchestrator speaks A2A 1.0 (Agent Card, `SendMessage`) with its own capability envelopes, not UCP's `shopping/checkout/a2a` message shapes, so no `a2a` transport is listed under `dev.ucp.shopping` |
 | Platform profile negotiation (`UCP-Agent`) | not_supported_yet | Requests are not negotiated against the platform's profile (capability intersection, `version_unsupported`, `profile_unreachable`) |
 | `actions[]` primitive, 3DS2 device-data / challenge | not_supported_yet | Requires payment-provider participation |
 | `$requestConstraints`, PAN / network-token credential split | not_supported_yet | Checkout uses the orchestrator-native `payment_intent` |
@@ -92,7 +92,10 @@ These are part of the current UCP release and are **not** advertised in discover
 | MCP tool definitions | required | All facade operations exposed as MCP tools with JSON Schema input definitions, including `set_fulfillment_selection` (quote-only when `selected_option_id` is omitted). See [MCP binding](../mcp-binding.md) | `tools::tests::tools_list_includes_set_fulfillment_selection`, `tools::tests::set_fulfillment_selection_with_an_option_prices_the_cart` |
 | MCP resource definitions | required | `order://{id}` and `cart://{id}` resources readable via `resources/read` | orchestrator-mcp tests |
 | MCP endpoint in discovery | required | `/.well-known/ucp` → `orchestrator.mcp_endpoint` and `orchestrator.mcp_supported_versions` | discovery tests |
-| A2A 1.0 Agent Card and core operations | not_supported_yet | There is no `/.well-known/agent-card.json` and no A2A `SendMessage`/`GetTask` (JSON-RPC or `application/a2a+json` HTTP binding); `/api/v1/a2a/*` accepts orchestrator-native capability envelopes with `A2A-Version` negotiation. A generic A2A 1.0 client cannot discover or call the orchestrator yet | conformance review |
+| A2A 1.0 Agent Card | required | `GET /.well-known/agent-card.json` carries every required AgentCard field, one `HTTP+JSON` interface at `/api/v1/a2a` with `protocolVersion: 1.0`, only the skills this deployment can run, and Bearer `securitySchemes`/`securityRequirements` when auth is required; linked from `/.well-known/ucp` as `orchestrator.a2a_agent_card` | `a2a_binding_test::the_agent_card_has_every_required_field`, `a2a_binding_test::the_agent_card_lists_only_skills_this_deployment_can_run`, `a2a_binding_test::the_agent_card_declares_bearer_auth_when_the_deployment_requires_it` |
+| A2A 1.0 SendMessage (HTTP+JSON) | required | `POST /api/v1/a2a/message:send` requires `A2A-Version: 1.0`, takes a `ROLE_USER` message whose DataPart carries a capability envelope, runs it through the same normalizers and policy as `/a2a/*`, and replies `application/a2a+json` with a `ROLE_AGENT` message (contextId preserved). Errors are `google.rpc.Status` with `ErrorInfo` (`VERSION_NOT_SUPPORTED`, `INVALID_PARAMS`, `UNSUPPORTED_OPERATION`, `TASK_NOT_FOUND`) | `a2a_binding_test` suite |
+| A2A task operations | required | The agent never creates tasks, so `GetTask` and `CancelTask` return `404 TASK_NOT_FOUND` | `a2a_binding_test::tasks_are_never_created_so_task_operations_report_not_found` |
+| A2A streaming, push notifications, extended card, JSON-RPC/gRPC bindings, card signatures | not_supported_yet | Declared `false`/absent in the Agent Card | conformance review |
 | Delegated capability in handoff | optional | A2AHandoffProfile carries protocol, selected profile version, delegated_capability, and supported profile versions | adapters.rs, authz_and_adapters |
 
 ### ACP (Agentic Commerce Protocol)
@@ -176,6 +179,7 @@ Conformance is asserted by the following tests; CI runs them in the "Conformance
 - `cargo test -p orchestrator-http --test ucp_fulfillment_schema_test` — fulfillment objects validate against the official UCP fulfillment schema
 - `cargo test -p orchestrator-http --test ucp_rest_binding_test` — every UCP REST binding operation is routed at its spec path
 - `cargo test -p orchestrator-http --test ucp_signature_test` and `cargo test -p orchestrator-api --test ucp_signing` — RFC 9421 signatures, Content-Digest, ES256/Ed25519, UCP error codes, RFC 9421 test vector
+- `cargo test -p orchestrator-http --test a2a_binding_test` — A2A 1.0 Agent Card, `SendMessage`, task operations, error shape
 - `cargo test -p orchestrator-api --test authz_and_adapters` — authz, AP2 0.2 HNP, A2A version negotiation, AP2 strict mode
 - `cargo test -p orchestrator-mcp` — MCP dual-era discover / version errors / legacy initialize
 

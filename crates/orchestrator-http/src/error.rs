@@ -52,10 +52,11 @@ pub enum ApiError {
     Internal,
 }
 
-impl IntoResponse for ApiError {
-    fn into_response(self) -> Response {
-        crate::observability::increment_error_count();
-        let (status, code, message): (StatusCode, String, String) = match &self {
+impl ApiError {
+    /// HTTP status, stable error code, and message, shared by every transport
+    /// that renders this error (REST bodies, A2A `google.rpc.Status`).
+    pub fn parts(&self) -> (StatusCode, String, String) {
+        match self {
             ApiError::BadRequest(msg) => {
                 (StatusCode::BAD_REQUEST, "BAD_REQUEST".into(), msg.clone())
             }
@@ -78,7 +79,14 @@ impl IntoResponse for ApiError {
                 "INTERNAL_ERROR".into(),
                 "Internal server error".into(),
             ),
-        };
+        }
+    }
+}
+
+impl IntoResponse for ApiError {
+    fn into_response(self) -> Response {
+        crate::observability::increment_error_count();
+        let (status, code, message) = self.parts();
         (
             status,
             Json(ErrorBody {

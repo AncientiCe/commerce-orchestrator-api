@@ -30,7 +30,7 @@ use orchestrator_api::{
     parse_acp_session_id, projection_to_acp_cart, projection_to_acp_session,
     redact_checkout_request, start_checkout_command, AcpCartCreateRequest, AcpCartUpdateRequest,
     AcpCheckoutSessionCreateRequest, AcpCheckoutSessionUpdateRequest, AcpCompleteSessionRequest,
-    AcpDelegatePaymentRequest, FacadeError, PaymentHandlerDescriptor,
+    AcpDelegatePaymentRequest, AuthContext, FacadeError, PaymentHandlerDescriptor,
 };
 use orchestrator_core::contract::{
     AddItemPayload, CancelCartPayload, CartCommand, CartId, CheckoutRequest, CreateCartPayload,
@@ -108,6 +108,13 @@ pub fn routes() -> Router<AppState> {
         .route("/a2a/cart", post(a2a_dispatch_cart_command))
         .route("/a2a/identity/link", post(a2a_link_identity))
         .route("/a2a/orders", post(a2a_get_order))
+        // A2A 1.0 HTTP+JSON binding: `/message:send` (the colon is part of the
+        // path, so it is matched as an operation name) and task operations.
+        .route("/a2a/:operation", post(super::a2a::post_operation))
+        .route(
+            "/a2a/tasks/:task",
+            get(super::a2a::get_task).post(super::a2a::post_task),
+        )
         .route("/orders", get(list_orders))
         .route("/orders/:id", get(get_order))
         .route("/catalog/items/:id", get(lookup_catalog_item))
@@ -998,14 +1005,23 @@ async fn a2a_execute_checkout(
     Json(body): Json<serde_json::Value>,
 ) -> Result<Json<TransactionResultDto>, ApiError> {
     let _version = a2a_version_from_headers(&headers)?;
-    let request = normalize_a2a_checkout_envelope(&body).map_err(ApiError::BadRequest)?;
+    Ok(Json(run_a2a_checkout(&auth_ctx, &state, &body).await?))
+}
+
+/// Checkout capability envelope, shared by `/a2a/checkout` and A2A `SendMessage`.
+pub(crate) async fn run_a2a_checkout(
+    auth_ctx: &AuthContext,
+    state: &AppState,
+    body: &serde_json::Value,
+) -> Result<TransactionResultDto, ApiError> {
+    let request = normalize_a2a_checkout_envelope(body).map_err(ApiError::BadRequest)?;
     let redacted = redact_checkout_request(&request);
     tracing::info!(checkout_request = ?redacted, "a2a checkout execute");
     let result = state
         .facade
-        .execute_checkout_authorized(&auth_ctx, request)
+        .execute_checkout_authorized(auth_ctx, request)
         .await?;
-    Ok(Json(result.into()))
+    Ok(result.into())
 }
 
 /// POST /api/v1/a2a/cart — A2A envelope: { "capability": "...", "payload": { "command": { "kind": "...", ... }, "cart_id": "..."? } }. Same policy as REST.
@@ -1016,12 +1032,21 @@ async fn a2a_dispatch_cart_command(
     Json(body): Json<serde_json::Value>,
 ) -> Result<Json<CartProjectionDto>, ApiError> {
     let _version = a2a_version_from_headers(&headers)?;
-    let (cmd, cart_id) = normalize_a2a_cart_envelope(&body).map_err(ApiError::BadRequest)?;
+    Ok(Json(run_a2a_cart(&auth, &state, &body).await?))
+}
+
+/// Cart command envelope, shared by `/a2a/cart` and A2A `SendMessage`.
+pub(crate) async fn run_a2a_cart(
+    auth: &AuthContext,
+    state: &AppState,
+    body: &serde_json::Value,
+) -> Result<CartProjectionDto, ApiError> {
+    let (cmd, cart_id) = normalize_a2a_cart_envelope(body).map_err(ApiError::BadRequest)?;
     let projection = state
         .facade
         .dispatch_cart_command_for_tenant(&auth.tenant_id, cmd, cart_id)
         .await?;
-    Ok(Json(projection.into()))
+    Ok(projection.into())
 }
 
 /// POST /api/v1/a2a/identity/link — A2A envelope:
@@ -1033,7 +1058,16 @@ async fn a2a_link_identity(
     Json(body): Json<serde_json::Value>,
 ) -> Result<Json<IdentityLinkResultDto>, ApiError> {
     let _version = a2a_version_from_headers(&headers)?;
-    let mut request = normalize_a2a_identity_link_envelope(&body).map_err(ApiError::BadRequest)?;
+    Ok(Json(run_a2a_identity_link(&auth, &state, &body).await?))
+}
+
+/// Identity-linking envelope, shared by `/a2a/identity/link` and A2A `SendMessage`.
+pub(crate) async fn run_a2a_identity_link(
+    auth: &AuthContext,
+    state: &AppState,
+    body: &serde_json::Value,
+) -> Result<IdentityLinkResultDto, ApiError> {
+    let mut request = normalize_a2a_identity_link_envelope(body).map_err(ApiError::BadRequest)?;
     // The envelope is written by the caller; a link is created for the tenant they
     // actually authenticated as.
     if !request.tenant_id.trim().is_empty() && request.tenant_id != auth.tenant_id {
@@ -1041,7 +1075,7 @@ async fn a2a_link_identity(
     }
     request.tenant_id = auth.tenant_id.clone();
     let result = state.facade.link_identity(request).await?;
-    Ok(Json(result.into()))
+    Ok(result.into())
 }
 
 async fn get_order(
@@ -1076,6 +1110,15 @@ async fn a2a_get_order(
     Json(body): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let _version = a2a_version_from_headers(&headers)?;
+    Ok(Json(run_a2a_order_query(&auth_ctx, &state, &body).await?))
+}
+
+/// Order query envelope, shared by `/a2a/orders` and A2A `SendMessage`.
+pub(crate) async fn run_a2a_order_query(
+    auth_ctx: &AuthContext,
+    state: &AppState,
+    body: &serde_json::Value,
+) -> Result<serde_json::Value, ApiError> {
     let order_id = body
         .get("payload")
         .and_then(|p| p.get("order_id"))
@@ -1090,10 +1133,10 @@ async fn a2a_get_order(
         return Err(ApiError::Forbidden("tenant mismatch".to_string()));
     }
     let dto: OrderDto = order.into();
-    Ok(Json(serde_json::json!({
+    Ok(serde_json::json!({
         "capability": "dev.ucp.order.query",
         "result": dto
-    })))
+    }))
 }
 
 async fn register_webhook(

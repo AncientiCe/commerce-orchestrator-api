@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-UCP moves to **`2026-08-25`**. ACP `2026-04-17`, AP2 `0.2`, A2A `1.0`, and MCP `2026-07-28` remain current.
+UCP moves to **`2026-08-25`**, and A2A `1.0` is now spoken natively (Agent Card, `SendMessage`). ACP `2026-04-17`, AP2 `0.2`, and MCP `2026-07-28` remain current.
 
 ### Changed
 
@@ -20,6 +20,7 @@ UCP moves to **`2026-08-25`**. ACP `2026-04-17`, AP2 `0.2`, A2A `1.0`, and MCP `
 
 ### Added
 
+- **A2A 1.0 Agent Card and `SendMessage`.** `GET /.well-known/agent-card.json` describes the orchestrator to any A2A 1.0 client (HTTP+JSON interface at `/api/v1/a2a`, skills gated on what is configured, Bearer auth when required), and `POST /api/v1/a2a/message:send` runs the existing capability envelopes from a DataPart and answers with an agent Message. Task operations answer `TASK_NOT_FOUND`, since no tasks are created. Errors use A2A's `google.rpc.Status` shape. `/.well-known/ucp` links the card as `orchestrator.a2a_agent_card`. Metrics: `a2a_send_message` operation latency/count, per-skill and error counters, `a2a_agent_card_total`, `a2a_version_unsupported_total`, `a2a_task_not_found_total`.
 - **`UCP_PAYMENT_HANDLERS`**: publish your payment providers' UCP handlers in discovery; names must be reverse-DNS and entries need an `id` and a dated `version`, checked at startup.
 - **ES256 signing and verification** alongside Ed25519. ES256 is the one algorithm every UCP verifier must support: set `UCP_SIGNING_KEY_ALG=ES256` (P-256 private scalar in `UCP_SIGNING_KEY`), and previous keys may be `kid:ES256:secret`.
 - **`UCP_AGENT_JWKS`**: configure agent public keys as an RFC 7517 JWK Set (Ed25519 or P-256), the shape agents publish in their UCP profile. `UCP_AGENT_KEYS` (`kid:x` Ed25519 pairs) still works and the two can be combined.

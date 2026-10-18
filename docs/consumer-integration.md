@@ -15,6 +15,7 @@ Deploy the orchestrator as an HTTP service (`orchestrator-server`). Your app (Ag
 | **ACP** | `/api/v1/acp/checkout_sessions` (+ complete/cancel), `POST /api/v1/acp/delegate_payment` — require `API-Version: 2026-04-17` |
 | **Catalog & orders** | `GET /api/v1/catalog/items/:id`, `/api/v1/ucp/catalog` routes, `GET /api/v1/orders/:id`, `GET /api/v1/ucp/orders/:id` |
 | **Identity linking** | `POST /api/v1/a2a/identity/link` (`A2A-Version: 1.0` or `0.3`) |
+| **A2A 1.0** | `GET /.well-known/agent-card.json`, `POST /api/v1/a2a/message:send` |
 | **Payments** | `POST /api/v1/payments/capture`, `void`, `refund`; `GET /api/v1/ucp/payment-handlers` |
 | **MCP** | `POST /api/v1/mcp/message` (dual-era: `2026-07-28` + legacy initialize) |
 | **Events** | `POST /api/v1/events/incoming` (idempotent ingest) |

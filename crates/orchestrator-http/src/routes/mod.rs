@@ -1,5 +1,6 @@
 //! Route modules for the API.
 
+mod a2a;
 mod discovery;
 mod health;
 mod v1;

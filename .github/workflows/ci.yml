@@ -37,6 +37,7 @@ jobs:
           cargo test -p orchestrator-http --test ucp_rest_binding_test
           cargo test -p orchestrator-http --test ucp_signature_test
           cargo test -p orchestrator-api --test ucp_signing
+          cargo test -p orchestrator-http --test a2a_binding_test
           cargo test -p orchestrator-api --test authz_and_adapters
 
   postgres:

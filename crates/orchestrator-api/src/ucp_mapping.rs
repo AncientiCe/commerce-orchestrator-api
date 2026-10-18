@@ -131,6 +131,7 @@ fn latest_profile(base: &str, advertised: &AdvertisedCapabilities) -> WellKnownU
             ap2_protocol_version: "0.2".to_string(),
             acp_api_version: ACP_API_VERSION.to_string(),
             acp_discovery: format!("{base}/.well-known/acp.json"),
+            a2a_agent_card: format!("{base}/.well-known/agent-card.json"),
             capability_flags: capability_flags(advertised),
         }),
     }
@@ -436,6 +437,8 @@ pub struct OrchestratorExtensions {
     pub ap2_protocol_version: String,
     pub acp_api_version: String,
     pub acp_discovery: String,
+    /// The A2A 1.0 Agent Card describing the orchestrator's A2A interface.
+    pub a2a_agent_card: String,
     pub capability_flags: BTreeMap<String, bool>,
 }
 

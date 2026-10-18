@@ -58,7 +58,7 @@ The Commerce Orchestrator is a middleware API layer. Your clients call its REST 
 | Catalog | `GET /api/v1/catalog/items/:id` |
 | Payments | `POST /api/v1/payments/capture`, `void`, `refund` |
 | Webhooks | `POST /api/v1/webhooks`, `GET /api/v1/webhooks`, `DELETE /api/v1/webhooks/:id` |
-| A2A | `POST /api/v1/a2a/{checkout,cart,identity/link,orders}` (`A2A-Version: 1.0` or `0.3`) |
+| A2A | `GET /.well-known/agent-card.json`, `POST /api/v1/a2a/message:send` (A2A 1.0 HTTP+JSON); envelope routes `POST /api/v1/a2a/{checkout,cart,identity/link,orders}` (`A2A-Version: 1.0` or `0.3`) |
 | MCP | `POST /api/v1/mcp/message` (JSON-RPC 2.0; dual-era `2026-07-28` + legacy) — see [MCP binding](docs/mcp-binding.md) |
 | Events | `POST /api/v1/events/incoming` (idempotent) |
 | Operations | `POST /api/v1/ops/outbox/process`, `GET /api/v1/ops/dead-letter`, `POST /api/v1/ops/dead-letter/replay`, `POST /api/v1/ops/reconciliation` |
@@ -155,7 +155,7 @@ This service implements protocol-aligned behavior for agentic commerce:
 
 - **Discovery:** `GET /.well-known/ucp` serves a UCP `2026-08-25` business profile that validates against the official UCP JSON Schema — services, capabilities, payment handler registry, and the `keys[]` JWK Set — with ACP/MCP/A2A/AP2 metadata under a top-level `orchestrator` member; `2026-04-08` and older profiles stay reachable via `supported_versions`.
 - **REST:** Cart, catalog, order, checkout, and payment endpoints match the [consumption guide](docs/consumption-guide.md); auth and tenant isolation are enforced.
-- **A2A:** Profile `1.0` (compat `0.3`) with `A2A-Version` negotiation; `POST /api/v1/a2a/checkout` and `POST /api/v1/a2a/cart` accept A2A-style envelopes normalized to the same domain types and policy as REST.
+- **A2A:** A2A 1.0 Agent Card at `/.well-known/agent-card.json` and the HTTP+JSON `SendMessage` binding at `/api/v1/a2a/message:send`, carrying the same capability envelopes as `POST /api/v1/a2a/{checkout,cart,identity/link,orders}` (which keep `A2A-Version` `1.0`/`0.3` negotiation), normalized to the same domain types and policy as REST.
 - **AP2 0.2:** Payment intent supports `ap2_consent_proof` and `payment_handler_id`. With `AP2_STRICT=1`, checkout verifies closed mandates and optional open (HNP) mandates with amount/currency constraints; see [SECURITY.md](SECURITY.md).
 - **ACP 2026-04-17:** Merchant-hosted checkout sessions, carts, and delegate payment under `/api/v1/acp/*` (require `API-Version` and `Idempotency-Key` headers), plus `GET /.well-known/acp.json`. Delegate payment is advertised only when a PSP delegation adapter is configured. Feed API is out of scope.
 - **MCP:** Dual-era tool server — modern `2026-07-28` (`server/discover`, per-request version meta) plus legacy `initialize` for `2024-11-05` / `2025-11-25`. Discovery advertises `orchestrator.mcp_endpoint` and supported versions. Full contract: [MCP binding](docs/mcp-binding.md).

@@ -56,6 +56,9 @@ pub async fn well_known_ucp(
 
 /// GET /.well-known/acp.json — ACP discovery document (protocol version, REST base URL,
 /// transports, and supported services/extensions). No auth required.
+/// Shared with the A2A Agent Card, which UCP and A2A both require to be cacheable.
+pub(crate) const DISCOVERY_CACHE_CONTROL: [(header::HeaderName, &str); 1] = PROFILE_CACHE_CONTROL;
+
 pub async fn well_known_acp(State(state): State<AppState>) -> impl IntoResponse {
     let document = build_acp_discovery_document(
         &state.discovery_base_url,
@@ -69,6 +72,10 @@ pub fn routes() -> axum::Router<AppState> {
     axum::Router::new()
         .route("/.well-known/ucp", axum::routing::get(well_known_ucp))
         .route("/.well-known/acp.json", axum::routing::get(well_known_acp))
+        .route(
+            "/.well-known/agent-card.json",
+            axum::routing::get(super::a2a::agent_card),
+        )
 }
 
 #[derive(Debug, Deserialize)]
