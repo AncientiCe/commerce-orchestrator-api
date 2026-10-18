@@ -2,6 +2,7 @@
 name = "provider-mocks"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 description = "Deterministic in-memory mock implementations for integration tests"
 
 [dependencies]

@@ -2,6 +2,7 @@
 name = "orchestrator-api"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 description = "Minimal API surface for app/agent integration"
 
 [dependencies]

@@ -2,6 +2,7 @@
 name = "orchestrator-runtime"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 description = "Durable execution runner, idempotency, retries, and timeout handling"
 
 [dependencies]

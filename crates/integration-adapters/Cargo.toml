@@ -2,6 +2,7 @@
 name = "integration-adapters"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 description = "HTTP-based adapters for external component APIs (catalog, payment, etc.)"
 
 [dependencies]

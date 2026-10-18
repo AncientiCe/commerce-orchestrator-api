@@ -305,3 +305,43 @@ fn charted_metric_names(dashboard: &serde_json::Value) -> BTreeSet<String> {
     }
     names
 }
+
+fn version_tuple(version: &str) -> (u32, u32) {
+    let mut parts = version
+        .split('.')
+        .map(|p| p.parse::<u32>().expect("numeric version"));
+    (parts.next().unwrap_or(0), parts.next().unwrap_or(0))
+}
+
+/// The release image is built with whatever Rust the Dockerfile pins, not the
+/// toolchain CI tests with. A lockfile bump that raises the minimum Rust passed
+/// every test and still broke the image build, so the two are tied together here.
+#[test]
+fn the_docker_builder_meets_the_workspace_rust_version() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..");
+    let cargo = std::fs::read_to_string(root.join("Cargo.toml")).expect("Cargo.toml");
+    let declared = cargo
+        .lines()
+        .find_map(|line| {
+            line.trim().strip_prefix("rust-version").map(|rest| {
+                rest.trim_start_matches([' ', '='])
+                    .trim_matches('"')
+                    .to_string()
+            })
+        })
+        .expect("workspace declares rust-version");
+
+    let dockerfile = std::fs::read_to_string(root.join("Dockerfile")).expect("Dockerfile");
+    let builder = dockerfile
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("FROM rust:"))
+        .expect("builder stage uses the rust image");
+    let image = builder.split(['-', ' ']).next().unwrap();
+
+    assert!(
+        version_tuple(image) >= version_tuple(&declared),
+        "Dockerfile builds with rust:{image} but the workspace needs Rust {declared}"
+    );
+}

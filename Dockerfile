@@ -1,5 +1,6 @@
-# Build stage: compile orchestrator-server (Rust 1.88+ required by current lockfile)
-FROM rust:1.88-bookworm AS builder
+# Build stage: compile orchestrator-server. Must meet the workspace rust-version
+# (checked by deploy_manifests_test).
+FROM rust:1.98-bookworm AS builder
 WORKDIR /app
 COPY . .
 

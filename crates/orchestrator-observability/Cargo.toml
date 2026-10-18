@@ -2,6 +2,7 @@
 name = "orchestrator-observability"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 description = "Tracing spans, metrics helpers, and audit event schemas"
 
 [dependencies]

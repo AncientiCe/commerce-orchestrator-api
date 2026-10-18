@@ -28,6 +28,7 @@ UCP moves to **`2026-08-25`**, and A2A `1.0` is now spoken natively (Agent Card,
 
 ### Fixed
 
+- **The Docker image failed to build**: the lockfile refresh pulled `uuid 1.28`, which needs Rust 1.89, while the builder stage pinned `rust:1.88`. The builder now uses `rust:1.98`, the workspace declares `rust-version = "1.89"`, and a manifest test fails when the Dockerfile falls below it.
 - **The UCP REST binding was unreachable for checkout and cart.** Discovery advertises `/api/v1/ucp` as the `dev.ucp.shopping` REST endpoint, and UCP's binding puts checkout at `/checkout-sessions` and carts at `/carts`, but only `/checkout` and `/cart` were served, so a conformant platform got `404`. The binding paths are now served; the old paths remain as aliases.
 - **Checkout session responses named the wrong capability**: their `ucp.capabilities` listed `dev.ucp.shopping.cart` instead of `dev.ucp.shopping.checkout`.
 

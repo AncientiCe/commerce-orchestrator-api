@@ -2,6 +2,7 @@
 name = "consumer_example"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 description = "Template: wire your own provider adapters into OrchestratorFacade and run happy-path checkout"
 
 [dependencies]
