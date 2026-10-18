@@ -604,6 +604,10 @@ pub struct UcpEnvelopeDto {
     pub version: String,
     pub supported_versions: Vec<String>,
     pub capabilities: BTreeMap<String, Vec<UcpCapabilityDto>>,
+    /// Payment handler registry; UCP requires it on checkout responses.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<Object>)]
+    pub payment_handlers: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
 impl UcpEnvelopeDto {
@@ -625,6 +629,7 @@ impl UcpEnvelopeDto {
                     )
                 })
                 .collect(),
+            payment_handlers: None,
         }
     }
 }
@@ -657,12 +662,23 @@ pub struct UcpCartRequestDto {
     pub line_items: Vec<UcpCartLineRequestDto>,
 }
 
+/// UCP `item` on a line: what is being bought and its unit price.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct UcpLineItemDto {
+    pub id: String,
+    pub title: String,
+    /// Unit price in minor units.
+    pub price: i64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct UcpCartLineDto {
     pub id: String,
-    pub item: UcpCartItemRefDto,
-    pub title: String,
+    pub item: UcpLineItemDto,
     pub quantity: u32,
+    pub totals: Vec<UcpTotalDto>,
+    /// Orchestrator aliases of `item.title`, `item.price` and the line total.
+    pub title: String,
     pub unit_price_minor: i64,
     pub total_minor: i64,
 }
@@ -671,13 +687,40 @@ impl From<CartLineProjection> for UcpCartLineDto {
     fn from(line: CartLineProjection) -> Self {
         Self {
             id: line.line_id,
-            item: UcpCartItemRefDto { id: line.item_id },
-            title: line.title,
+            item: UcpLineItemDto {
+                id: line.item_id,
+                title: line.title.clone(),
+                price: line.unit_price_minor,
+            },
             quantity: line.quantity,
+            totals: line_totals(line.total_minor),
+            title: line.title,
             unit_price_minor: line.unit_price_minor,
             total_minor: line.total_minor,
         }
     }
+}
+
+fn line_totals(amount: i64) -> Vec<UcpTotalDto> {
+    vec![
+        UcpTotalDto::new("subtotal", amount),
+        UcpTotalDto::new("total", amount),
+    ]
+}
+
+/// UCP `totals[]` for a cart, checkout or order: exactly one subtotal and one
+/// total; discounts are negative and only listed when something was taken off.
+pub fn ucp_totals(totals: &orchestrator_core::TotalsBreakdown) -> Vec<UcpTotalDto> {
+    let mut entries = vec![UcpTotalDto::new("subtotal", totals.subtotal_minor)];
+    if totals.discount_minor != 0 {
+        entries.push(UcpTotalDto::new("discount", -totals.discount_minor.abs()));
+    }
+    if totals.fulfillment_minor > 0 {
+        entries.push(UcpTotalDto::new("fulfillment", totals.fulfillment_minor));
+    }
+    entries.push(UcpTotalDto::new("tax", totals.tax_minor));
+    entries.push(UcpTotalDto::new("total", totals.total_minor));
+    entries
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -697,9 +740,24 @@ pub struct UcpCartResponseDto {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub discounts: Vec<UcpDiscountDto>,
     pub total_minor: i64,
+    /// UCP `totals[]`; the `*_minor` fields above are orchestrator aliases.
+    pub totals: Vec<UcpTotalDto>,
+    /// Cart: the orchestrator's `draft`/`checkout_ready`/`canceled`. Checkout
+    /// session: UCP's `incomplete`/`ready_for_complete`/`canceled`.
     pub status: String,
+    /// UCP checkout `links[]`; present on checkout sessions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub links: Option<Vec<UcpLinkDto>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fulfillment: Option<UcpFulfillmentDto>,
+}
+
+/// UCP `link`: a typed URL such as terms of service or a privacy policy.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct UcpLinkDto {
+    #[serde(rename = "type")]
+    pub link_type: String,
+    pub url: String,
 }
 
 /// A discount granted by the pricing provider (`dev.ucp.shopping.discount`).
@@ -727,12 +785,26 @@ impl From<AppliedDiscount> for UcpDiscountDto {
 impl UcpCartResponseDto {
     /// The same projection seen through a checkout session: the envelope names
     /// `dev.ucp.shopping.checkout` as the root capability instead of the cart.
-    pub fn into_checkout(mut self) -> Self {
+    ///
+    /// The status moves to UCP's checkout vocabulary and the envelope carries the
+    /// deployment's payment handler registry, which UCP requires on checkouts.
+    pub fn into_checkout(
+        mut self,
+        payment_handlers: &serde_json::Map<String, serde_json::Value>,
+    ) -> Self {
         if let Some(versions) = self.ucp.capabilities.remove("dev.ucp.shopping.cart") {
             self.ucp
                 .capabilities
                 .insert("dev.ucp.shopping.checkout".to_string(), versions);
         }
+        self.ucp.payment_handlers = Some(payment_handlers.clone());
+        self.status = match self.status.as_str() {
+            "canceled" => "canceled",
+            "checkout_ready" if !self.line_items.is_empty() => "ready_for_complete",
+            _ => "incomplete",
+        }
+        .to_string();
+        self.links = Some(Vec::new());
         self
     }
 }
@@ -746,6 +818,13 @@ impl From<CartProjection> for UcpCartResponseDto {
             _ => "draft",
         }
         .to_string();
+        let totals = ucp_totals(&orchestrator_core::TotalsBreakdown {
+            subtotal_minor: cart.subtotal_minor,
+            tax_minor: cart.tax_minor,
+            discount_minor: cart.discount_minor,
+            fulfillment_minor: cart.fulfillment_minor,
+            total_minor: cart.total_minor,
+        });
         let mut capabilities = vec!["dev.ucp.shopping.cart", "dev.ucp.shopping.fulfillment"];
         if !cart.discounts.is_empty() {
             capabilities.push("dev.ucp.shopping.discount");
@@ -766,7 +845,9 @@ impl From<CartProjection> for UcpCartResponseDto {
                 .map(UcpDiscountDto::from)
                 .collect(),
             total_minor: cart.total_minor,
+            totals,
             status,
+            links: None,
             fulfillment: cart.fulfillment.map(UcpFulfillmentDto::from),
         }
     }
@@ -894,12 +975,21 @@ pub struct UcpDescriptionDto {
     pub plain: String,
 }
 
-/// UCP `total` entry: a typed amount in minor units.
+/// UCP `total` entry: a typed, signed amount in minor units.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct UcpOptionTotalDto {
+pub struct UcpTotalDto {
     #[serde(rename = "type")]
     pub total_type: String,
     pub amount: i64,
+}
+
+impl UcpTotalDto {
+    pub fn new(total_type: &str, amount: i64) -> Self {
+        Self {
+            total_type: total_type.to_string(),
+            amount,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -911,7 +1001,7 @@ pub struct UcpFulfillmentOptionDto {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub carrier: Option<String>,
     /// UCP `totals[]`: the option's price as a `total` entry.
-    pub totals: Vec<UcpOptionTotalDto>,
+    pub totals: Vec<UcpTotalDto>,
     /// Orchestrator alias for the `total` amount, kept for existing clients.
     pub amount_minor: i64,
 }
@@ -923,10 +1013,7 @@ impl From<FulfillmentOption> for UcpFulfillmentOptionDto {
             title: option.title,
             description: option.description.map(|plain| UcpDescriptionDto { plain }),
             carrier: option.carrier,
-            totals: vec![UcpOptionTotalDto {
-                total_type: "total".to_string(),
-                amount: option.amount_minor,
-            }],
+            totals: vec![UcpTotalDto::new("total", option.amount_minor)],
             amount_minor: option.amount_minor,
         }
     }
@@ -1123,27 +1210,43 @@ pub struct UcpEmbeddedCheckoutLinkResponseDto {
     pub expires_at: i64,
 }
 
+/// UCP order line quantities: how many were ordered and how many have shipped.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct UcpSignedAmountDto {
-    pub amount: i64,
+pub struct UcpOrderQuantityDto {
+    pub original: u32,
+    pub total: u32,
+    pub fulfilled: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct UcpTotalDto {
-    #[serde(rename = "type")]
-    pub total_type: String,
-    pub amount: UcpSignedAmountDto,
-    pub currency: String,
+pub struct UcpOrderLineDto {
+    pub id: String,
+    pub item: UcpLineItemDto,
+    pub quantity: UcpOrderQuantityDto,
+    pub totals: Vec<UcpTotalDto>,
+    /// `processing`, `fulfilled`, or `removed` (cancelled order).
+    pub status: String,
+}
+
+/// UCP order `fulfillment`: expectations and events. The orchestrator records
+/// order events separately (`events`), so both lists are empty for now.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
+pub struct UcpOrderFulfillmentDto {
+    pub expectations: Vec<serde_json::Value>,
+    pub events: Vec<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct UcpOrderResponseDto {
     pub ucp: UcpEnvelopeDto,
     pub id: String,
+    /// The checkout session (cart) the order came from.
+    pub checkout_id: String,
     pub status: OrderStatusDto,
     pub currency: String,
     pub permalink_url: String,
-    pub line_items: Vec<UcpCartLineDto>,
+    pub line_items: Vec<UcpOrderLineDto>,
+    pub fulfillment: UcpOrderFulfillmentDto,
     pub totals: Vec<UcpTotalDto>,
     pub events: Vec<OrderEventDto>,
     pub created_at: String,
@@ -1158,48 +1261,39 @@ impl From<OrderRecord> for UcpOrderResponseDto {
             OrderStatus::Cancelled => OrderStatusDto::Cancelled,
             _ => OrderStatusDto::Created,
         };
-        let totals = vec![
-            UcpTotalDto {
-                total_type: "subtotal".to_string(),
-                amount: UcpSignedAmountDto {
-                    amount: order.totals.subtotal_minor,
-                },
-                currency: order.currency.clone(),
-            },
-            UcpTotalDto {
-                total_type: "tax".to_string(),
-                amount: UcpSignedAmountDto {
-                    amount: order.totals.tax_minor,
-                },
-                currency: order.currency.clone(),
-            },
-            UcpTotalDto {
-                total_type: "discount".to_string(),
-                amount: UcpSignedAmountDto {
-                    amount: -order.totals.discount_minor.abs(),
-                },
-                currency: order.currency.clone(),
-            },
-            UcpTotalDto {
-                total_type: "total".to_string(),
-                amount: UcpSignedAmountDto {
-                    amount: order.totals.total_minor,
-                },
-                currency: order.currency.clone(),
-            },
-        ];
+        let (line_status, fulfilled) = match order.status {
+            OrderStatus::Fulfilled => ("fulfilled", true),
+            OrderStatus::Cancelled => ("removed", false),
+            _ => ("processing", false),
+        };
         Self {
             ucp: UcpEnvelopeDto::for_capabilities(&["dev.ucp.shopping.order"]),
             id: order.order_id,
+            checkout_id: order.checkout_id.0.to_string(),
             status,
             currency: order.currency,
             permalink_url: order.permalink_url,
             line_items: order
                 .line_items
                 .into_iter()
-                .map(UcpCartLineDto::from)
+                .map(|line| UcpOrderLineDto {
+                    id: line.line_id,
+                    item: UcpLineItemDto {
+                        id: line.item_id,
+                        title: line.title,
+                        price: line.unit_price_minor,
+                    },
+                    quantity: UcpOrderQuantityDto {
+                        original: line.quantity,
+                        total: line.quantity,
+                        fulfilled: if fulfilled { line.quantity } else { 0 },
+                    },
+                    totals: line_totals(line.total_minor),
+                    status: line_status.to_string(),
+                })
                 .collect(),
-            totals,
+            fulfillment: UcpOrderFulfillmentDto::default(),
+            totals: ucp_totals(&order.totals),
             events: order.events.into_iter().map(OrderEventDto::from).collect(),
             created_at: order.created_at.to_rfc3339(),
         }

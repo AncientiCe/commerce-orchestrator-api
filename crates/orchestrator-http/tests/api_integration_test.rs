@@ -775,11 +775,7 @@ async fn ucp_order_get_returns_current_order_shape() {
     assert_eq!(order["line_items"].as_array().unwrap().len(), 1);
     assert!(order["totals"].as_array().unwrap().iter().any(|total| {
         total.get("type").and_then(|v| v.as_str()) == Some("total")
-            && total
-                .get("amount")
-                .and_then(|v| v.get("amount"))
-                .and_then(|v| v.as_i64())
-                == Some(1100)
+            && total.get("amount").and_then(|v| v.as_i64()) == Some(1100)
     }));
 }
 

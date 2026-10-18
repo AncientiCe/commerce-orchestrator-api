@@ -318,9 +318,10 @@ async fn ucp_set_checkout_fulfillment(
     path: Path<String>,
     req: Json<UcpFulfillmentSelectionRequestDto>,
 ) -> Result<Json<UcpCartResponseDto>, ApiError> {
+    let payment_handlers = state.payment_handlers.clone();
     let Json(response) = ucp_set_cart_fulfillment(auth, state, path, req).await?;
     orchestrator_observability::incr("ucp_checkout_fulfillment_select_total");
-    Ok(Json(response.into_checkout()))
+    Ok(Json(response.into_checkout(&payment_handlers)))
 }
 
 async fn ucp_catalog_search(
@@ -518,7 +519,9 @@ async fn ucp_create_checkout(
         )
         .await?;
     orchestrator_observability::incr("ucp_checkout_create_total");
-    Ok(Json(UcpCartResponseDto::from(projection).into_checkout()))
+    Ok(Json(
+        UcpCartResponseDto::from(projection).into_checkout(&state.payment_handlers),
+    ))
 }
 
 async fn ucp_get_checkout(
@@ -536,7 +539,9 @@ async fn ucp_get_checkout(
         )
         .await?;
     orchestrator_observability::incr("ucp_checkout_get_total");
-    Ok(Json(UcpCartResponseDto::from(projection).into_checkout()))
+    Ok(Json(
+        UcpCartResponseDto::from(projection).into_checkout(&state.payment_handlers),
+    ))
 }
 
 async fn ucp_update_checkout(
@@ -545,9 +550,10 @@ async fn ucp_update_checkout(
     path: Path<String>,
     req: Json<UcpCartRequestDto>,
 ) -> Result<Json<UcpCartResponseDto>, ApiError> {
+    let payment_handlers = state.payment_handlers.clone();
     let Json(response) = ucp_update_cart(auth, state, path, req).await?;
     orchestrator_observability::incr("ucp_checkout_update_total");
-    Ok(Json(response.into_checkout()))
+    Ok(Json(response.into_checkout(&payment_handlers)))
 }
 
 async fn ucp_complete_checkout(
@@ -582,7 +588,9 @@ async fn ucp_cancel_checkout(
         )
         .await?;
     orchestrator_observability::incr("ucp_checkout_cancel_total");
-    Ok(Json(UcpCartResponseDto::from(projection).into_checkout()))
+    Ok(Json(
+        UcpCartResponseDto::from(projection).into_checkout(&state.payment_handlers),
+    ))
 }
 
 /// POST /api/v1/ucp/checkout/:id/embedded-link — UCP "embedded" transport / link delegation.

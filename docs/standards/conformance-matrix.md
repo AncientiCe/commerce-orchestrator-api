@@ -54,7 +54,6 @@ These are part of the current UCP release and are **not** advertised in discover
 | Fractional quantities (`measure.json`, sale basis) | not_supported_yet | Quantities are integers |
 | Buyer consent (`dev.ucp.consent.*`), loyalty, policies, attribution, permalink | not_supported_yet | |
 | Signed webhooks (RFC 9421) | not_supported_yet | Webhooks are signed with HMAC `X-Webhook-Signature`; UCP requires business-to-platform webhooks to carry message signatures |
-| Cart / checkout / order response bodies | not_supported_yet | Only the profile and `fulfillment` objects are validated against the official schemas. The cart, checkout and order bodies are not yet; known deviation: order `totals[].amount` is an object `{ "amount": n }` where UCP's `signed_amount` is a plain integer, and orders lack the required `checkout_id`/`fulfillment` members |
 
 ### Fulfillment (UCP)
 
@@ -79,7 +78,7 @@ These are part of the current UCP release and are **not** advertised in discover
 | Payment lifecycle | required | POST /api/v1/payments/{capture,void,refund} with tenant_id, transaction_id, idempotency_key | API tests |
 | Payment-handler registry | required | Discovery advertises handlers; `GET /api/v1/ucp/payment-handlers` lists/gets configured handlers | discovery tests |
 | Auth and tenant isolation | required | Bearer auth in production; tenant_id and scope checks; cross-tenant idempotency isolation; carts are stamped with the caller's tenant at creation and cross-tenant read/mutate/cancel/checkout returns `403 TENANT_MISMATCH`; payment delegation and identity linking take the tenant from the auth context, not the body | authz_and_adapters, cross_tenant_idempotency, `cart_tenancy`, `honest_discovery_test::delegate_payment_refuses_a_tenant_the_caller_is_not` |
-| Order currency + signed totals | required | UCP order responses include required `currency` and totals with signed amount objects | dto / UCP order response |
+| UCP response bodies | required | Cart, checkout session and order bodies validate against UCP `2026-08-25` `shopping/{cart,checkout,order}.json`: line `item {id,title,price}` + `totals[]`, integer `totals[]` with one subtotal and one total, checkout `status` vocabulary + `links[]` + `ucp.payment_handlers`, order `checkout_id`, `fulfillment`, line `quantity` object and `status` | `ucp_response_schema_test` suite |
 
 ### Transport: A2A / MCP (adapter layer)
 
@@ -173,6 +172,7 @@ Conformance is asserted by the following tests; CI runs them in the "Conformance
 
 - `cargo test -p orchestrator-http --test discovery_test` — discovery endpoint, advertised capabilities, capability-route parity, A2A/ACP routes
 - `cargo test -p orchestrator-http --test ucp_profile_schema_test` — `/.well-known/ucp` validates against the official UCP `2026-08-25` business profile schema; profile rules the schema cannot express
+- `cargo test -p orchestrator-http --test ucp_response_schema_test` — cart, checkout and order bodies validate against the official UCP schemas
 - `cargo test -p orchestrator-http --test ucp_fulfillment_schema_test` — fulfillment objects validate against the official UCP fulfillment schema
 - `cargo test -p orchestrator-http --test ucp_rest_binding_test` — every UCP REST binding operation is routed at its spec path
 - `cargo test -p orchestrator-http --test ucp_signature_test` and `cargo test -p orchestrator-api --test ucp_signing` — RFC 9421 signatures, Content-Digest, ES256/Ed25519, UCP error codes, RFC 9421 test vector

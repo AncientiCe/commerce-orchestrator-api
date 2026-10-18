@@ -137,7 +137,7 @@ Codes follow the UCP signatures specification:
 | `POST` | `/api/v1/ucp/catalog/lookup` | UCP-native batch lookup. Body: `{ "ids": ["SKU-1"] }`; misses are returned as UCP `messages`. |
 | `POST` | `/api/v1/ucp/catalog/product` | UCP-native product lookup. Body: `{ "id": "SKU-1" }`. |
 | `GET` | `/api/v1/orders/:id` | Legacy order lookup with tenant isolation. |
-| `GET` | `/api/v1/ucp/orders/:id` | UCP-native order lookup with `currency`, `permalink_url`, line items, and totals. |
+| `GET` | `/api/v1/ucp/orders/:id` | UCP order: `checkout_id`, `currency`, `permalink_url`, `line_items[]` (with `quantity: {original, total, fulfilled}` and `status`), `fulfillment`, and `totals[]`. |
 
 ### Payments
 
@@ -250,6 +250,15 @@ sequenceDiagram
     Orchestrator-->>Agent: 422 AMOUNT_MISMATCH (idempotency key released)
   end
 ```
+
+### UCP response bodies
+
+Cart, checkout session, and order bodies validate against the UCP `2026-08-25` schemas (`shopping/cart.json`, `shopping/checkout.json`, `shopping/order.json`):
+
+- **`line_items[]`**: `item: { id, title, price }` (unit price in minor units), `quantity`, and `totals[]`. `title`, `unit_price_minor` and `total_minor` remain on cart and checkout lines as aliases.
+- **`totals[]`**: typed integer amounts in minor units — exactly one `subtotal` and one `total`, plus `discount` (negative, only when something was taken off), `fulfillment` (when a paid option is selected) and `tax`. The `*_minor` fields remain as aliases.
+- **Checkout `status`**: `incomplete` (empty or not yet started), `ready_for_complete`, or `canceled`. Checkout responses also carry `links[]` and the deployment's `ucp.payment_handlers`. Cart responses keep the orchestrator's `draft` / `checkout_ready` / `canceled`.
+- **Orders**: `checkout_id` names the checkout session; each line has `quantity: { original, total, fulfilled }` and `status` (`processing`, `fulfilled`, or `removed` for a cancelled order); `fulfillment` is present with empty `expectations`/`events` (order history is in `events`).
 
 ### Fulfillment selection (POST /api/v1/ucp/cart/:id/fulfillment)
 
