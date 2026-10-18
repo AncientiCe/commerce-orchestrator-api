@@ -416,7 +416,20 @@ fn legacy_kid_and_raw_public_key_pairs_still_build_a_verifier() {
 }
 
 #[test]
-fn a_jwks_with_an_unsupported_key_type_is_refused() {
-    let jwks = r#"{"keys":[{"kid":"rsa-1","kty":"RSA","n":"AQAB","e":"AQAB"}]}"#;
+fn a_jwks_key_of_an_unknown_type_is_skipped_not_fatal() {
+    // UCP: verifiers MUST tolerate key types they do not recognise; only a
+    // signature that references such a key fails.
+    let agent = ed_keyring("agent-1", AGENT_SEED);
+    let mut keys =
+        vec![serde_json::json!({ "kid": "rsa-1", "kty": "RSA", "n": "AQAB", "e": "AQAB" })];
+    keys.push(serde_json::to_value(&agent.public_jwks()[0]).unwrap());
+    let verifier =
+        VerifyingKeyring::from_jwks(&serde_json::json!({ "keys": keys }).to_string()).unwrap();
+    assert_eq!(verifier.kids(), vec!["agent-1"]);
+}
+
+#[test]
+fn a_known_key_type_with_broken_material_is_refused() {
+    let jwks = r#"{"keys":[{"kid":"ec-1","kty":"EC","crv":"P-256","x":"AAAA","y":"AAAA"}]}"#;
     assert!(VerifyingKeyring::from_jwks(jwks).is_err());
 }

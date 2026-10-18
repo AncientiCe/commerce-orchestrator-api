@@ -31,6 +31,7 @@ jobs:
       - name: Conformance (discovery, REST binding, signatures, A2A, AP2)
         run: |
           cargo test -p orchestrator-http --test discovery_test
+          cargo test -p orchestrator-http --test ucp_profile_schema_test
           cargo test -p orchestrator-http --test ucp_rest_binding_test
           cargo test -p orchestrator-http --test ucp_signature_test
           cargo test -p orchestrator-api --test ucp_signing

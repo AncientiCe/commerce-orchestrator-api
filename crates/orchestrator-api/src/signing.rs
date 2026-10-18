@@ -562,10 +562,16 @@ impl VerifyingKeyring {
         let keys = value.get("keys").cloned().unwrap_or(value);
         let jwks: Vec<SigningKeyDescriptor> = serde_json::from_value(keys)
             .map_err(|e| SigningKeyError::InvalidJwks(e.to_string()))?;
-        let parsed = jwks
-            .iter()
-            .map(|jwk| Ok((jwk.kid.clone(), PublicKey::from_jwk(jwk)?)))
-            .collect::<Result<Vec<_>, SigningKeyError>>()?;
+        let mut parsed = Vec::with_capacity(jwks.len());
+        for jwk in &jwks {
+            match PublicKey::from_jwk(jwk) {
+                Ok(key) => parsed.push((jwk.kid.clone(), key)),
+                // UCP: tolerate key types we do not recognise; only a signature
+                // naming such a key fails, as key_not_found.
+                Err(SigningKeyError::UnsupportedAlgorithm(_)) => {}
+                Err(error) => return Err(error),
+            }
+        }
         Self::from_entries(parsed)
     }
 

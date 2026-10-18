@@ -532,7 +532,10 @@ async fn ucp_cart_create_get_update_and_cancel_return_ucp_envelopes() {
     let response = server.post("/api/v1/ucp/cart").json(&create).await;
     response.assert_status_ok();
     let cart: serde_json::Value = response.json();
-    assert_eq!(cart["ucp"]["version"].as_str(), Some("2026-04-08"));
+    assert_eq!(
+        cart["ucp"]["version"].as_str(),
+        Some(orchestrator_core::UCP_LATEST_VERSION)
+    );
     assert!(cart["ucp"]["capabilities"]
         .get("dev.ucp.shopping.cart")
         .is_some());
@@ -571,7 +574,10 @@ async fn ucp_cart_create_get_update_and_cancel_return_ucp_envelopes() {
     cancel_response.assert_status_ok();
     let canceled: serde_json::Value = cancel_response.json();
     assert_eq!(canceled["status"].as_str(), Some("canceled"));
-    assert_eq!(canceled["ucp"]["version"].as_str(), Some("2026-04-08"));
+    assert_eq!(
+        canceled["ucp"]["version"].as_str(),
+        Some(orchestrator_core::UCP_LATEST_VERSION)
+    );
 }
 
 #[tokio::test]
@@ -657,7 +663,10 @@ async fn ucp_catalog_search_lookup_and_product_return_ucp_envelopes() {
         .await;
     search_response.assert_status_ok();
     let search_json: serde_json::Value = search_response.json();
-    assert_eq!(search_json["ucp"]["version"].as_str(), Some("2026-04-08"));
+    assert_eq!(
+        search_json["ucp"]["version"].as_str(),
+        Some(orchestrator_core::UCP_LATEST_VERSION)
+    );
     assert!(search_json["ucp"]["capabilities"]
         .get("dev.ucp.shopping.catalog.search")
         .is_some());
@@ -751,7 +760,10 @@ async fn ucp_order_get_returns_current_order_shape() {
         .await;
     response.assert_status_ok();
     let order: serde_json::Value = response.json();
-    assert_eq!(order["ucp"]["version"].as_str(), Some("2026-04-08"));
+    assert_eq!(
+        order["ucp"]["version"].as_str(),
+        Some(orchestrator_core::UCP_LATEST_VERSION)
+    );
     assert!(order["ucp"]["capabilities"]
         .get("dev.ucp.shopping.order")
         .is_some());
@@ -796,7 +808,7 @@ async fn a2a_identity_link_returns_link_result_envelope() {
         json.get("ucp")
             .and_then(|v| v.get("version"))
             .and_then(|v| v.as_str()),
-        Some("2026-04-08")
+        Some(orchestrator_core::UCP_LATEST_VERSION)
     );
     assert!(
         json.get("link_id")

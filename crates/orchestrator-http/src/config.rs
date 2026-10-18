@@ -906,6 +906,82 @@ pub struct ServerSection {
     /// transport is not advertised and `embedded-link` returns `501`.
     #[serde(default)]
     pub embedded_checkout_url: Option<String>,
+    /// UCP payment handler registry published in discovery, as JSON: an object
+    /// keyed by reverse-DNS handler name whose values are arrays of handler
+    /// entries. Unset publishes an empty registry.
+    #[serde(default)]
+    pub ucp_payment_handlers: Option<String>,
+}
+
+impl ServerSection {
+    /// Parse and check the configured payment handler registry.
+    pub fn payment_handlers(&self) -> Result<serde_json::Value, String> {
+        let Some(raw) = self
+            .ucp_payment_handlers
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+        else {
+            return Ok(serde_json::json!({}));
+        };
+        let invalid = |reason: String| format!("UCP_PAYMENT_HANDLERS: {reason}");
+        let value: serde_json::Value =
+            serde_json::from_str(raw).map_err(|e| invalid(e.to_string()))?;
+        let registry = value
+            .as_object()
+            .ok_or_else(|| invalid("must be an object keyed by handler name".to_string()))?;
+        for (name, entries) in registry {
+            if !is_reverse_domain_name(name) {
+                return Err(invalid(format!(
+                    "handler name '{name}' must be reverse-DNS, e.g. com.example.tokenizer"
+                )));
+            }
+            let entries = entries
+                .as_array()
+                .ok_or_else(|| invalid(format!("'{name}' must map to an array of entries")))?;
+            for entry in entries {
+                if entry.get("id").and_then(|v| v.as_str()).is_none() {
+                    return Err(invalid(format!("every '{name}' entry needs an id")));
+                }
+                if !entry
+                    .get("version")
+                    .and_then(|v| v.as_str())
+                    .is_some_and(is_dated_version)
+                {
+                    return Err(invalid(format!(
+                        "every '{name}' entry needs a YYYY-MM-DD version"
+                    )));
+                }
+            }
+        }
+        Ok(value)
+    }
+}
+
+/// UCP's reverse-domain name: two or more dot-separated lowercase segments.
+fn is_reverse_domain_name(name: &str) -> bool {
+    let segments: Vec<&str> = name.split('.').collect();
+    segments.len() >= 2
+        && segments.iter().enumerate().all(|(i, segment)| {
+            let first_ok = if i == 0 {
+                segment.starts_with(|c: char| c.is_ascii_lowercase())
+            } else {
+                segment.starts_with(|c: char| c.is_ascii_lowercase() || c.is_ascii_digit())
+            };
+            first_ok
+                && !segment.ends_with('-')
+                && segment.chars().all(|c| {
+                    c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || (i > 0 && c == '_')
+                })
+        })
+}
+
+fn is_dated_version(version: &str) -> bool {
+    let bytes = version.as_bytes();
+    bytes.len() == 10
+        && bytes.iter().enumerate().all(|(i, b)| match i {
+            4 | 7 => *b == b'-',
+            _ => b.is_ascii_digit(),
+        })
 }
 
 fn default_bind_addr() -> String {
@@ -966,6 +1042,10 @@ impl ServerConfig {
         if let Ok(v) = std::env::var("EMBEDDED_CHECKOUT_URL") {
             let t = v.trim().to_string();
             self.server.embedded_checkout_url = (!t.is_empty()).then_some(t);
+        }
+        if let Ok(v) = std::env::var("UCP_PAYMENT_HANDLERS") {
+            let t = v.trim().to_string();
+            self.server.ucp_payment_handlers = (!t.is_empty()).then_some(t);
         }
         if let Ok(v) = std::env::var("RUST_LOG") {
             let t = v.trim().to_string();
@@ -1324,6 +1404,63 @@ mod tests {
         };
         let keyring = section.to_verifying_keyring().unwrap().expect("keyring");
         assert_eq!(keyring.kids(), vec!["agent-ed", "agent-ec"]);
+    }
+
+    fn server_with_handlers(json: &str) -> ServerSection {
+        ServerSection {
+            ucp_payment_handlers: Some(json.to_string()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn no_payment_handlers_configured_is_an_empty_registry() {
+        let handlers = ServerSection::default().payment_handlers().unwrap();
+        assert_eq!(handlers, serde_json::json!({}));
+    }
+
+    #[test]
+    fn payment_handlers_are_parsed_as_a_reverse_dns_registry() {
+        let handlers = server_with_handlers(
+            r#"{"com.example.tokenizer":[{"id":"tok","version":"2026-08-25",
+                "spec":"https://example.com/spec","schema":"https://example.com/schema.json"}]}"#,
+        )
+        .payment_handlers()
+        .unwrap();
+        assert_eq!(handlers["com.example.tokenizer"][0]["id"], "tok");
+    }
+
+    #[test]
+    fn payment_handlers_must_be_an_object_of_arrays() {
+        let err = server_with_handlers(r#"[{"id":"card"}]"#)
+            .payment_handlers()
+            .unwrap_err();
+        assert!(err.contains("UCP_PAYMENT_HANDLERS"), "got: {err}");
+        assert!(server_with_handlers(r#"{"com.example.h":{"id":"h"}}"#)
+            .payment_handlers()
+            .is_err());
+    }
+
+    #[test]
+    fn payment_handler_names_must_be_reverse_dns() {
+        let err = server_with_handlers(r#"{"card":[{"id":"card","version":"2026-08-25"}]}"#)
+            .payment_handlers()
+            .unwrap_err();
+        assert!(err.contains("card"), "got: {err}");
+    }
+
+    #[test]
+    fn payment_handler_entries_need_an_id_and_a_dated_version() {
+        assert!(
+            server_with_handlers(r#"{"com.example.h":[{"version":"2026-08-25"}]}"#)
+                .payment_handlers()
+                .is_err()
+        );
+        assert!(
+            server_with_handlers(r#"{"com.example.h":[{"id":"h","version":"v1"}]}"#)
+                .payment_handlers()
+                .is_err()
+        );
     }
 
     #[test]

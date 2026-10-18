@@ -2,12 +2,18 @@
 
 use axum::{
     extract::{Query, State},
+    http::header,
     response::IntoResponse,
     Json,
 };
 use serde::Deserialize;
 
 use crate::state::AppState;
+
+/// UCP requires profiles to be publicly cacheable for at least 60 seconds;
+/// five minutes keeps key rotation and capability changes prompt.
+const PROFILE_CACHE_CONTROL: [(header::HeaderName, &str); 1] =
+    [(header::CACHE_CONTROL, "public, max-age=300")];
 use orchestrator_api::{
     build_acp_discovery_document, build_well_known_manifest_with_version, AdvertisedCapabilities,
 };
@@ -26,6 +32,7 @@ pub async fn well_known_ucp(
             .unwrap_or_default(),
         identity_linking: state.facade.supports_identity_linking(),
         embedded_checkout: state.embedded_checkout().is_some(),
+        payment_handlers: state.payment_handlers.clone(),
     };
     let manifest = build_well_known_manifest_with_version(
         &state.discovery_base_url,
@@ -44,7 +51,7 @@ pub async fn well_known_ucp(
     {
         orchestrator_observability::incr("ucp_discovery_version_fallback_total");
     }
-    Json(manifest)
+    (PROFILE_CACHE_CONTROL, Json(manifest))
 }
 
 /// GET /.well-known/acp.json — ACP discovery document (protocol version, REST base URL,
@@ -55,7 +62,7 @@ pub async fn well_known_acp(State(state): State<AppState>) -> impl IntoResponse 
         state.facade.supports_payment_delegation(),
     );
     orchestrator_observability::incr("acp_discovery_document_total");
-    Json(document)
+    (PROFILE_CACHE_CONTROL, Json(document))
 }
 
 pub fn routes() -> axum::Router<AppState> {

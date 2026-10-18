@@ -1023,24 +1023,56 @@ fn discovery_advertises_signing_keys_payment_handlers_and_protocol_versions() {
         None,
         &AdvertisedCapabilities::with_signing_keys(keyring.public_jwks()),
     );
-    let flags = manifest.ucp.capability_flags.expect("flags");
-    assert_eq!(flags.get("dev.ucp.payments.mpp"), Some(&true));
-    assert_eq!(flags.get("dev.ucp.security.signatures"), Some(&true));
+    assert_eq!(manifest.ucp.version, "2026-08-25");
+    assert_eq!(manifest.keys.as_ref().unwrap()[0].kid, "orch-2026-a");
+    assert!(manifest.ucp.signing_keys.is_none());
+    assert_eq!(
+        manifest.ucp.payment_handlers,
+        Some(serde_json::json!({})),
+        "no handlers configured, empty registry"
+    );
+    let extension = manifest.orchestrator.expect("orchestrator extension");
+    assert_eq!(
+        extension.capability_flags.get("dev.ucp.payments.mpp"),
+        Some(&true)
+    );
+    assert_eq!(
+        extension
+            .capability_flags
+            .get("dev.ucp.security.signatures"),
+        Some(&true)
+    );
+    assert_eq!(extension.a2a_profile_version, "1.0");
+    assert_eq!(extension.ap2_protocol_version, "0.2");
+    assert_eq!(extension.acp_api_version, "2026-04-17");
+    let services = manifest.ucp.services.as_ref().unwrap();
+    assert!(services["dev.ucp.shopping"]
+        .iter()
+        .all(|b| b.transport != "acp" && b.transport != "mcp"));
+}
+
+#[test]
+fn the_2026_04_08_profile_keeps_its_shape_for_platforms_still_on_it() {
+    let keyring = SigningKeyring::from_seeds(
+        "orch-2026-a",
+        "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+        &[],
+    )
+    .expect("keyring");
+    let manifest = build_well_known_manifest_with_version(
+        "https://example.com",
+        Some("2026-04-08"),
+        &AdvertisedCapabilities::with_signing_keys(keyring.public_jwks()),
+    );
+    assert_eq!(manifest.ucp.version, "2026-04-08");
+    assert!(manifest.ucp.supported_versions.is_none());
     assert_eq!(
         manifest.ucp.signing_keys.as_ref().unwrap()[0].kid,
         "orch-2026-a"
     );
-    assert!(!manifest.ucp.payment_handlers.as_ref().unwrap().is_empty());
-    assert_eq!(manifest.ucp.a2a_profile_version.as_deref(), Some("1.0"));
-    assert_eq!(manifest.ucp.ap2_protocol_version.as_deref(), Some("0.2"));
+    assert!(manifest.ucp.payment_handlers.as_ref().unwrap().is_array());
     assert_eq!(manifest.ucp.acp_api_version.as_deref(), Some("2026-04-17"));
-    let services = manifest.ucp.services.as_ref().unwrap();
-    let shopping = &services["dev.ucp.shopping"];
-    assert!(shopping.iter().any(|b| b.transport == "acp"));
-    assert!(manifest
-        .ucp
-        .capabilities
-        .as_ref()
-        .unwrap()
-        .contains_key("dev.ucp.shopping.payment_handlers"));
+    assert!(manifest.ucp.services.as_ref().unwrap()["dev.ucp.shopping"]
+        .iter()
+        .any(|b| b.transport == "acp"));
 }

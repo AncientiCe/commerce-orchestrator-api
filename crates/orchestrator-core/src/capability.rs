@@ -3,8 +3,9 @@
 
 use serde::{Deserialize, Serialize};
 
-pub const UCP_LATEST_VERSION: &str = "2026-04-08";
-pub const UCP_SUPPORTED_VERSIONS: &[&str] = &[UCP_LATEST_VERSION, "2026-01-23", "2026-01-11"];
+pub const UCP_LATEST_VERSION: &str = "2026-08-25";
+pub const UCP_SUPPORTED_VERSIONS: &[&str] =
+    &[UCP_LATEST_VERSION, "2026-04-08", "2026-01-23", "2026-01-11"];
 
 /// Capability identifier (UCP-style: e.g. dev.ucp.shopping.checkout).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]

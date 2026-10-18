@@ -194,7 +194,7 @@ async fn discovery_hides_identity_linking_until_a_provider_is_configured() {
         "identity linking must not be advertised without a provider"
     );
     assert_ne!(
-        json["ucp"]["capability_flags"]["dev.ucp.common.identity_linking"],
+        json["orchestrator"]["capability_flags"]["dev.ucp.common.identity_linking"],
         true
     );
 }
@@ -210,7 +210,7 @@ async fn discovery_advertises_identity_linking_when_configured() {
         .expect("capabilities");
     assert!(capabilities.contains_key("dev.ucp.common.identity_linking"));
     assert_eq!(
-        json["ucp"]["capability_flags"]["dev.ucp.common.identity_linking"],
+        json["orchestrator"]["capability_flags"]["dev.ucp.common.identity_linking"],
         true
     );
 }

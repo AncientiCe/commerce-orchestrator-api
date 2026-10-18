@@ -43,7 +43,7 @@ Signature-Input: sig1=("@status" "content-digest" "content-type");created=176000
 Signature: sig1=:<base64 signature>:
 ```
 
-Bodyless responses cover only `"@status"`. Rebuild the RFC 9421 signature base from those components and verify it with the JWK whose `kid` matches `keyid`, fetched from `/.well-known/ucp` (`kty: OKP`/`crv: Ed25519`, or `kty: EC`/`crv: P-256`). A deployment with no signing material advertises **no** keys and sets no `dev.ucp.security.signatures` capability flag — there is no default key, so an unsigned deployment is honest about being unsigned rather than publishing a key everybody shares.
+Bodyless responses cover only `"@status"`. Rebuild the RFC 9421 signature base from those components and verify it with the JWK whose `kid` matches `keyid`, fetched from the `keys[]` JWK Set of `/.well-known/ucp` (`kty: OKP`/`crv: Ed25519`, or `kty: EC`/`crv: P-256`). A deployment with no signing material advertises **no** keys and sets no `dev.ucp.security.signatures` capability flag — there is no default key, so an unsigned deployment is honest about being unsigned rather than publishing a key everybody shares.
 
 ### Signing your requests
 
@@ -91,7 +91,7 @@ Codes follow the UCP signatures specification:
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/.well-known/ucp` | Capability discovery. Defaults to UCP `2026-04-08` with profile-shaped `services` and `capabilities`; `?ucp_version=2026-01-23` and `?ucp_version=2026-01-11` return compatible legacy manifests. No auth required. |
+| `GET` | `/.well-known/ucp` | UCP `2026-08-25` business profile: `ucp.services`, `ucp.capabilities`, `ucp.payment_handlers`, the `keys[]` JWK Set, and an `orchestrator` member with the MCP endpoint, ACP discovery URL, neighbouring protocol versions and feature flags. `ucp.supported_versions` links `?ucp_version=2026-04-08` (previous shape) and the `2026-01-23` / `2026-01-11` legacy manifests. Cached `public, max-age=300`. No auth required. |
 | `GET` | `/.well-known/acp.json` | ACP discovery document: `protocol` (name/version/supported_versions), `api_base_url`, `transports`, and `capabilities.services` (`checkout`, `carts`, `delegate_payment`). No auth required. |
 
 ### Cart and checkout
@@ -338,7 +338,7 @@ The orchestrator is a middleware API layer. Operators configure where each downs
 | `RECEIPT_BASE_URL` | Receipt service base URL. |
 | `UCP_SIGNING_KEY_ID`, `UCP_SIGNING_KEY` | Signing material (Ed25519 seed, or P-256 scalar with `UCP_SIGNING_KEY_ALG=ES256`); production will not start without them. |
 
-Optional: `AUTH_TENANT_ID`, `AUTH_CALLER_ID` (default `prod` for static mode), `AP2_TRUSTED_ISSUERS` (comma-separated allowlist for strict AP2 issuer checks and JWT issuer checks), `UCP_SIGNING_KEY_ALG`, `UCP_SIGNING_PREVIOUS_KEYS`, `UCP_AGENT_KEYS`, and `UCP_AGENT_JWKS` (see [Message signing](#message-signing-ucp-rfc-9421)), `FULFILLMENT_BASE_URL`, `PAYMENT_DELEGATION_BASE_URL`, `IDENTITY_LINK_BASE_URL`, and `EMBEDDED_CHECKOUT_URL`. Capabilities backed by an optional service are advertised only when that service is configured; the endpoint returns `501` with `code: NOT_CONFIGURED` otherwise. Config can be loaded from a file (`CONFIG_FILE` or `config.yaml`) with env overrides.
+Optional: `AUTH_TENANT_ID`, `AUTH_CALLER_ID` (default `prod` for static mode), `AP2_TRUSTED_ISSUERS` (comma-separated allowlist for strict AP2 issuer checks and JWT issuer checks), `UCP_SIGNING_KEY_ALG`, `UCP_SIGNING_PREVIOUS_KEYS`, `UCP_AGENT_KEYS`, `UCP_AGENT_JWKS`, and `UCP_PAYMENT_HANDLERS` (see [Message signing](#message-signing-ucp-rfc-9421)), `FULFILLMENT_BASE_URL`, `PAYMENT_DELEGATION_BASE_URL`, `IDENTITY_LINK_BASE_URL`, and `EMBEDDED_CHECKOUT_URL`. Capabilities backed by an optional service are advertised only when that service is configured; the endpoint returns `501` with `code: NOT_CONFIGURED` otherwise. Config can be loaded from a file (`CONFIG_FILE` or `config.yaml`) with env overrides.
 
 AP2 note: this release aligns with AP2 **0.2** (closed mandates plus optional open/HNP mandates with amount and currency constraints). Strict mode remains fail-closed.
 

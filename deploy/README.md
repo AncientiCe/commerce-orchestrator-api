@@ -75,7 +75,7 @@ Set `ENV=production` and provide (all required in production):
   - `PAYMENT_BASE_URL` – payment service.
   - `RECEIPT_BASE_URL` – receipt service.
 
-Optional: `AUTH_TENANT_ID`, `AUTH_CALLER_ID` (default `prod`), `AP2_TRUSTED_ISSUERS`, `UCP_SIGNING_KEY_ALG`, `UCP_SIGNING_PREVIOUS_KEYS`, `UCP_AGENT_KEYS`, `UCP_AGENT_JWKS`, `FULFILLMENT_BASE_URL`, `PAYMENT_DELEGATION_BASE_URL`, `IDENTITY_LINK_BASE_URL`, `EMBEDDED_CHECKOUT_URL`. The last four gate capabilities: leave one unset and the matching endpoint returns `501 NOT_CONFIGURED` and the capability is not advertised in discovery.
+Optional: `AUTH_TENANT_ID`, `AUTH_CALLER_ID` (default `prod`), `AP2_TRUSTED_ISSUERS`, `UCP_SIGNING_KEY_ALG`, `UCP_SIGNING_PREVIOUS_KEYS`, `UCP_AGENT_KEYS`, `UCP_AGENT_JWKS`, `FULFILLMENT_BASE_URL`, `PAYMENT_DELEGATION_BASE_URL`, `IDENTITY_LINK_BASE_URL`, `EMBEDDED_CHECKOUT_URL`, `UCP_PAYMENT_HANDLERS`. `PAYMENT_DELEGATION_BASE_URL` through `EMBEDDED_CHECKOUT_URL` gate capabilities: leave one unset and the matching endpoint returns `501 NOT_CONFIGURED` and the capability is not advertised in discovery.
 
 Config is loaded from the ConfigMap and Secret in Kubernetes (see `configmap.yaml` and `secret.yaml`). Edit the ConfigMap to point each `*_BASE_URL` to your actual service endpoints.
 

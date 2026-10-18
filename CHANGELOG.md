@@ -7,12 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+UCP moves to **`2026-08-25`**. ACP `2026-04-17`, AP2 `0.2`, A2A `1.0`, and MCP `2026-07-28` remain current.
+
 ### Changed
+
+- **BREAKING — `/.well-known/ucp` is a UCP `2026-08-25` business profile**, and a test now validates it against the official UCP JSON Schema. Signing keys move from `ucp.signing_keys` to the top-level `keys[]` JWK Set; `ucp.payment_handlers` is a reverse-DNS keyed registry (configured with `UCP_PAYMENT_HANDLERS`, `{}` by default) instead of a built-in list; the non-existent `dev.ucp.shopping.payment_handlers` capability is gone; and the `mcp` and `acp` bindings leave `dev.ucp.shopping` — neither is a UCP binding we implement — with their endpoints, the neighbouring protocol versions and `capability_flags` moving to a top-level `orchestrator` member. The previous shape stays available at `?ucp_version=2026-04-08`, linked from `supported_versions`. The profile is served with `Cache-Control: public, max-age=300`. Response envelopes report `ucp.version: 2026-08-25`.
+- Agent JWK Sets skip keys of types the orchestrator does not recognise instead of refusing the whole set, as UCP requires.
 
 - **BREAKING — UCP message signatures now follow RFC 9421.** The previous `Signature: kid=…,alg=…,sig=…` + `Timestamp` scheme was never what the UCP signatures specification defines (in `2026-04-08` or since), so no conformant platform could verify it. Requests and responses now use `Signature-Input` / `Signature` (label `sig1`) over the required components with an RFC 9530 `Content-Digest`; any one valid signature authenticates; error codes are UCP's (`signature_missing`, `signature_invalid`, `key_not_found`, `digest_mismatch`, `algorithm_unsupported`) with UCP's HTTP statuses. Existing Ed25519 keys keep working unchanged.
 
 ### Added
 
+- **`UCP_PAYMENT_HANDLERS`**: publish your payment providers' UCP handlers in discovery; names must be reverse-DNS and entries need an `id` and a dated `version`, checked at startup.
 - **ES256 signing and verification** alongside Ed25519. ES256 is the one algorithm every UCP verifier must support: set `UCP_SIGNING_KEY_ALG=ES256` (P-256 private scalar in `UCP_SIGNING_KEY`), and previous keys may be `kid:ES256:secret`.
 - **`UCP_AGENT_JWKS`**: configure agent public keys as an RFC 7517 JWK Set (Ed25519 or P-256), the shape agents publish in their UCP profile. `UCP_AGENT_KEYS` (`kid:x` Ed25519 pairs) still works and the two can be combined.
 - `ucp_signature_verify` operation latency/count metrics and `ucp_signature_rejected_{coverage,digest,stale,…}_total` rejection counters.

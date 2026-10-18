@@ -12,7 +12,7 @@ Everything on this page runs through the same `OrchestratorFacade` as the REST a
 
 | Property | Value |
 |---|---|
-| Endpoint | `POST /api/v1/mcp/message` (advertised as `mcp_endpoint` in `/.well-known/ucp`) |
+| Endpoint | `POST /api/v1/mcp/message` (advertised as `orchestrator.mcp_endpoint` in `/.well-known/ucp`; this is the orchestrator's own tool server, not UCP's MCP binding) |
 | Payload | JSON-RPC 2.0 request object (`jsonrpc`, `id`, `method`, `params`) |
 | Auth | Same as every other API route: `Authorization: Bearer <token>` |
 | Version header | `MCP-Protocol-Version` |

@@ -24,6 +24,7 @@ data:
   # PAYMENT_DELEGATION_BASE_URL: "http://psp-delegation:8080"
   # IDENTITY_LINK_BASE_URL: "http://identity-service:8080"
   # EMBEDDED_CHECKOUT_URL: "https://shop.example.com/checkout/embedded"
+  # UCP_PAYMENT_HANDLERS: '{"com.example.tokenizer":[{"id":"tok","version":"2026-08-25","spec":"https://example.com/spec","schema":"https://example.com/schema.json"}]}'
   # Outbox processor: poll interval, batch size, and shutdown drain budget.
   OUTBOX_INTERVAL_MS: "1000"
   OUTBOX_BATCH_SIZE: "50"

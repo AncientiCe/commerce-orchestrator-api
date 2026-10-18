@@ -10,7 +10,7 @@ Deploy the orchestrator as an HTTP service (`orchestrator-server`). Your app (Ag
 
 | Area | Endpoints |
 |------|-----------|
-| **Discovery** | `GET /.well-known/ucp` (defaults to UCP `2026-04-08`; includes ACP/MCP/A2A/AP2 version metadata, signing keys, payment handlers) |
+| **Discovery** | `GET /.well-known/ucp` (UCP `2026-08-25` business profile with `keys[]` and `payment_handlers`; ACP/MCP/A2A/AP2 metadata under the top-level `orchestrator` member) |
 | **Cart & checkout** | `POST /api/v1/cart/commands`, `/api/v1/ucp/cart` and `/api/v1/ucp/checkout` routes, `POST /api/v1/checkout/execute`, `POST /api/v1/a2a/cart`, `POST /api/v1/a2a/checkout` |
 | **ACP** | `/api/v1/acp/checkout_sessions` (+ complete/cancel), `POST /api/v1/acp/delegate_payment` — require `API-Version: 2026-04-17` |
 | **Catalog & orders** | `GET /api/v1/catalog/items/:id`, `/api/v1/ucp/catalog` routes, `GET /api/v1/orders/:id`, `GET /api/v1/ucp/orders/:id` |

@@ -8,7 +8,15 @@ use orchestrator_core::{
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+use crate::acp_mapping::ACP_API_VERSION;
 use crate::signing::SigningKeyring;
+
+/// UCP version whose profile shape this orchestrator still serves to platforms
+/// that negotiated it before `2026-08-25`.
+pub const UCP_PREVIOUS_VERSION: &str = "2026-04-08";
+
+/// MCP protocol versions the orchestrator's own MCP server negotiates.
+pub const MCP_SUPPORTED_VERSIONS: &[&str] = &["2026-07-28", "2025-11-25", "2024-11-05"];
 
 /// What this particular deployment can actually do, as opposed to what the
 /// protocol allows. Discovery is built from this so an agent is never told about
@@ -24,6 +32,10 @@ pub struct AdvertisedCapabilities {
     /// True when a merchant-hosted embedded checkout page and signing material are
     /// both configured, so an embedded handoff link is reachable and verifiable.
     pub embedded_checkout: bool,
+    /// UCP payment handler registry, keyed by reverse-DNS handler name. Handlers
+    /// belong to the operator's payment providers, so they are configured, not
+    /// invented; an empty registry is published as `{}`.
+    pub payment_handlers: serde_json::Map<String, serde_json::Value>,
 }
 
 impl AdvertisedCapabilities {
@@ -49,127 +61,187 @@ pub fn build_well_known_manifest_with_version(
     requested_version: Option<&str>,
     advertised: &AdvertisedCapabilities,
 ) -> WellKnownUcp {
-    let signing_keys = advertised.signing_keys.as_slice();
     let selected_version = requested_version
         .filter(|v| UCP_SUPPORTED_VERSIONS.contains(v))
         .unwrap_or(UCP_LATEST_VERSION);
     let base = base_url.trim_end_matches('/');
-    if selected_version != UCP_LATEST_VERSION {
-        return legacy_well_known_manifest(base, selected_version);
-    }
-
-    WellKnownUcp {
-        ucp: UcpSection {
-            version: selected_version.to_string(),
-            supported_versions: serde_json::json!({
-                "2026-01-23": format!("{}/.well-known/ucp?ucp_version=2026-01-23", base),
-                "2026-01-11": format!("{}/.well-known/ucp?ucp_version=2026-01-11", base),
-            }),
-            services: Some(BTreeMap::from([(
-                "dev.ucp.shopping".to_string(),
-                shopping_bindings(base, selected_version, advertised),
-            )])),
-            capabilities: Some(core_capabilities(selected_version, advertised)),
-            manifest: None,
-            rest_endpoint: None,
-            mcp_endpoint: Some(format!("{}/api/v1/mcp/message", base)),
-            capability_flags: Some(BTreeMap::from([
-                ("dev.ucp.payments.mpp".to_string(), true),
-                ("dev.ucp.shopping.payment_handlers".to_string(), true),
-                (
-                    "dev.ucp.security.signatures".to_string(),
-                    !signing_keys.is_empty(),
-                ),
-                (
-                    "dev.ucp.shopping.checkout.embedded".to_string(),
-                    advertised.embedded_checkout,
-                ),
-                ("dev.ucp.shopping.fulfillment".to_string(), true),
-                (
-                    "dev.ucp.common.identity_linking".to_string(),
-                    advertised.identity_linking,
-                ),
-            ])),
-            signing_keys: (!signing_keys.is_empty()).then(|| signing_keys.to_vec()),
-            payment_handlers: Some(default_payment_handlers()),
-            mcp_supported_versions: Some(vec![
-                "2026-07-28".to_string(),
-                "2025-11-25".to_string(),
-                "2024-11-05".to_string(),
-            ]),
-            a2a_profile_version: Some("1.0".to_string()),
-            ap2_protocol_version: Some("0.2".to_string()),
-            acp_api_version: Some("2026-04-17".to_string()),
-        },
+    match selected_version {
+        UCP_LATEST_VERSION => latest_profile(base, advertised),
+        UCP_PREVIOUS_VERSION => profile_2026_04_08(base, advertised),
+        legacy => legacy_well_known_manifest(base, legacy),
     }
 }
 
-/// Shopping service bindings for the latest profile. The embedded binding is only
-/// listed when the deployment can mint a link that leads somewhere and verifies.
-fn shopping_bindings(
-    base: &str,
-    selected_version: &str,
-    advertised: &AdvertisedCapabilities,
-) -> Vec<UcpServiceBinding> {
-    let mut bindings = vec![
-                        UcpServiceBinding {
-                            version: selected_version.to_string(),
-                            spec: spec_url(selected_version, "overview"),
-                            transport: "rest".to_string(),
-                            schema: Some(format!(
-                                "https://ucp.dev/{}/services/shopping/rest.openapi.json",
-                                selected_version
-                            )),
-                            endpoint: Some(format!("{}/api/v1/ucp", base)),
-                        },
-                        UcpServiceBinding {
-                            version: selected_version.to_string(),
-                            spec: spec_url(selected_version, "overview"),
-                            transport: "mcp".to_string(),
-                            schema: Some(format!(
-                                "https://ucp.dev/{}/services/shopping/mcp.openrpc.json",
-                                selected_version
-                            )),
-                            endpoint: Some(format!("{}/api/v1/mcp/message", base)),
-                        },
-                        UcpServiceBinding {
-                            version: selected_version.to_string(),
-                            spec: "https://agenticcommerce.dev/specs/checkout".to_string(),
-                            transport: "acp".to_string(),
-                            schema: Some(
-                                "https://raw.githubusercontent.com/agentic-commerce-protocol/agentic-commerce-protocol/main/spec/2026-04-17/openapi/openapi.agentic_checkout.yaml".to_string(),
-                            ),
-                            endpoint: Some(format!("{}/api/v1/acp", base)),
-                        },
-    ];
+/// The current (`2026-08-25`) business profile. Everything inside `ucp` is UCP
+/// core vocabulary; the orchestrator's own discovery hints live in the
+/// top-level `orchestrator` member, because only UCP core may define `ucp`
+/// members.
+fn latest_profile(base: &str, advertised: &AdvertisedCapabilities) -> WellKnownUcp {
+    let version = UCP_LATEST_VERSION;
+    let signing_keys = &advertised.signing_keys;
+    let supported_versions: serde_json::Map<String, serde_json::Value> = UCP_SUPPORTED_VERSIONS
+        .iter()
+        .filter(|v| **v != version)
+        .map(|v| {
+            (
+                (*v).to_string(),
+                serde_json::Value::String(format!("{base}/.well-known/ucp?ucp_version={v}")),
+            )
+        })
+        .collect();
+    let mut shopping = vec![UcpServiceBinding {
+        version: version.to_string(),
+        spec: spec_url(version, "overview"),
+        transport: "rest".to_string(),
+        schema: Some(format!(
+            "https://ucp.dev/{version}/services/shopping/rest.openapi.json"
+        )),
+        endpoint: Some(format!("{base}/api/v1/ucp")),
+    }];
     if advertised.embedded_checkout {
-        bindings.push(UcpServiceBinding {
-            version: selected_version.to_string(),
-            spec: spec_url(selected_version, "embedded-link-delegation"),
+        shopping.push(UcpServiceBinding {
+            version: version.to_string(),
+            spec: spec_url(version, "shopping/checkout/embedded"),
             transport: "embedded".to_string(),
             schema: Some(format!(
-                "https://ucp.dev/{}/services/shopping/embedded.openapi.json",
-                selected_version
+                "https://ucp.dev/{version}/services/shopping/embedded.openrpc.json"
             )),
-            endpoint: Some(format!("{}/api/v1/ucp/checkout", base)),
+            endpoint: Some(format!("{base}/api/v1/ucp/checkout-sessions")),
         });
     }
-    bindings
+    WellKnownUcp {
+        ucp: UcpSection {
+            version: version.to_string(),
+            supported_versions: Some(serde_json::Value::Object(supported_versions)),
+            services: Some(BTreeMap::from([("dev.ucp.shopping".to_string(), shopping)])),
+            capabilities: Some(core_capabilities(version, advertised, &LATEST_SLUGS)),
+            payment_handlers: Some(serde_json::Value::Object(
+                advertised.payment_handlers.clone(),
+            )),
+            ..UcpSection::new(version)
+        },
+        keys: (!signing_keys.is_empty()).then(|| signing_keys.clone()),
+        orchestrator: Some(OrchestratorExtensions {
+            mcp_endpoint: format!("{base}/api/v1/mcp/message"),
+            mcp_supported_versions: MCP_SUPPORTED_VERSIONS
+                .iter()
+                .map(|v| (*v).to_string())
+                .collect(),
+            a2a_profile_version: "1.0".to_string(),
+            ap2_protocol_version: "0.2".to_string(),
+            acp_api_version: ACP_API_VERSION.to_string(),
+            acp_discovery: format!("{base}/.well-known/acp.json"),
+            capability_flags: capability_flags(advertised),
+        }),
+    }
+}
+
+fn capability_flags(advertised: &AdvertisedCapabilities) -> BTreeMap<String, bool> {
+    BTreeMap::from([
+        ("dev.ucp.payments.mpp".to_string(), true),
+        (
+            "dev.ucp.security.signatures".to_string(),
+            !advertised.signing_keys.is_empty(),
+        ),
+        (
+            "dev.ucp.shopping.checkout.embedded".to_string(),
+            advertised.embedded_checkout,
+        ),
+        ("dev.ucp.shopping.fulfillment".to_string(), true),
+        (
+            "dev.ucp.common.identity_linking".to_string(),
+            advertised.identity_linking,
+        ),
+    ])
+}
+
+/// The `2026-04-08` profile, unchanged in shape for platforms still on it,
+/// except that a linked profile carries no `supported_versions` of its own.
+fn profile_2026_04_08(base: &str, advertised: &AdvertisedCapabilities) -> WellKnownUcp {
+    let version = UCP_PREVIOUS_VERSION;
+    let signing_keys = advertised.signing_keys.as_slice();
+    let mut shopping = vec![
+        UcpServiceBinding {
+            version: version.to_string(),
+            spec: spec_url(version, "overview"),
+            transport: "rest".to_string(),
+            schema: Some(format!(
+                "https://ucp.dev/{version}/services/shopping/rest.openapi.json"
+            )),
+            endpoint: Some(format!("{base}/api/v1/ucp")),
+        },
+        UcpServiceBinding {
+            version: version.to_string(),
+            spec: spec_url(version, "overview"),
+            transport: "mcp".to_string(),
+            schema: Some(format!(
+                "https://ucp.dev/{version}/services/shopping/mcp.openrpc.json"
+            )),
+            endpoint: Some(format!("{base}/api/v1/mcp/message")),
+        },
+        UcpServiceBinding {
+            version: version.to_string(),
+            spec: "https://agenticcommerce.dev/specs/checkout".to_string(),
+            transport: "acp".to_string(),
+            schema: Some(format!(
+                "https://raw.githubusercontent.com/agentic-commerce-protocol/agentic-commerce-protocol/main/spec/{ACP_API_VERSION}/openapi/openapi.agentic_checkout.yaml"
+            )),
+            endpoint: Some(format!("{base}/api/v1/acp")),
+        },
+    ];
+    if advertised.embedded_checkout {
+        shopping.push(UcpServiceBinding {
+            version: version.to_string(),
+            spec: spec_url(version, "embedded-link-delegation"),
+            transport: "embedded".to_string(),
+            schema: Some(format!(
+                "https://ucp.dev/{version}/services/shopping/embedded.openapi.json"
+            )),
+            endpoint: Some(format!("{base}/api/v1/ucp/checkout")),
+        });
+    }
+    let mut capabilities = core_capabilities(version, advertised, &PREVIOUS_SLUGS);
+    capabilities.insert(
+        "dev.ucp.shopping.payment_handlers".to_string(),
+        vec![capability(
+            version,
+            "payment-handlers",
+            "shopping/payment_handlers.json",
+            None,
+        )],
+    );
+    let mut flags = capability_flags(advertised);
+    flags.insert("dev.ucp.shopping.payment_handlers".to_string(), true);
+    WellKnownUcp {
+        ucp: UcpSection {
+            services: Some(BTreeMap::from([("dev.ucp.shopping".to_string(), shopping)])),
+            capabilities: Some(capabilities),
+            mcp_endpoint: Some(format!("{base}/api/v1/mcp/message")),
+            capability_flags: Some(flags),
+            signing_keys: (!signing_keys.is_empty()).then(|| signing_keys.to_vec()),
+            payment_handlers: Some(
+                serde_json::to_value(default_payment_handlers()).unwrap_or_default(),
+            ),
+            mcp_supported_versions: Some(
+                MCP_SUPPORTED_VERSIONS
+                    .iter()
+                    .map(|v| (*v).to_string())
+                    .collect(),
+            ),
+            a2a_profile_version: Some("1.0".to_string()),
+            ap2_protocol_version: Some("0.2".to_string()),
+            acp_api_version: Some(ACP_API_VERSION.to_string()),
+            ..UcpSection::new(version)
+        },
+        // 2026-04-08 named signing_keys canonical and keys[] its JWK Set mirror.
+        keys: (!signing_keys.is_empty()).then(|| signing_keys.to_vec()),
+        orchestrator: None,
+    }
 }
 
 fn legacy_well_known_manifest(base: &str, selected_version: &str) -> WellKnownUcp {
     WellKnownUcp {
         ucp: UcpSection {
-            version: selected_version.to_string(),
-            supported_versions: serde_json::Value::Array(
-                UCP_SUPPORTED_VERSIONS
-                    .iter()
-                    .filter(|version| **version != UCP_LATEST_VERSION)
-                    .map(|version| serde_json::Value::String((*version).to_string()))
-                    .collect(),
-            ),
-            services: None,
-            capabilities: None,
             manifest: Some(CapabilityManifest::for_version(selected_version)),
             rest_endpoint: Some(format!("{}/", base)),
             mcp_endpoint: Some(format!("{}/api/v1/mcp/message", base)),
@@ -179,39 +251,78 @@ fn legacy_well_known_manifest(base: &str, selected_version: &str) -> WellKnownUc
                 ("dev.ucp.identity.linking".to_string(), true),
                 ("dev.ucp.payments.mpp".to_string(), true),
             ])),
-            signing_keys: None,
-            payment_handlers: None,
-            mcp_supported_versions: None,
-            a2a_profile_version: None,
-            ap2_protocol_version: None,
-            acp_api_version: None,
+            ..UcpSection::new(selected_version)
         },
+        keys: None,
+        orchestrator: None,
     }
 }
+
+/// Specification page slugs per capability; the spec site was reorganised into
+/// `shopping/`, `payment/` and `common/` sections in `2026-08-25`.
+struct SpecSlugs {
+    checkout: &'static str,
+    cart: &'static str,
+    catalog_lookup: &'static str,
+    catalog_search: &'static str,
+    order: &'static str,
+    discount: &'static str,
+    fulfillment: &'static str,
+    identity_linking: &'static str,
+}
+
+const LATEST_SLUGS: SpecSlugs = SpecSlugs {
+    checkout: "shopping/checkout",
+    cart: "shopping/cart",
+    catalog_lookup: "shopping/catalog/lookup",
+    catalog_search: "shopping/catalog/search",
+    order: "shopping/order",
+    discount: "shopping/extensions/discount",
+    fulfillment: "shopping/extensions/fulfillment",
+    identity_linking: "common/identity-linking",
+};
+
+const PREVIOUS_SLUGS: SpecSlugs = SpecSlugs {
+    checkout: "checkout",
+    cart: "cart",
+    catalog_lookup: "catalog/lookup",
+    catalog_search: "catalog/search",
+    order: "order",
+    discount: "checkout/discounts",
+    fulfillment: "fulfillment",
+    identity_linking: "identity-linking",
+};
 
 fn core_capabilities(
     version: &str,
     advertised: &AdvertisedCapabilities,
+    slugs: &SpecSlugs,
 ) -> BTreeMap<String, Vec<UcpCapabilityBinding>> {
+    let checkout_and_cart = || {
+        Some(vec![
+            "dev.ucp.shopping.checkout".to_string(),
+            "dev.ucp.shopping.cart".to_string(),
+        ])
+    };
     let mut capabilities = BTreeMap::from([
         (
             "dev.ucp.shopping.checkout".to_string(),
             vec![capability(
                 version,
-                "checkout",
+                slugs.checkout,
                 "shopping/checkout.json",
                 None,
             )],
         ),
         (
             "dev.ucp.shopping.cart".to_string(),
-            vec![capability(version, "cart", "shopping/cart.json", None)],
+            vec![capability(version, slugs.cart, "shopping/cart.json", None)],
         ),
         (
             "dev.ucp.shopping.catalog.lookup".to_string(),
             vec![capability(
                 version,
-                "catalog/lookup",
+                slugs.catalog_lookup,
                 "shopping/catalog_lookup.json",
                 None,
             )],
@@ -220,46 +331,36 @@ fn core_capabilities(
             "dev.ucp.shopping.catalog.search".to_string(),
             vec![capability(
                 version,
-                "catalog/search",
+                slugs.catalog_search,
                 "shopping/catalog_search.json",
                 None,
             )],
         ),
         (
             "dev.ucp.shopping.order".to_string(),
-            vec![capability(version, "order", "shopping/order.json", None)],
+            vec![capability(
+                version,
+                slugs.order,
+                "shopping/order.json",
+                None,
+            )],
         ),
         (
             "dev.ucp.shopping.discount".to_string(),
             vec![capability(
                 version,
-                "checkout/discounts",
+                slugs.discount,
                 "shopping/discount.json",
-                Some(vec![
-                    "dev.ucp.shopping.checkout".to_string(),
-                    "dev.ucp.shopping.cart".to_string(),
-                ]),
+                checkout_and_cart(),
             )],
         ),
         (
             "dev.ucp.shopping.fulfillment".to_string(),
             vec![capability(
                 version,
-                "fulfillment",
+                slugs.fulfillment,
                 "shopping/fulfillment.json",
-                Some(vec![
-                    "dev.ucp.shopping.checkout".to_string(),
-                    "dev.ucp.shopping.cart".to_string(),
-                ]),
-            )],
-        ),
-        (
-            "dev.ucp.shopping.payment_handlers".to_string(),
-            vec![capability(
-                version,
-                "payment-handlers",
-                "shopping/payment_handlers.json",
-                None,
+                checkout_and_cart(),
             )],
         ),
     ]);
@@ -268,7 +369,7 @@ fn core_capabilities(
             "dev.ucp.common.identity_linking".to_string(),
             vec![capability(
                 version,
-                "identity-linking",
+                slugs.identity_linking,
                 "common/identity_linking.json",
                 None,
             )],
@@ -312,15 +413,37 @@ pub fn default_payment_handlers() -> Vec<PaymentHandlerDescriptor> {
     ]
 }
 
+/// A UCP profile document: the `ucp` envelope, the JWK Set beside it, and the
+/// orchestrator's own discovery hints.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WellKnownUcp {
     pub ucp: UcpSection,
+    /// Signing keys as an RFC 7517 JWK Set, the canonical location since `2026-08-25`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keys: Option<Vec<SigningKeyDescriptor>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub orchestrator: Option<OrchestratorExtensions>,
 }
 
+/// Discovery hints outside UCP core: where the orchestrator's MCP server and ACP
+/// discovery live, which versions of the neighbouring protocols it speaks, and
+/// feature flags.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OrchestratorExtensions {
+    pub mcp_endpoint: String,
+    pub mcp_supported_versions: Vec<String>,
+    pub a2a_profile_version: String,
+    pub ap2_protocol_version: String,
+    pub acp_api_version: String,
+    pub acp_discovery: String,
+    pub capability_flags: BTreeMap<String, bool>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct UcpSection {
     pub version: String,
-    pub supported_versions: serde_json::Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supported_versions: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub services: Option<BTreeMap<String, Vec<UcpServiceBinding>>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -335,8 +458,9 @@ pub struct UcpSection {
     pub capability_flags: Option<BTreeMap<String, bool>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub signing_keys: Option<Vec<SigningKeyDescriptor>>,
+    /// A reverse-DNS keyed registry in `2026-08-25`; a handler list before it.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub payment_handlers: Option<Vec<PaymentHandlerDescriptor>>,
+    pub payment_handlers: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mcp_supported_versions: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -345,6 +469,15 @@ pub struct UcpSection {
     pub ap2_protocol_version: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub acp_api_version: Option<String>,
+}
+
+impl UcpSection {
+    fn new(version: &str) -> Self {
+        Self {
+            version: version.to_string(),
+            ..Self::default()
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

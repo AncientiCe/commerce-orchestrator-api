@@ -110,12 +110,16 @@ async fn well_known_ucp_returns_200_and_manifest() {
     let ucp = json.get("ucp").expect("response has ucp");
     assert_eq!(
         ucp.get("version").and_then(|v| v.as_str()),
-        Some("2026-04-08")
+        Some("2026-08-25")
     );
     let supported = ucp
         .get("supported_versions")
         .and_then(|v| v.as_object())
         .expect("supported_versions object");
+    assert!(
+        supported.contains_key("2026-04-08"),
+        "the previous release stays reachable"
+    );
     assert!(
         supported.contains_key("2026-01-23"),
         "prior compatible version should be listed"
@@ -145,16 +149,14 @@ async fn well_known_ucp_returns_200_and_manifest() {
         "rest binding should point at UCP-native base endpoint"
     );
     assert!(
-        shopping.iter().any(|binding| {
-            binding.get("transport").and_then(|v| v.as_str()) == Some("mcp")
-                && binding
-                    .get("endpoint")
-                    .and_then(|v| v.as_str())
-                    .is_some_and(|endpoint| {
-                        endpoint == "https://orchestrator.example.com/api/v1/mcp/message"
-                    })
-        }),
-        "mcp binding should point at existing MCP endpoint"
+        !shopping
+            .iter()
+            .any(|binding| binding.get("transport").and_then(|v| v.as_str()) == Some("mcp")),
+        "the orchestrator's MCP server is not UCP's MCP binding"
+    );
+    assert_eq!(
+        json["orchestrator"]["mcp_endpoint"],
+        "https://orchestrator.example.com/api/v1/mcp/message"
     );
 }
 
@@ -183,7 +185,7 @@ async fn well_known_ucp_advertises_current_core_capabilities() {
     }
     assert!(
         !capabilities.contains_key("dev.ucp.identity.linking"),
-        "legacy identity capability name should not be advertised for 2026-04-08"
+        "legacy identity capability name should not be advertised"
     );
     let discount = capabilities["dev.ucp.shopping.discount"][0]
         .as_object()
@@ -224,7 +226,7 @@ async fn well_known_ucp_advertises_fulfillment_extension() {
     assert!(parents.contains(&"dev.ucp.shopping.checkout"));
     assert!(parents.contains(&"dev.ucp.shopping.cart"));
     assert_eq!(
-        json["ucp"]["capability_flags"]["dev.ucp.shopping.fulfillment"],
+        json["orchestrator"]["capability_flags"]["dev.ucp.shopping.fulfillment"],
         true
     );
 }
@@ -343,13 +345,10 @@ async fn well_known_ucp_legacy_version_retains_manifest_compatibility() {
         Some("2026-01-23")
     );
     assert!(ucp.get("manifest").is_some(), "legacy manifest present");
-    let supported = ucp
-        .get("supported_versions")
-        .and_then(|v| v.as_array())
-        .expect("legacy supported_versions array");
-    let supported_values: Vec<&str> = supported.iter().filter_map(|v| v.as_str()).collect();
-    assert!(supported_values.contains(&"2026-01-23"));
-    assert!(supported_values.contains(&"2026-01-11"));
+    assert!(
+        ucp.get("supported_versions").is_none(),
+        "a linked profile carries no supported_versions of its own"
+    );
 }
 
 #[tokio::test]
@@ -403,26 +402,21 @@ async fn discovery_advertises_acp_signing_and_payment_handlers() {
     let response = server.get("/.well-known/ucp").await;
     response.assert_status_ok();
     let json: serde_json::Value = response.json();
-    assert!(!json["ucp"]["signing_keys"].as_array().unwrap().is_empty());
-    assert!(!json["ucp"]["payment_handlers"]
-        .as_array()
-        .unwrap()
-        .is_empty());
-    assert_eq!(json["ucp"]["a2a_profile_version"], "1.0");
-    assert_eq!(json["ucp"]["ap2_protocol_version"], "0.2");
-    assert_eq!(json["ucp"]["acp_api_version"], "2026-04-17");
+    assert!(!json["keys"].as_array().unwrap().is_empty());
+    assert!(json["ucp"]["payment_handlers"].is_object());
+    assert_eq!(json["orchestrator"]["a2a_profile_version"], "1.0");
+    assert_eq!(json["orchestrator"]["ap2_protocol_version"], "0.2");
+    assert_eq!(json["orchestrator"]["acp_api_version"], "2026-04-17");
     assert_eq!(
-        json["ucp"]["capability_flags"]["dev.ucp.payments.mpp"],
+        json["orchestrator"]["capability_flags"]["dev.ucp.payments.mpp"],
         true
     );
-    let caps = json["ucp"]["capabilities"].as_object().unwrap();
-    assert!(caps.contains_key("dev.ucp.shopping.payment_handlers"));
-    let services = json["ucp"]["services"]["dev.ucp.shopping"]
-        .as_array()
-        .unwrap();
-    assert!(services.iter().any(|s| s["transport"] == "acp"));
     assert_eq!(
-        json["ucp"]["capability_flags"]["dev.ucp.security.signatures"],
+        json["orchestrator"]["acp_discovery"],
+        "http://localhost:8080/.well-known/acp.json"
+    );
+    assert_eq!(
+        json["orchestrator"]["capability_flags"]["dev.ucp.security.signatures"],
         true
     );
 }
@@ -437,11 +431,11 @@ async fn discovery_omits_signing_keys_when_no_keyring_is_configured() {
     response.assert_status_ok();
     let json: serde_json::Value = response.json();
     assert!(
-        json["ucp"].get("signing_keys").is_none() || json["ucp"]["signing_keys"].is_null(),
+        json.get("keys").is_none() && json["ucp"].get("signing_keys").is_none(),
         "unsigned deployments must not advertise a signing key"
     );
     assert_ne!(
-        json["ucp"]["capability_flags"]["dev.ucp.security.signatures"],
+        json["orchestrator"]["capability_flags"]["dev.ucp.security.signatures"],
         true
     );
 }
@@ -507,7 +501,7 @@ async fn well_known_ucp_advertises_embedded_transport() {
         "embedded transport binding should be advertised with an endpoint"
     );
     assert_eq!(
-        json["ucp"]["capability_flags"]["dev.ucp.shopping.checkout.embedded"],
+        json["orchestrator"]["capability_flags"]["dev.ucp.shopping.checkout.embedded"],
         true
     );
 }
@@ -531,7 +525,7 @@ async fn embedded_transport_is_not_advertised_without_a_hosted_checkout_url() {
         "embedded transport must not be advertised without EMBEDDED_CHECKOUT_URL"
     );
     assert_eq!(
-        json["ucp"]["capability_flags"]["dev.ucp.shopping.checkout.embedded"],
+        json["orchestrator"]["capability_flags"]["dev.ucp.shopping.checkout.embedded"],
         false
     );
 }
@@ -545,7 +539,7 @@ async fn embedded_transport_is_not_advertised_without_signing_keys() {
 
     let json: serde_json::Value = server.get("/.well-known/ucp").await.json();
     assert_eq!(
-        json["ucp"]["capability_flags"]["dev.ucp.shopping.checkout.embedded"],
+        json["orchestrator"]["capability_flags"]["dev.ucp.shopping.checkout.embedded"],
         false
     );
 }

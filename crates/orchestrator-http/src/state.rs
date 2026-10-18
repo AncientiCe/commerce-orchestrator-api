@@ -24,6 +24,10 @@ pub struct AppState {
     /// Merchant-hosted page that completes an embedded checkout. `None` means the
     /// UCP embedded transport is neither advertised nor served.
     pub embedded_checkout_url: Option<String>,
+    /// UCP payment handler registry published in discovery, keyed by the
+    /// handler's reverse-DNS name. The handlers belong to the operator's payment
+    /// providers, so they are configured rather than invented here.
+    pub payment_handlers: serde_json::Map<String, serde_json::Value>,
 }
 
 impl AppState {
@@ -37,6 +41,7 @@ impl AppState {
             signing: None,
             inbound_keys: None,
             embedded_checkout_url: None,
+            payment_handlers: serde_json::Map::new(),
         }
     }
 
@@ -55,6 +60,16 @@ impl AppState {
     /// Point embedded checkout handoff links at the merchant's hosted checkout page.
     pub fn with_embedded_checkout_url(mut self, url: String) -> Self {
         self.embedded_checkout_url = Some(url);
+        self
+    }
+
+    /// Publish this payment handler registry (a JSON object) in discovery.
+    /// Anything other than an object publishes an empty registry.
+    pub fn with_payment_handlers(mut self, handlers: serde_json::Value) -> Self {
+        self.payment_handlers = match handlers {
+            serde_json::Value::Object(map) => map,
+            _ => serde_json::Map::new(),
+        };
         self
     }
 

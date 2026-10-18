@@ -235,6 +235,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     } else {
         state
     };
+    let state = state.with_payment_handlers(server_config.server.payment_handlers()?);
     let state = match server_config.server.embedded_checkout_url.clone() {
         Some(url) => {
             url::Url::parse(&url).map_err(|e| format!("EMBEDDED_CHECKOUT_URL: {}", e))?;
