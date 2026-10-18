@@ -724,6 +724,19 @@ impl From<AppliedDiscount> for UcpDiscountDto {
     }
 }
 
+impl UcpCartResponseDto {
+    /// The same projection seen through a checkout session: the envelope names
+    /// `dev.ucp.shopping.checkout` as the root capability instead of the cart.
+    pub fn into_checkout(mut self) -> Self {
+        if let Some(versions) = self.ucp.capabilities.remove("dev.ucp.shopping.cart") {
+            self.ucp
+                .capabilities
+                .insert("dev.ucp.shopping.checkout".to_string(), versions);
+        }
+        self
+    }
+}
+
 impl From<CartProjection> for UcpCartResponseDto {
     fn from(cart: CartProjection) -> Self {
         let status = match cart.status {

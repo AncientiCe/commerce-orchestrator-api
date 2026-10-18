@@ -99,16 +99,16 @@ Codes follow the UCP signatures specification:
 | Method | Path | Description |
 |--------|------|-------------|
 | `POST` | `/api/v1/cart/commands` | Dispatch a cart command (create, add item, update qty, remove item, apply adjustment, get cart, start checkout). Body: `CartCommandRequest` (see request shapes). |
-| `POST` | `/api/v1/ucp/cart` | UCP-native cart create with `line_items`; returns a UCP cart envelope. |
-| `GET` | `/api/v1/ucp/cart/:id` | UCP-native cart lookup. |
-| `PUT` | `/api/v1/ucp/cart/:id` | UCP-native cart line replacement/update. |
-| `POST` | `/api/v1/ucp/cart/:id/cancel` | UCP-native backed cart cancellation. |
+| `POST` | `/api/v1/ucp/carts` | UCP REST binding: cart create with `line_items`; returns a UCP cart envelope. `/api/v1/ucp/cart` is the older alias. |
+| `GET` | `/api/v1/ucp/carts/:id` | UCP cart lookup (alias `/ucp/cart/:id`). |
+| `PUT` | `/api/v1/ucp/carts/:id` | UCP cart line replacement/update (alias `/ucp/cart/:id`). |
+| `POST` | `/api/v1/ucp/carts/:id/cancel` | UCP cart cancellation (alias `/ucp/cart/:id/cancel`). |
 | `POST` | `/api/v1/ucp/cart/:id/fulfillment` | UCP fulfillment extension (`dev.ucp.shopping.fulfillment`): quote shipping/pickup options for a destination, or select one. Returns the UCP cart envelope with `fulfillment` and `fulfillment_minor`. |
-| `POST` | `/api/v1/ucp/checkout` | UCP checkout session create (cart + start_checkout). |
-| `GET` | `/api/v1/ucp/checkout/:id` | UCP checkout session lookup. |
-| `PUT` | `/api/v1/ucp/checkout/:id` | UCP checkout session line update. |
-| `POST` | `/api/v1/ucp/checkout/:id/complete` | Complete UCP checkout (execute checkout). |
-| `POST` | `/api/v1/ucp/checkout/:id/cancel` | Cancel UCP checkout session. |
+| `POST` | `/api/v1/ucp/checkout-sessions` | UCP REST binding: checkout session create. The envelope's root capability is `dev.ucp.shopping.checkout`. `/api/v1/ucp/checkout` is the older alias. |
+| `GET` | `/api/v1/ucp/checkout-sessions/:id` | UCP checkout session lookup (alias `/ucp/checkout/:id`). |
+| `PUT` | `/api/v1/ucp/checkout-sessions/:id` | UCP checkout session line update (alias `/ucp/checkout/:id`). |
+| `POST` | `/api/v1/ucp/checkout-sessions/:id/complete` | Complete UCP checkout (execute checkout) (alias `/ucp/checkout/:id/complete`). |
+| `POST` | `/api/v1/ucp/checkout-sessions/:id/cancel` | Cancel UCP checkout session (alias `/ucp/checkout/:id/cancel`). |
 | `POST` | `/api/v1/ucp/checkout/:id/embedded-link` | UCP embedded transport: returns a short-lived handoff URL (`embedded_url`, `checkout_session_id`, `expires_at`) on the merchant's hosted page (`EMBEDDED_CHECKOUT_URL`). The `token` query parameter is an Ed25519 signature over `ucp-embedded-checkout:{session}:{expires}`, verifiable with the discovery JWK named by `kid`. 404 if the checkout does not exist; 501 `NOT_CONFIGURED` when no hosted page or signing key is configured. |
 | `POST` | `/api/v1/ucp/checkout/:id/fulfillment` | UCP fulfillment extension for a checkout session; same request/response shape as the cart fulfillment endpoint. |
 | `GET` | `/api/v1/ucp/payment-handlers` | List configured payment handlers. |

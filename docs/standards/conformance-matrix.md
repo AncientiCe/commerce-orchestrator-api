@@ -49,7 +49,8 @@ Status values: **required** (must pass for claimed alignment), **optional** (sup
 |-------------|--------|---------------------|----------|
 | Cart commands | required | POST /api/v1/cart/commands accepts create_cart, add_item, update_item_qty, remove_item, apply_adjustment, get_cart, start_checkout | Integration tests, consumption-guide |
 | UCP cart shim | required | POST/GET/PUT `/api/v1/ucp/cart` paths create, retrieve, update, and cancel carts with UCP envelopes | api_integration_test |
-| UCP checkout lifecycle | required | `/api/v1/ucp/checkout` create/get/update/complete/cancel map to cart + checkout execute | discovery + route tests |
+| UCP REST binding paths | required | Every operation in UCP `services/shopping/rest.openapi.json` is reachable relative to the advertised `/api/v1/ucp` endpoint: `/checkout-sessions` (+ `/{id}`, `/complete`, `/cancel`), `/carts` (+ `/{id}`, `/cancel`), `/catalog/{search,lookup,product}`, `/orders/{id}`. The older `/ucp/checkout` and `/ucp/cart` paths remain as aliases | `ucp_rest_binding_test` suite |
+| UCP checkout lifecycle | required | Checkout sessions create/get/update/complete/cancel map to cart + checkout execute, and their envelopes name `dev.ucp.shopping.checkout` (not cart) as the root capability | `ucp_rest_binding_test::checkout_sessions_lifecycle_is_served_at_the_binding_paths` |
 | Checkout execute | required | POST /api/v1/checkout/execute with cart_id, cart_version, payment_intent, idempotency_key returns transaction result | happy_path, authz tests |
 | Payment lifecycle | required | POST /api/v1/payments/{capture,void,refund} with tenant_id, transaction_id, idempotency_key | API tests |
 | Payment-handler registry | required | Discovery advertises handlers; `GET /api/v1/ucp/payment-handlers` lists/gets configured handlers | discovery tests |
@@ -143,9 +144,11 @@ Status values: **required** (must pass for claimed alignment), **optional** (sup
 
 ## Machine-Readable Conformance (for CI)
 
-Conformance is asserted by the following tests; CI runs them in the "Conformance (discovery, A2A, AP2)" step:
+Conformance is asserted by the following tests; CI runs them in the "Conformance (discovery, REST binding, signatures, A2A, AP2)" step:
 
 - `cargo test -p orchestrator-http --test discovery_test` — discovery endpoint, advertised capabilities, capability-route parity, A2A/ACP routes
+- `cargo test -p orchestrator-http --test ucp_rest_binding_test` — every UCP REST binding operation is routed at its spec path
+- `cargo test -p orchestrator-http --test ucp_signature_test` and `cargo test -p orchestrator-api --test ucp_signing` — RFC 9421 signatures, Content-Digest, ES256/Ed25519, UCP error codes, RFC 9421 test vector
 - `cargo test -p orchestrator-api --test authz_and_adapters` — authz, AP2 0.2 HNP, A2A version negotiation, AP2 strict mode
 - `cargo test -p orchestrator-mcp` — MCP dual-era discover / version errors / legacy initialize
 

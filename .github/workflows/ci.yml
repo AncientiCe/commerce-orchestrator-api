@@ -28,9 +28,12 @@ jobs:
       - name: Tests
         run: cargo test --workspace
 
-      - name: Conformance (discovery, A2A, AP2)
+      - name: Conformance (discovery, REST binding, signatures, A2A, AP2)
         run: |
           cargo test -p orchestrator-http --test discovery_test
+          cargo test -p orchestrator-http --test ucp_rest_binding_test
+          cargo test -p orchestrator-http --test ucp_signature_test
+          cargo test -p orchestrator-api --test ucp_signing
           cargo test -p orchestrator-api --test authz_and_adapters
 
   postgres:

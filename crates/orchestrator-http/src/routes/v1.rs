@@ -45,6 +45,24 @@ use uuid::Uuid;
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/cart/commands", post(dispatch_cart_command))
+        // UCP REST binding paths (services/shopping/rest.openapi.json).
+        .route("/ucp/carts", post(ucp_create_cart))
+        .route("/ucp/carts/:id", get(ucp_get_cart).put(ucp_update_cart))
+        .route("/ucp/carts/:id/cancel", post(ucp_cancel_cart))
+        .route("/ucp/checkout-sessions", post(ucp_create_checkout))
+        .route(
+            "/ucp/checkout-sessions/:id",
+            get(ucp_get_checkout).put(ucp_update_checkout),
+        )
+        .route(
+            "/ucp/checkout-sessions/:id/complete",
+            post(ucp_complete_checkout),
+        )
+        .route(
+            "/ucp/checkout-sessions/:id/cancel",
+            post(ucp_cancel_checkout),
+        )
+        // Pre-binding paths, kept so existing integrations keep working.
         .route("/ucp/cart", post(ucp_create_cart))
         .route("/ucp/cart/:id", get(ucp_get_cart))
         .route("/ucp/cart/:id", put(ucp_update_cart))
@@ -300,9 +318,9 @@ async fn ucp_set_checkout_fulfillment(
     path: Path<String>,
     req: Json<UcpFulfillmentSelectionRequestDto>,
 ) -> Result<Json<UcpCartResponseDto>, ApiError> {
-    let response = ucp_set_cart_fulfillment(auth, state, path, req).await?;
+    let Json(response) = ucp_set_cart_fulfillment(auth, state, path, req).await?;
     orchestrator_observability::incr("ucp_checkout_fulfillment_select_total");
-    Ok(response)
+    Ok(Json(response.into_checkout()))
 }
 
 async fn ucp_catalog_search(
@@ -500,7 +518,7 @@ async fn ucp_create_checkout(
         )
         .await?;
     orchestrator_observability::incr("ucp_checkout_create_total");
-    Ok(Json(projection.into()))
+    Ok(Json(UcpCartResponseDto::from(projection).into_checkout()))
 }
 
 async fn ucp_get_checkout(
@@ -518,7 +536,7 @@ async fn ucp_get_checkout(
         )
         .await?;
     orchestrator_observability::incr("ucp_checkout_get_total");
-    Ok(Json(projection.into()))
+    Ok(Json(UcpCartResponseDto::from(projection).into_checkout()))
 }
 
 async fn ucp_update_checkout(
@@ -527,9 +545,9 @@ async fn ucp_update_checkout(
     path: Path<String>,
     req: Json<UcpCartRequestDto>,
 ) -> Result<Json<UcpCartResponseDto>, ApiError> {
-    let response = ucp_update_cart(auth, state, path, req).await?;
+    let Json(response) = ucp_update_cart(auth, state, path, req).await?;
     orchestrator_observability::incr("ucp_checkout_update_total");
-    Ok(response)
+    Ok(Json(response.into_checkout()))
 }
 
 async fn ucp_complete_checkout(
@@ -564,7 +582,7 @@ async fn ucp_cancel_checkout(
         )
         .await?;
     orchestrator_observability::incr("ucp_checkout_cancel_total");
-    Ok(Json(projection.into()))
+    Ok(Json(UcpCartResponseDto::from(projection).into_checkout()))
 }
 
 /// POST /api/v1/ucp/checkout/:id/embedded-link — UCP "embedded" transport / link delegation.

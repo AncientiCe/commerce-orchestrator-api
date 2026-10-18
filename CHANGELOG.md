@@ -17,6 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`UCP_AGENT_JWKS`**: configure agent public keys as an RFC 7517 JWK Set (Ed25519 or P-256), the shape agents publish in their UCP profile. `UCP_AGENT_KEYS` (`kid:x` Ed25519 pairs) still works and the two can be combined.
 - `ucp_signature_verify` operation latency/count metrics and `ucp_signature_rejected_{coverage,digest,stale,…}_total` rejection counters.
 
+### Fixed
+
+- **The UCP REST binding was unreachable for checkout and cart.** Discovery advertises `/api/v1/ucp` as the `dev.ucp.shopping` REST endpoint, and UCP's binding puts checkout at `/checkout-sessions` and carts at `/carts`, but only `/checkout` and `/cart` were served, so a conformant platform got `404`. The binding paths are now served; the old paths remain as aliases.
+- **Checkout session responses named the wrong capability**: their `ucp.capabilities` listed `dev.ucp.shopping.cart` instead of `dev.ucp.shopping.checkout`.
+
 ### Security
 
 - **Embedded checkout handoff links are no longer forgeable.** The token was an HMAC keyed by an undocumented `UCP_SIGNING_SECRET` that defaulted to an empty string, so anyone could mint a valid one, and the link pointed at `/api/v1/ucp/checkout/:id/embedded`, a route that never existed. Links now target the merchant's hosted page (`EMBEDDED_CHECKOUT_URL`) and the token is an Ed25519 signature by the active discovery key over `ucp-embedded-checkout:{session}:{expires}`. Without a hosted page or signing keys the `embedded` transport is not advertised and `embedded-link` returns `501 NOT_CONFIGURED`.
