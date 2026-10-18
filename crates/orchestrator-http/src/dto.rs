@@ -888,14 +888,31 @@ impl TryFrom<UcpFulfillmentSelectionRequestDto> for SetFulfillmentSelectionPaylo
     }
 }
 
+/// UCP `description` object (`2026-08-25`): one or more renderings of a text.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct UcpDescriptionDto {
+    pub plain: String,
+}
+
+/// UCP `total` entry: a typed amount in minor units.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct UcpOptionTotalDto {
+    #[serde(rename = "type")]
+    pub total_type: String,
+    pub amount: i64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct UcpFulfillmentOptionDto {
     pub id: String,
     pub title: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
+    pub description: Option<UcpDescriptionDto>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub carrier: Option<String>,
+    /// UCP `totals[]`: the option's price as a `total` entry.
+    pub totals: Vec<UcpOptionTotalDto>,
+    /// Orchestrator alias for the `total` amount, kept for existing clients.
     pub amount_minor: i64,
 }
 
@@ -904,9 +921,86 @@ impl From<FulfillmentOption> for UcpFulfillmentOptionDto {
         Self {
             id: option.id,
             title: option.title,
-            description: option.description,
+            description: option.description.map(|plain| UcpDescriptionDto { plain }),
             carrier: option.carrier,
+            totals: vec![UcpOptionTotalDto {
+                total_type: "total".to_string(),
+                amount: option.amount_minor,
+            }],
             amount_minor: option.amount_minor,
+        }
+    }
+}
+
+/// UCP postal address with absent fields omitted rather than sent as `null`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
+pub struct UcpPostalAddressDto {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extended_address: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub street_address: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub address_locality: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub address_region: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub address_country: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub postal_code: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phone_number: Option<String>,
+}
+
+impl From<PostalAddress> for UcpPostalAddressDto {
+    fn from(address: PostalAddress) -> Self {
+        Self {
+            extended_address: address.extended_address,
+            street_address: address.street_address,
+            address_locality: address.address_locality,
+            address_region: address.address_region,
+            address_country: address.address_country,
+            postal_code: address.postal_code,
+            first_name: address.first_name,
+            last_name: address.last_name,
+            phone_number: address.phone_number,
+        }
+    }
+}
+
+/// A fulfillment destination as UCP `2026-08-25` types it: a shipping address,
+/// or a business location for pickup.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum UcpFulfillmentDestinationDto {
+    ShippingAddress {
+        id: String,
+        #[serde(flatten)]
+        address: UcpPostalAddressDto,
+    },
+    BusinessLocation {
+        id: String,
+        name: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        address: Option<UcpPostalAddressDto>,
+    },
+}
+
+impl From<FulfillmentDestination> for UcpFulfillmentDestinationDto {
+    fn from(destination: FulfillmentDestination) -> Self {
+        match destination {
+            FulfillmentDestination::Shipping { id, address } => Self::ShippingAddress {
+                id,
+                address: address.into(),
+            },
+            FulfillmentDestination::Retail { id, name, address } => Self::BusinessLocation {
+                id,
+                name,
+                address: address.map(Into::into),
+            },
         }
     }
 }
@@ -941,6 +1035,8 @@ pub struct UcpFulfillmentMethodDto {
     #[serde(rename = "type")]
     pub method_type: UcpFulfillmentMethodTypeDto,
     pub line_item_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub destinations: Vec<UcpFulfillmentDestinationDto>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub selected_destination_id: Option<String>,
     pub groups: Vec<UcpFulfillmentGroupDto>,
@@ -952,6 +1048,11 @@ impl From<FulfillmentMethod> for UcpFulfillmentMethodDto {
             id: method.id,
             method_type: method.method_type.into(),
             line_item_ids: method.line_item_ids,
+            destinations: method
+                .destinations
+                .into_iter()
+                .map(UcpFulfillmentDestinationDto::from)
+                .collect(),
             selected_destination_id: method.selected_destination_id,
             groups: method
                 .groups

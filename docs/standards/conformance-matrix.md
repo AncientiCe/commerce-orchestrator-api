@@ -53,7 +53,6 @@ These are part of the current UCP release and are **not** advertised in discover
 | Location search / lookup (`dev.ucp.common.location.*`) | not_supported_yet | No store-location provider contract |
 | Fractional quantities (`measure.json`, sale basis) | not_supported_yet | Quantities are integers |
 | Buyer consent (`dev.ucp.consent.*`), loyalty, policies, attribution, permalink | not_supported_yet | |
-| Fulfillment wire shape (`description` object, option `totals[]`, `destinations[]`) | not_supported_yet | Options still carry `amount_minor`; tracked as the next UCP change |
 | Signed webhooks (RFC 9421) | not_supported_yet | Webhooks are signed with HMAC `X-Webhook-Signature`; UCP requires business-to-platform webhooks to carry message signatures |
 
 ### Fulfillment (UCP)
@@ -63,6 +62,7 @@ These are part of the current UCP release and are **not** advertised in discover
 | Fulfillment capability discovery | required | `dev.ucp.shopping.fulfillment` extends both `dev.ucp.shopping.checkout` and `dev.ucp.shopping.cart` in the latest profile, and is flagged in `orchestrator.capability_flags["dev.ucp.shopping.fulfillment"]` | `discovery_test::well_known_ucp_advertises_fulfillment_extension` |
 | Fulfillment selection command | required | `SetFulfillmentSelection` cart command quotes shipping/pickup options for a destination and, when `selected_option_id` is provided, selects an option and adds its `amount_minor` into `total_minor` via `fulfillment_minor` | `orchestrator-core` fulfillment unit tests; `runner.rs` |
 | REST fulfillment endpoint | required | `POST /api/v1/ucp/cart/:id/fulfillment` and `POST /api/v1/ucp/checkout/:id/fulfillment` accept a destination + optional `selected_option_id` and return the updated UCP cart envelope with a `fulfillment` object and `fulfillment_minor` | `api_integration_test::ucp_cart_fulfillment_quotes_and_selects_shipping_option` |
+| Fulfillment wire shape | required | The `fulfillment` object on cart and checkout responses validates against UCP `2026-08-25` `shopping/types/fulfillment.json`: typed `destinations[]` (`shipping_address` / `business_location`), option `description` object and `totals[]` | `ucp_fulfillment_schema_test` suite |
 | Unknown option rejected | required | Selecting an `selected_option_id` not present in the quoted options for the method type returns an error, not a silent no-op | `orchestrator-http` fulfillment tests |
 | Fulfillment metrics | required | Fulfillment selection increments `cart_fulfillment_selection_total` and is recorded under the generic `cart_set_fulfillment` operation counter/latency histogram | `api_integration_test::ucp_cart_fulfillment_quotes_and_selects_shipping_option` (`/metrics` assertions) |
 
@@ -171,6 +171,7 @@ Conformance is asserted by the following tests; CI runs them in the "Conformance
 
 - `cargo test -p orchestrator-http --test discovery_test` — discovery endpoint, advertised capabilities, capability-route parity, A2A/ACP routes
 - `cargo test -p orchestrator-http --test ucp_profile_schema_test` — `/.well-known/ucp` validates against the official UCP `2026-08-25` business profile schema; profile rules the schema cannot express
+- `cargo test -p orchestrator-http --test ucp_fulfillment_schema_test` — fulfillment objects validate against the official UCP fulfillment schema
 - `cargo test -p orchestrator-http --test ucp_rest_binding_test` — every UCP REST binding operation is routed at its spec path
 - `cargo test -p orchestrator-http --test ucp_signature_test` and `cargo test -p orchestrator-api --test ucp_signing` — RFC 9421 signatures, Content-Digest, ES256/Ed25519, UCP error codes, RFC 9421 test vector
 - `cargo test -p orchestrator-api --test authz_and_adapters` — authz, AP2 0.2 HNP, A2A version negotiation, AP2 strict mode

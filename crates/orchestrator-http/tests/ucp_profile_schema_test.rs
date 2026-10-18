@@ -2,6 +2,8 @@
 //! profile schema (vendored under `tests/fixtures/ucp/2026-08-25/schemas`), plus
 //! the profile rules the schema cannot express.
 
+mod common;
+
 use axum_test::TestServer;
 use orchestrator_api::{KeyAlgorithm, KeySpec, SigningKeyring};
 use orchestrator_core::UCP_LATEST_VERSION;
@@ -10,52 +12,11 @@ use provider_mocks::{
     MockCatalogProvider, MockGeoProvider, MockIdentityLinkProvider, MockPaymentProvider,
     MockPricingProvider, MockReceiptProvider, MockTaxProvider,
 };
-use std::path::Path;
 use std::sync::Arc;
 
 const BASE: &str = "https://orchestrator.example.com";
-const SCHEMA_BASE: &str = "https://ucp.dev/2026-08-25/schemas/";
-
-/// Serves `https://ucp.dev/2026-08-25/schemas/...` from the vendored copies, so
-/// the test never touches the network.
-struct VendoredSchemas;
-
-impl jsonschema::Retrieve for VendoredSchemas {
-    fn retrieve(
-        &self,
-        uri: &jsonschema::Uri<String>,
-    ) -> Result<serde_json::Value, Box<dyn std::error::Error + Send + Sync>> {
-        let relative = uri
-            .as_str()
-            .strip_prefix(SCHEMA_BASE)
-            .ok_or_else(|| format!("unexpected schema reference {uri}"))?;
-        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/ucp/2026-08-25/schemas")
-            .join(relative);
-        Ok(serde_json::from_str(&std::fs::read_to_string(path)?)?)
-    }
-}
-
-fn validator() -> jsonschema::Validator {
-    jsonschema::options()
-        .with_retriever(VendoredSchemas)
-        .build(&serde_json::json!({
-            "$schema": "https://json-schema.org/draft/2020-12/schema",
-            "$ref": format!("{SCHEMA_BASE}profile.json#/$defs/business_schema"),
-        }))
-        .expect("UCP business profile schema compiles")
-}
-
 fn assert_valid(profile: &serde_json::Value) {
-    let errors: Vec<String> = validator()
-        .iter_errors(profile)
-        .map(|e| format!("{} at {}", e, e.instance_path()))
-        .collect();
-    assert!(
-        errors.is_empty(),
-        "profile violates the UCP 2026-08-25 business schema:\n{}\n{profile:#}",
-        errors.join("\n")
-    );
+    common::ucp_schema::assert_valid("profile.json#/$defs/business_schema", profile);
 }
 
 fn facade() -> orchestrator_api::OrchestratorFacade {

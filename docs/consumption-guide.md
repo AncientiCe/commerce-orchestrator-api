@@ -285,7 +285,23 @@ cart keeps `geo_ok: false`.
 }
 ```
 
-**Response (success):** UCP cart envelope including `fulfillment.methods[].groups[].options` (quoted options with `amount_minor`) and `fulfillment.methods[].groups[].selected_option_id` once selected. Selecting an option id that was not part of the quoted set returns an error rather than a silent no-op.
+**Response (success):** UCP cart envelope whose `fulfillment` object follows the UCP `2026-08-25` fulfillment schema: each method carries `destinations[]` (`type: shipping_address` with the postal fields, or `type: business_location` with `name` and optional `address`) and `selected_destination_id`; each option carries `title`, `description: { "plain": … }`, and `totals: [{ "type": "total", "amount": <minor units> }]` (plus `amount_minor`, an orchestrator alias of the same amount); `groups[].selected_option_id` is set once selected. Selecting an option id that was not part of the quoted set returns an error rather than a silent no-op.
+
+```json
+"fulfillment": {
+  "methods": [{
+    "id": "shipping", "type": "shipping", "line_item_ids": ["line_1"],
+    "destinations": [{ "type": "shipping_address", "id": "dest_1", "postal_code": "94105", "address_country": "US" }],
+    "selected_destination_id": "dest_1",
+    "groups": [{
+      "id": "group_1", "line_item_ids": ["line_1"], "selected_option_id": "express",
+      "options": [{ "id": "express", "title": "Express Shipping",
+                    "description": { "plain": "Arrives in 2-3 business days" },
+                    "totals": [{ "type": "total", "amount": 1000 }], "amount_minor": 1000 }]
+    }]
+  }]
+}
+```
 
 ### Identity linking (POST /api/v1/a2a/identity/link)
 
