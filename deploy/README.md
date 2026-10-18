@@ -28,7 +28,7 @@ There is no PersistentVolumeClaim: **all durable state lives in PostgreSQL**. No
 Override image:
 
 ```bash
-kubectl set image deployment/orchestrator-api orchestrator-server=your-registry/orchestrator-api:0.9.0
+kubectl set image deployment/orchestrator-api orchestrator-server=your-registry/orchestrator-api:0.10.0
 ```
 
 ## Migrations
@@ -38,7 +38,7 @@ The server applies migrations on startup under a PostgreSQL advisory lock, so co
 ```bash
 kubectl apply -f deploy/kubernetes/job-migrate.yaml
 kubectl wait --for=condition=complete job/orchestrator-api-migrate --timeout=5m
-kubectl set image deployment/orchestrator-api orchestrator-server=your-registry/orchestrator-api:0.9.0
+kubectl set image deployment/orchestrator-api orchestrator-server=your-registry/orchestrator-api:0.10.0
 ```
 
 The Job runs the same image as the server with `--migrate`, which applies pending migrations and exits. `MIGRATE_ONLY=true` does the same thing if your platform only lets you set environment variables.

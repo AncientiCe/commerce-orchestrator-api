@@ -44,7 +44,7 @@ spec:
           emptyDir: {}
       containers:
         - name: orchestrator-server
-          image: orchestrator-api:0.9.0
+          image: orchestrator-api:0.10.0
           imagePullPolicy: IfNotPresent
           volumeMounts:
             - name: tmp

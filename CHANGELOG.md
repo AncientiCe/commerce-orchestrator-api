@@ -7,38 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-UCP moves to **`2026-08-25`**, and A2A `1.0` is now spoken natively (Agent Card, `SendMessage`). ACP `2026-04-17`, AP2 `0.2`, and MCP `2026-07-28` remain current.
+## [0.10.0] - 2026-10-18
+
+"Standards-Current": the orchestrator now speaks the current releases of the protocols it claims, and proves it. UCP moves to **`2026-08-25`**, with discovery, fulfillment, cart, checkout, and order bodies validated in tests against the official UCP JSON Schemas. UCP messages are signed with RFC 9421 HTTP Message Signatures. A2A **`1.0`** is spoken natively through an Agent Card and `SendMessage`. ACP `2026-04-17`, AP2 `0.2`, and MCP `2026-07-28` remain current.
+
+### Upgrading
+
+This release changes wire formats that clients read. Before you upgrade:
+
+1. **Signatures.** Sign and verify with RFC 9421 `Signature-Input` / `Signature` and `Content-Digest` instead of `Signature` / `Timestamp`, and match the new lowercase error codes. Existing Ed25519 keys keep working. Prefer `UCP_SIGNING_KEY_ALG=ES256` if your counterparties are unknown.
+2. **Discovery.** Read signing keys from the top-level `keys[]`, and read `mcp_endpoint`, `capability_flags`, and protocol versions from the top-level `orchestrator` member. Platforms that still need the old shape can request `/.well-known/ucp?ucp_version=2026-04-08`.
+3. **Payment handlers.** Publish your providers' handlers with `UCP_PAYMENT_HANDLERS`. Without it, discovery advertises an empty registry instead of the built-in `card`/`mpp` list.
+4. **Response bodies.** `totals[].amount` is an integer, fulfillment option `description` is an object (`description.plain`), checkout `status` uses UCP values, and order line `quantity` is an object.
+5. **Embedded checkout.** Set `EMBEDDED_CHECKOUT_URL` to your hosted checkout page if you use the embedded transport. Without it, the transport is no longer advertised.
 
 ### Changed
 
-- **BREAKING — `/.well-known/ucp` is a UCP `2026-08-25` business profile**, and a test now validates it against the official UCP JSON Schema. Signing keys move from `ucp.signing_keys` to the top-level `keys[]` JWK Set; `ucp.payment_handlers` is a reverse-DNS keyed registry (configured with `UCP_PAYMENT_HANDLERS`, `{}` by default) instead of a built-in list; the non-existent `dev.ucp.shopping.payment_handlers` capability is gone; and the `mcp` and `acp` bindings leave `dev.ucp.shopping` — neither is a UCP binding we implement — with their endpoints, the neighbouring protocol versions and `capability_flags` moving to a top-level `orchestrator` member. The previous shape stays available at `?ucp_version=2026-04-08`, linked from `supported_versions`. The profile is served with `Cache-Control: public, max-age=300`. Response envelopes report `ucp.version: 2026-08-25`.
-- **UCP fulfillment objects follow the `2026-08-25` schema** (validated in tests): methods carry typed `destinations[]` (`shipping_address` / `business_location`), options carry a `description` object and `totals[]`. `amount_minor` stays on options as an alias. A client that read `description` as a string must read `description.plain`.
-- **BREAKING — UCP cart, checkout and order bodies follow the `2026-08-25` schemas** (validated in tests). `totals[].amount` is a plain integer in minor units (orders sent `{ "amount": n }` with a per-entry `currency`); totals always hold one `subtotal` and one `total` and list `discount` only when non-zero. Lines gain `item: { id, title, price }` and `totals[]`. Checkout sessions report UCP status (`incomplete`, `ready_for_complete`, `canceled`) instead of `draft`/`checkout_ready`, and carry `links[]` and `ucp.payment_handlers`. Orders gain `checkout_id` and `fulfillment`, and their line `quantity` becomes `{ original, total, fulfilled }` with a line `status`. Orchestrator `*_minor` fields remain on carts and checkouts.
+- **BREAKING — UCP message signatures now follow RFC 9421.** The previous `Signature: kid=…,alg=…,sig=…` + `Timestamp` scheme was never what the UCP signatures specification defines (in `2026-04-08` or since), so no conformant platform could verify it. Requests and responses now use `Signature-Input` / `Signature` (label `sig1`) over the required components with an RFC 9530 `Content-Digest`. Any one valid signature authenticates. Error codes are UCP's (`signature_missing`, `signature_invalid`, `key_not_found`, `digest_mismatch`, `algorithm_unsupported`) with UCP's HTTP statuses. Existing Ed25519 keys keep working unchanged.
+- **BREAKING — `/.well-known/ucp` is a UCP `2026-08-25` business profile**, validated in tests against the official UCP JSON Schema. Signing keys move from `ucp.signing_keys` to the top-level `keys[]` JWK Set. `ucp.payment_handlers` is a reverse-DNS keyed registry (`{}` unless `UCP_PAYMENT_HANDLERS` is set) instead of a built-in list. The non-existent `dev.ucp.shopping.payment_handlers` capability is gone. The `mcp` and `acp` bindings leave `dev.ucp.shopping`, because neither is a UCP binding the orchestrator implements; their endpoints, the neighbouring protocol versions, and `capability_flags` move to a top-level `orchestrator` member. The previous shape stays available at `?ucp_version=2026-04-08`, linked from `supported_versions`. The profile is served with `Cache-Control: public, max-age=300`, and response envelopes report `ucp.version: 2026-08-25`.
+- **BREAKING — UCP cart, checkout, and order bodies follow the `2026-08-25` schemas** (validated in tests). `totals[].amount` is a plain integer in minor units (orders sent `{ "amount": n }` with a per-entry `currency`). Totals always hold one `subtotal` and one `total`, and list `discount` only when non-zero. Lines gain `item: { id, title, price }` and `totals[]`. Checkout sessions report UCP status (`incomplete`, `ready_for_complete`, `canceled`) instead of `draft`/`checkout_ready`, and carry `links[]` and `ucp.payment_handlers`. Orders gain `checkout_id` and `fulfillment`, and their line `quantity` becomes `{ original, total, fulfilled }` with a line `status`. The orchestrator's `*_minor` fields remain on carts and checkouts.
+- **BREAKING — UCP fulfillment objects follow the `2026-08-25` schema** (validated in tests). Methods carry typed `destinations[]` (`shipping_address` / `business_location`), and options carry a `description` object and `totals[]`. `amount_minor` stays on options as an alias. Clients that read `description` as a string must read `description.plain`.
 - Agent JWK Sets skip keys of types the orchestrator does not recognise instead of refusing the whole set, as UCP requires.
-
-- **BREAKING — UCP message signatures now follow RFC 9421.** The previous `Signature: kid=…,alg=…,sig=…` + `Timestamp` scheme was never what the UCP signatures specification defines (in `2026-04-08` or since), so no conformant platform could verify it. Requests and responses now use `Signature-Input` / `Signature` (label `sig1`) over the required components with an RFC 9530 `Content-Digest`; any one valid signature authenticates; error codes are UCP's (`signature_missing`, `signature_invalid`, `key_not_found`, `digest_mismatch`, `algorithm_unsupported`) with UCP's HTTP statuses. Existing Ed25519 keys keep working unchanged.
+- The workspace declares `rust-version = "1.89"`, and the Docker builder uses `rust:1.98`. A manifest test fails when the Dockerfile falls below the declared minimum.
+- `serde_yaml` (archived; pulls in the unmaintained `unsafe-libyaml`, RUSTSEC-2024-0449) is replaced by the maintained `serde_norway` fork, and the lockfile is refreshed.
 
 ### Added
 
-- **A2A 1.0 Agent Card and `SendMessage`.** `GET /.well-known/agent-card.json` describes the orchestrator to any A2A 1.0 client (HTTP+JSON interface at `/api/v1/a2a`, skills gated on what is configured, Bearer auth when required), and `POST /api/v1/a2a/message:send` runs the existing capability envelopes from a DataPart and answers with an agent Message. Task operations answer `TASK_NOT_FOUND`, since no tasks are created. Errors use A2A's `google.rpc.Status` shape. `/.well-known/ucp` links the card as `orchestrator.a2a_agent_card`. Metrics: `a2a_send_message` operation latency/count, per-skill and error counters, `a2a_agent_card_total`, `a2a_version_unsupported_total`, `a2a_task_not_found_total`.
-- **`UCP_PAYMENT_HANDLERS`**: publish your payment providers' UCP handlers in discovery; names must be reverse-DNS and entries need an `id` and a dated `version`, checked at startup.
-- **ES256 signing and verification** alongside Ed25519. ES256 is the one algorithm every UCP verifier must support: set `UCP_SIGNING_KEY_ALG=ES256` (P-256 private scalar in `UCP_SIGNING_KEY`), and previous keys may be `kid:ES256:secret`.
-- **`UCP_AGENT_JWKS`**: configure agent public keys as an RFC 7517 JWK Set (Ed25519 or P-256), the shape agents publish in their UCP profile. `UCP_AGENT_KEYS` (`kid:x` Ed25519 pairs) still works and the two can be combined.
-- `ucp_signature_verify` operation latency/count metrics and `ucp_signature_rejected_{coverage,digest,stale,…}_total` rejection counters.
+- **A2A 1.0 Agent Card and `SendMessage`.** `GET /.well-known/agent-card.json` describes the orchestrator to any A2A 1.0 client: an HTTP+JSON interface at `/api/v1/a2a`, skills gated on what is configured, and Bearer auth when required. `POST /api/v1/a2a/message:send` runs the existing capability envelopes from a DataPart and answers with an agent Message. Task operations answer `TASK_NOT_FOUND`, since no tasks are created. Errors use A2A's `google.rpc.Status` shape. `/.well-known/ucp` links the card as `orchestrator.a2a_agent_card`.
+- **UCP REST binding paths**: `/api/v1/ucp/checkout-sessions` and `/api/v1/ucp/carts`, as UCP's REST binding defines them. `/ucp/checkout` and `/ucp/cart` remain as aliases.
+- **ES256 signing and verification** alongside Ed25519. ES256 is the one algorithm every UCP verifier must support. Set `UCP_SIGNING_KEY_ALG=ES256` (P-256 private scalar in `UCP_SIGNING_KEY`); previous keys may be given as `kid:ES256:secret`.
+- **`UCP_AGENT_JWKS`**: configure agent public keys as an RFC 7517 JWK Set (Ed25519 or P-256), the shape agents publish in their UCP profile. `UCP_AGENT_KEYS` (`kid:x` Ed25519 pairs) still works, and the two can be combined.
+- **`UCP_PAYMENT_HANDLERS`**: publish your payment providers' UCP handlers in discovery. Names must be reverse-DNS, and entries need an `id` and a dated `version`; both are checked at startup.
+- **`EMBEDDED_CHECKOUT_URL`**: the merchant-hosted page that embedded checkout handoff links point to.
+- **Conformance tests against the official schemas**: `ucp_profile_schema_test`, `ucp_response_schema_test`, `ucp_fulfillment_schema_test`, `ucp_rest_binding_test`, `ucp_signature_test`, and `a2a_binding_test` run in CI's conformance step. The UCP schemas they use are vendored, unmodified, under `crates/orchestrator-http/tests/fixtures/ucp/2026-08-25`.
+- Metrics: `ucp_signature_verify` and `a2a_send_message` operation latency and counts; `ucp_signature_rejected_{coverage,digest,stale,…}_total`; A2A per-skill and error counters; `a2a_agent_card_total`; `a2a_version_unsupported_total`; and `a2a_task_not_found_total`.
 
 ### Fixed
 
-- **The Docker image failed to build**: the lockfile refresh pulled `uuid 1.28`, which needs Rust 1.89, while the builder stage pinned `rust:1.88`. The builder now uses `rust:1.98`, the workspace declares `rust-version = "1.89"`, and a manifest test fails when the Dockerfile falls below it.
-- **The UCP REST binding was unreachable for checkout and cart.** Discovery advertises `/api/v1/ucp` as the `dev.ucp.shopping` REST endpoint, and UCP's binding puts checkout at `/checkout-sessions` and carts at `/carts`, but only `/checkout` and `/cart` were served, so a conformant platform got `404`. The binding paths are now served; the old paths remain as aliases.
+- **The UCP REST binding was unreachable for checkout and cart.** Discovery advertised `/api/v1/ucp` as the `dev.ucp.shopping` REST endpoint, and UCP's binding puts checkout at `/checkout-sessions` and carts at `/carts`, but only `/checkout` and `/cart` were served, so a conformant platform got `404`.
 - **Checkout session responses named the wrong capability**: their `ucp.capabilities` listed `dev.ucp.shopping.cart` instead of `dev.ucp.shopping.checkout`.
+- **`orchestrator-runtime` did not build on its own**: it used `tokio::select!` without enabling tokio's `macros` feature, and compiled only inside the workspace.
 
 ### Security
 
-- **Embedded checkout handoff links are no longer forgeable.** The token was an HMAC keyed by an undocumented `UCP_SIGNING_SECRET` that defaulted to an empty string, so anyone could mint a valid one, and the link pointed at `/api/v1/ucp/checkout/:id/embedded`, a route that never existed. Links now target the merchant's hosted page (`EMBEDDED_CHECKOUT_URL`) and the token is an Ed25519 signature by the active discovery key over `ucp-embedded-checkout:{session}:{expires}`. Without a hosted page or signing keys the `embedded` transport is not advertised and `embedded-link` returns `501 NOT_CONFIGURED`.
+- **Embedded checkout handoff links are no longer forgeable.** The token was an HMAC keyed by an undocumented `UCP_SIGNING_SECRET` that defaulted to an empty string, so anyone could mint a valid one, and the link pointed at `/api/v1/ucp/checkout/:id/embedded`, a route that never existed. Links now target the merchant's hosted page (`EMBEDDED_CHECKOUT_URL`), and the token is an Ed25519 signature by the active discovery key over `ucp-embedded-checkout:{session}:{expires}`. Without a hosted page or signing keys, the `embedded` transport is not advertised and `embedded-link` returns `501 NOT_CONFIGURED`.
 
-### Changed
+### Known limitations
 
-- `serde_yaml` (archived, pulls in unmaintained `unsafe-libyaml`, RUSTSEC-2024-0449) replaced by the maintained `serde_norway` fork; lockfile refreshed.
+Recorded in the [conformance matrix](docs/standards/conformance-matrix.md) as `not_supported_yet`: UCP's MCP and A2A bindings, `UCP-Agent` platform profile negotiation, `actions[]`/3DS2, `$requestConstraints`, split payments and payment terms, location, consent, loyalty, RFC 9421-signed webhooks, and Web Bot Auth. A2A streaming, push notifications, and tasks are not offered either.
 
 ## [0.9.0] - 2026-08-20
 
@@ -247,6 +263,7 @@ UCP moves to **`2026-08-25`**, and A2A `1.0` is now spoken natively (Agent Card,
 
 - File-backed persistence is directory-based JSON; not suitable for high concurrency without external locking.
 
+[0.10.0]: https://github.com/AncientiCe/commerce-orchestrator-api/releases/tag/v0.10.0
 [0.9.0]: https://github.com/AncientiCe/commerce-orchestrator-api/releases/tag/v0.9.0
 [0.8.0]: https://github.com/AncientiCe/commerce-orchestrator-api/releases/tag/v0.8.0
 [0.7.0]: https://github.com/AncientiCe/commerce-orchestrator-api/releases/tag/v0.7.0

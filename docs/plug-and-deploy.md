@@ -189,8 +189,8 @@ UCP_SIGNING_KEY=$(openssl rand -base64 32)
 
 1. **Build image** (from repo root):
    ```bash
-   docker build -t your-registry/orchestrator-api:0.9.0 .
-   docker push your-registry/orchestrator-api:0.9.0
+   docker build -t your-registry/orchestrator-api:0.10.0 .
+   docker push your-registry/orchestrator-api:0.10.0
    ```
 2. **Edit manifests** under `deploy/kubernetes/`:
    - `configmap.yaml`: Set all six `*_BASE_URL` to your staging service URLs, plus any optional providers you run (`FULFILLMENT_BASE_URL`, `PAYMENT_DELEGATION_BASE_URL`, `IDENTITY_LINK_BASE_URL`).
@@ -207,7 +207,7 @@ UCP_SIGNING_KEY=$(openssl rand -base64 32)
    ```
 5. **Override image** if not in manifest:
    ```bash
-   kubectl set image deployment/orchestrator-api orchestrator-server=your-registry/orchestrator-api:0.9.0
+   kubectl set image deployment/orchestrator-api orchestrator-server=your-registry/orchestrator-api:0.10.0
    ```
 6. **Ensure database reachability** from the orchestrator pod (network policy, DNS, credentials, and TLS as required by your platform). The shipped NetworkPolicy allows egress to TCP 5432.
 7. **Scale safely**: the manifests ship two replicas. All durable state is in PostgreSQL, outbox dequeue uses `FOR UPDATE SKIP LOCKED`, and idempotency keys are stored centrally, so replicas neither double-deliver nor double-charge. Tune the connection pool and database capacity as you scale.
