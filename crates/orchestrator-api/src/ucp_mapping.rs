@@ -8,6 +8,8 @@ use orchestrator_core::{
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+use crate::signing::SigningKeyring;
+
 /// What this particular deployment can actually do, as opposed to what the
 /// protocol allows. Discovery is built from this so an agent is never told about
 /// a capability that is not wired up.
@@ -19,6 +21,9 @@ pub struct AdvertisedCapabilities {
     pub signing_keys: Vec<SigningKeyDescriptor>,
     /// True when an identity provider is configured behind identity linking.
     pub identity_linking: bool,
+    /// True when a merchant-hosted embedded checkout page and signing material are
+    /// both configured, so an embedded handoff link is reachable and verifiable.
+    pub embedded_checkout: bool,
 }
 
 impl AdvertisedCapabilities {
@@ -26,7 +31,7 @@ impl AdvertisedCapabilities {
     pub fn with_signing_keys(signing_keys: Vec<SigningKeyDescriptor>) -> Self {
         Self {
             signing_keys,
-            identity_linking: false,
+            ..Self::default()
         }
     }
 }
@@ -60,10 +65,53 @@ pub fn build_well_known_manifest_with_version(
                 "2026-01-23": format!("{}/.well-known/ucp?ucp_version=2026-01-23", base),
                 "2026-01-11": format!("{}/.well-known/ucp?ucp_version=2026-01-11", base),
             }),
-            services: Some(BTreeMap::from([
+            services: Some(BTreeMap::from([(
+                "dev.ucp.shopping".to_string(),
+                shopping_bindings(base, selected_version, advertised),
+            )])),
+            capabilities: Some(core_capabilities(selected_version, advertised)),
+            manifest: None,
+            rest_endpoint: None,
+            mcp_endpoint: Some(format!("{}/api/v1/mcp/message", base)),
+            capability_flags: Some(BTreeMap::from([
+                ("dev.ucp.payments.mpp".to_string(), true),
+                ("dev.ucp.shopping.payment_handlers".to_string(), true),
                 (
-                    "dev.ucp.shopping".to_string(),
-                    vec![
+                    "dev.ucp.security.signatures".to_string(),
+                    !signing_keys.is_empty(),
+                ),
+                (
+                    "dev.ucp.shopping.checkout.embedded".to_string(),
+                    advertised.embedded_checkout,
+                ),
+                ("dev.ucp.shopping.fulfillment".to_string(), true),
+                (
+                    "dev.ucp.common.identity_linking".to_string(),
+                    advertised.identity_linking,
+                ),
+            ])),
+            signing_keys: (!signing_keys.is_empty()).then(|| signing_keys.to_vec()),
+            payment_handlers: Some(default_payment_handlers()),
+            mcp_supported_versions: Some(vec![
+                "2026-07-28".to_string(),
+                "2025-11-25".to_string(),
+                "2024-11-05".to_string(),
+            ]),
+            a2a_profile_version: Some("1.0".to_string()),
+            ap2_protocol_version: Some("0.2".to_string()),
+            acp_api_version: Some("2026-04-17".to_string()),
+        },
+    }
+}
+
+/// Shopping service bindings for the latest profile. The embedded binding is only
+/// listed when the deployment can mint a link that leads somewhere and verifies.
+fn shopping_bindings(
+    base: &str,
+    selected_version: &str,
+    advertised: &AdvertisedCapabilities,
+) -> Vec<UcpServiceBinding> {
+    let mut bindings = vec![
                         UcpServiceBinding {
                             version: selected_version.to_string(),
                             spec: spec_url(selected_version, "overview"),
@@ -93,49 +141,20 @@ pub fn build_well_known_manifest_with_version(
                             ),
                             endpoint: Some(format!("{}/api/v1/acp", base)),
                         },
-                        UcpServiceBinding {
-                            version: selected_version.to_string(),
-                            spec: spec_url(selected_version, "embedded-link-delegation"),
-                            transport: "embedded".to_string(),
-                            schema: Some(format!(
-                                "https://ucp.dev/{}/services/shopping/embedded.openapi.json",
-                                selected_version
-                            )),
-                            endpoint: Some(format!("{}/api/v1/ucp/checkout", base)),
-                        },
-                    ],
-                ),
-            ])),
-            capabilities: Some(core_capabilities(selected_version, advertised)),
-            manifest: None,
-            rest_endpoint: None,
-            mcp_endpoint: Some(format!("{}/api/v1/mcp/message", base)),
-            capability_flags: Some(BTreeMap::from([
-                ("dev.ucp.payments.mpp".to_string(), true),
-                ("dev.ucp.shopping.payment_handlers".to_string(), true),
-                (
-                    "dev.ucp.security.signatures".to_string(),
-                    !signing_keys.is_empty(),
-                ),
-                ("dev.ucp.shopping.checkout.embedded".to_string(), true),
-                ("dev.ucp.shopping.fulfillment".to_string(), true),
-                (
-                    "dev.ucp.common.identity_linking".to_string(),
-                    advertised.identity_linking,
-                ),
-            ])),
-            signing_keys: (!signing_keys.is_empty()).then(|| signing_keys.to_vec()),
-            payment_handlers: Some(default_payment_handlers()),
-            mcp_supported_versions: Some(vec![
-                "2026-07-28".to_string(),
-                "2025-11-25".to_string(),
-                "2024-11-05".to_string(),
-            ]),
-            a2a_profile_version: Some("1.0".to_string()),
-            ap2_protocol_version: Some("0.2".to_string()),
-            acp_api_version: Some("2026-04-17".to_string()),
-        },
+    ];
+    if advertised.embedded_checkout {
+        bindings.push(UcpServiceBinding {
+            version: selected_version.to_string(),
+            spec: spec_url(selected_version, "embedded-link-delegation"),
+            transport: "embedded".to_string(),
+            schema: Some(format!(
+                "https://ucp.dev/{}/services/shopping/embedded.openapi.json",
+                selected_version
+            )),
+            endpoint: Some(format!("{}/api/v1/ucp/checkout", base)),
+        });
     }
+    bindings
 }
 
 fn legacy_well_known_manifest(base: &str, selected_version: &str) -> WellKnownUcp {
@@ -355,7 +374,7 @@ pub fn cart_id_to_session_id(cart_id: CartId) -> String {
     format!("chk_{}", cart_id.0)
 }
 
-/// Time-to-live for embedded checkout handoff links, in seconds (UCP 2026-04-08 "embedded"
+/// Time-to-live for embedded checkout handoff links, in seconds (UCP "embedded"
 /// transport / link delegation extension).
 pub const EMBEDDED_CHECKOUT_LINK_TTL_SECONDS: i64 = 900;
 
@@ -368,37 +387,37 @@ pub struct EmbeddedCheckoutLink {
     pub expires_at: i64,
 }
 
-/// Build an embedded checkout handoff link for the UCP "embedded" transport.
-/// The token is an HMAC-SHA256 over the session and expiry, keyed by `UCP_SIGNING_SECRET`.
-pub fn build_embedded_checkout_link(base_url: &str, cart_id: CartId) -> EmbeddedCheckoutLink {
-    let base = base_url.trim_end_matches('/');
+/// The exact bytes the handoff token signs. The hosted checkout page rebuilds this
+/// from the `session` and `expires` query parameters and verifies `token` with the
+/// JWK named by `kid` in `/.well-known/ucp`.
+pub fn embedded_link_signing_base(session_id: &str, expires_at: i64) -> String {
+    format!("ucp-embedded-checkout:{session_id}:{expires_at}")
+}
+
+/// Build an embedded checkout handoff link pointing at the merchant's hosted page.
+///
+/// The token is an Ed25519 signature by the active discovery key, so the hosted
+/// page needs no shared secret: anyone holding the public JWK can verify it, and
+/// nobody without the private key can mint one.
+pub fn build_embedded_checkout_link(
+    hosted_checkout_url: &str,
+    cart_id: CartId,
+    keyring: &SigningKeyring,
+) -> Result<EmbeddedCheckoutLink, url::ParseError> {
     let session_id = cart_id_to_session_id(cart_id);
     let expires_at = now_unix_timestamp() + EMBEDDED_CHECKOUT_LINK_TTL_SECONDS;
-    let token = embedded_link_token(&session_id, expires_at);
-    EmbeddedCheckoutLink {
-        embedded_url: format!(
-            "{base}/api/v1/ucp/checkout/{session_id}/embedded?token={token}&expires={expires_at}"
-        ),
+    let signature = keyring.sign(embedded_link_signing_base(&session_id, expires_at).as_bytes());
+    let mut url = url::Url::parse(hosted_checkout_url)?;
+    url.query_pairs_mut()
+        .append_pair("session", &session_id)
+        .append_pair("expires", &expires_at.to_string())
+        .append_pair("kid", &signature.kid)
+        .append_pair("token", &signature.signature);
+    Ok(EmbeddedCheckoutLink {
+        embedded_url: url.into(),
         checkout_session_id: session_id,
         expires_at,
-    }
-}
-
-fn embedded_link_token(session_id: &str, expires_at: i64) -> String {
-    let secret = std::env::var("UCP_SIGNING_SECRET").unwrap_or_default();
-    signed_token(session_id, expires_at, &secret)
-}
-
-fn signed_token(session_id: &str, expires_at: i64, secret: &str) -> String {
-    use hmac::{Mac, SimpleHmac};
-    let mut mac = SimpleHmac::<sha2::Sha256>::new_from_slice(secret.as_bytes())
-        .expect("HMAC accepts keys of any length");
-    mac.update(format!("{session_id}:{expires_at}").as_bytes());
-    mac.finalize()
-        .into_bytes()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+    })
 }
 
 fn now_unix_timestamp() -> i64 {
@@ -413,13 +432,18 @@ fn now_unix_timestamp() -> i64 {
 mod tests {
     use super::*;
 
+    const SEED: &str = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8";
+
     #[test]
-    fn build_embedded_checkout_link_returns_url_with_session_id_and_future_expiry() {
+    fn embedded_checkout_link_targets_hosted_page_and_expires_after_ttl() {
+        let keyring = SigningKeyring::from_seeds("orch-a", SEED, &[]).unwrap();
         let before = now_unix_timestamp();
         let link = build_embedded_checkout_link(
-            "https://orchestrator.example.com/",
+            "https://shop.example.com/checkout/embedded",
             CartId(uuid::Uuid::nil()),
-        );
+            &keyring,
+        )
+        .unwrap();
 
         assert_eq!(
             link.checkout_session_id,
@@ -427,26 +451,48 @@ mod tests {
         );
         assert!(link
             .embedded_url
-            .starts_with("https://orchestrator.example.com/api/v1/ucp/checkout/"));
-        assert!(link.embedded_url.contains(&link.checkout_session_id));
-        assert!(link.embedded_url.contains("token="));
-        assert!(link
-            .embedded_url
-            .contains(&format!("expires={}", link.expires_at)));
-        assert!(link.expires_at > before);
-        assert_eq!(link.expires_at - before, EMBEDDED_CHECKOUT_LINK_TTL_SECONDS,);
+            .starts_with("https://shop.example.com/checkout/embedded?session=chk_"));
+        assert!(link.embedded_url.contains("kid=orch-a"));
+        assert_eq!(link.expires_at - before, EMBEDDED_CHECKOUT_LINK_TTL_SECONDS);
     }
 
     #[test]
-    fn signed_token_changes_with_secret_but_is_deterministic() {
-        let unsigned_a = signed_token("chk_session", 1_000, "");
-        let unsigned_b = signed_token("chk_session", 1_000, "");
-        let signed = signed_token("chk_session", 1_000, "test-secret");
+    fn embedded_checkout_token_cannot_be_moved_to_another_session() {
+        let keyring = SigningKeyring::from_seeds("orch-a", SEED, &[]).unwrap();
+        let link = build_embedded_checkout_link(
+            "https://shop.example.com/checkout",
+            CartId(uuid::Uuid::nil()),
+            &keyring,
+        )
+        .unwrap();
+        let token = url::Url::parse(&link.embedded_url)
+            .unwrap()
+            .query_pairs()
+            .find(|(k, _)| k == "token")
+            .map(|(_, v)| v.into_owned())
+            .unwrap();
 
-        assert_eq!(
-            unsigned_a, unsigned_b,
-            "same inputs must produce same token"
+        keyring
+            .verify(
+                "orch-a",
+                embedded_link_signing_base(&link.checkout_session_id, link.expires_at).as_bytes(),
+                &token,
+            )
+            .expect("token verifies for its own session");
+        assert!(keyring
+            .verify(
+                "orch-a",
+                embedded_link_signing_base("chk_other", link.expires_at).as_bytes(),
+                &token,
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn embedded_checkout_link_rejects_an_unparseable_hosted_url() {
+        let keyring = SigningKeyring::from_seeds("orch-a", SEED, &[]).unwrap();
+        assert!(
+            build_embedded_checkout_link("not a url", CartId(uuid::Uuid::nil()), &keyring).is_err()
         );
-        assert_ne!(unsigned_a, signed, "different secret must change the token");
     }
 }

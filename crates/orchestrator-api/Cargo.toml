@@ -19,7 +19,7 @@ tokio = { version = "1", features = ["sync", "rt"] }
 ed25519-dalek = { version = "3.0.0", features = ["rand_core", "pkcs8", "pem"] }
 base64 = "0.23.1"
 sha2 = "0.10"
-hmac = "0.12"
+url = "2"
 
 [dev-dependencies]
 provider-mocks = { path = "../provider-mocks" }

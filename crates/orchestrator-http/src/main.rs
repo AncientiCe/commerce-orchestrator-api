@@ -235,6 +235,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     } else {
         state
     };
+    let state = match server_config.server.embedded_checkout_url.clone() {
+        Some(url) => {
+            url::Url::parse(&url).map_err(|e| format!("EMBEDDED_CHECKOUT_URL: {}", e))?;
+            state.with_embedded_checkout_url(url)
+        }
+        None => state,
+    };
     let state = if let Some(keyring) = signing {
         tracing::info!(kid = keyring.active_kid(), "UCP response signing enabled");
         state.with_signing(keyring)

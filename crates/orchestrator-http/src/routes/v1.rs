@@ -30,7 +30,7 @@ use orchestrator_api::{
     parse_acp_session_id, projection_to_acp_cart, projection_to_acp_session,
     redact_checkout_request, start_checkout_command, AcpCartCreateRequest, AcpCartUpdateRequest,
     AcpCheckoutSessionCreateRequest, AcpCheckoutSessionUpdateRequest, AcpCompleteSessionRequest,
-    AcpDelegatePaymentRequest, PaymentHandlerDescriptor,
+    AcpDelegatePaymentRequest, FacadeError, PaymentHandlerDescriptor,
 };
 use orchestrator_core::contract::{
     AddItemPayload, CancelCartPayload, CartCommand, CartId, CheckoutRequest, CreateCartPayload,
@@ -576,6 +576,12 @@ async fn ucp_create_embedded_checkout_link(
     Path(id): Path<String>,
 ) -> Result<Json<UcpEmbeddedCheckoutLinkResponseDto>, ApiError> {
     let cart_id = parse_ucp_cart_id(&id)?;
+    let Some((hosted_url, keyring)) = state.embedded_checkout() else {
+        orchestrator_observability::incr("ucp_checkout_embedded_link_not_configured_total");
+        return Err(ApiError::Orchestrator(FacadeError::NotConfigured(
+            "embedded checkout requires EMBEDDED_CHECKOUT_URL and UCP signing keys",
+        )));
+    };
     // Verify the checkout/cart exists before minting a handoff link for it.
     state
         .facade
@@ -585,7 +591,10 @@ async fn ucp_create_embedded_checkout_link(
             None,
         )
         .await?;
-    let link = build_embedded_checkout_link(&state.discovery_base_url, cart_id);
+    let link = build_embedded_checkout_link(hosted_url, cart_id, keyring).map_err(|e| {
+        tracing::error!(error = %e, "EMBEDDED_CHECKOUT_URL is not a valid URL");
+        ApiError::Internal
+    })?;
     orchestrator_observability::incr("ucp_checkout_embedded_link_total");
     Ok(Json(UcpEmbeddedCheckoutLinkResponseDto {
         ucp: UcpEnvelopeDto::for_capabilities(&["dev.ucp.shopping.checkout.embedded"]),

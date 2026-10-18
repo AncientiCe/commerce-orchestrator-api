@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **Embedded checkout handoff links are no longer forgeable.** The token was an HMAC keyed by an undocumented `UCP_SIGNING_SECRET` that defaulted to an empty string, so anyone could mint a valid one, and the link pointed at `/api/v1/ucp/checkout/:id/embedded`, a route that never existed. Links now target the merchant's hosted page (`EMBEDDED_CHECKOUT_URL`) and the token is an Ed25519 signature by the active discovery key over `ucp-embedded-checkout:{session}:{expires}`. Without a hosted page or signing keys the `embedded` transport is not advertised and `embedded-link` returns `501 NOT_CONFIGURED`.
+
+### Changed
+
+- `serde_yaml` (archived, pulls in unmaintained `unsafe-libyaml`, RUSTSEC-2024-0449) replaced by the maintained `serde_norway` fork; lockfile refreshed.
+
 ## [0.9.0] - 2026-08-20
 
 "Trustworthy Integration": closes the gap between what the orchestrator advertised and what it actually did. Outbound auth to your providers, safe retries, working webhook delivery, correct money, real signatures, and honest discovery. No protocol version changes — UCP `2026-04-08` and ACP `2026-04-17` remain current.

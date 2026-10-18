@@ -1404,7 +1404,6 @@ dependencies = [
  "async-trait",
  "base64 0.23.1",
  "ed25519-dalek",
- "hmac",
  "jsonwebtoken",
  "orchestrator-core",
  "orchestrator-observability",
@@ -1418,6 +1417,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
+ "url",
  "uuid",
 ]
 
@@ -1456,6 +1456,7 @@ dependencies = [
  "tower-http 0.5.2",
  "tracing",
  "tracing-subscriber",
+ "url",
  "utoipa",
  "utoipa-axum",
  "uuid",

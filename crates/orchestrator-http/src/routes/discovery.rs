@@ -25,6 +25,7 @@ pub async fn well_known_ucp(
             .map(|keyring| keyring.public_jwks())
             .unwrap_or_default(),
         identity_linking: state.facade.supports_identity_linking(),
+        embedded_checkout: state.embedded_checkout().is_some(),
     };
     let manifest = build_well_known_manifest_with_version(
         &state.discovery_base_url,

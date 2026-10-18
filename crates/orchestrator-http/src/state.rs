@@ -21,6 +21,9 @@ pub struct AppState {
     /// Public keys of agents whose signatures we require and verify. `None` means
     /// inbound signatures are not required.
     pub inbound_keys: Option<VerifyingKeyring>,
+    /// Merchant-hosted page that completes an embedded checkout. `None` means the
+    /// UCP embedded transport is neither advertised nor served.
+    pub embedded_checkout_url: Option<String>,
 }
 
 impl AppState {
@@ -33,6 +36,7 @@ impl AppState {
             discovery_base_url: "http://127.0.0.1:8080".to_string(),
             signing: None,
             inbound_keys: None,
+            embedded_checkout_url: None,
         }
     }
 
@@ -46,6 +50,20 @@ impl AppState {
     pub fn with_inbound_verification(mut self, keys: VerifyingKeyring) -> Self {
         self.inbound_keys = Some(keys);
         self
+    }
+
+    /// Point embedded checkout handoff links at the merchant's hosted checkout page.
+    pub fn with_embedded_checkout_url(mut self, url: String) -> Self {
+        self.embedded_checkout_url = Some(url);
+        self
+    }
+
+    /// Both halves an embedded handoff link needs: somewhere to go and a key to sign with.
+    pub fn embedded_checkout(&self) -> Option<(&str, &SigningKeyring)> {
+        Some((
+            self.embedded_checkout_url.as_deref()?,
+            self.signing.as_ref()?,
+        ))
     }
 
     /// Set the base URL used in the discovery manifest (/.well-known/ucp). Call when deploying behind a known public URL.

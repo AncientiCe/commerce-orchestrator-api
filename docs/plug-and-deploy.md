@@ -81,6 +81,7 @@ The orchestrator calls your services over HTTP. Each base URL must not have a tr
 | `POST` | `{base}/identity/link` | `{ "tenant_id": "<string>", "merchant_id": "<string>", "agent_id": "<string>", "link_token": "<string>" }` | `{ "link_id": "<string>", "status": "linked", "expires_at": "<rfc3339>?" }` |
 
 - Without `IDENTITY_LINK_BASE_URL`, `POST /api/v1/a2a/identity/link` returns `501 NOT_CONFIGURED` and `dev.ucp.common.identity_linking` is absent from discovery.
+- Without `EMBEDDED_CHECKOUT_URL` (or without signing keys), `POST /api/v1/ucp/checkout/:id/embedded-link` returns `501 NOT_CONFIGURED` and the `embedded` transport is absent from discovery.
 
 ---
 
@@ -110,6 +111,7 @@ Configure the server with these (see also [Consumption guide – Config referenc
 | `UCP_AGENT_KEYS` | No | Agent public keys, `kid:base64-public-key` comma-separated. Setting this makes inbound signatures **mandatory** on `/api/v1`. | `agent-1:<public key>` |
 | `PAYMENT_DELEGATION_BASE_URL` | No | PSP delegation service. Without it `POST /api/v1/acp/delegate_payment` returns `501` and the ACP `delegate_payment` service is not advertised. | `http://psp-delegation:8080` |
 | `IDENTITY_LINK_BASE_URL` | No | Identity system for agent identity linking. Without it identity linking returns `501` and `dev.ucp.common.identity_linking` is not advertised. | `http://identity:8080` |
+| `EMBEDDED_CHECKOUT_URL` | No | Your hosted embedded checkout page. Handoff links point here with `session`, `expires`, `kid` and `token` query parameters; verify `token` as an Ed25519 signature over `ucp-embedded-checkout:{session}:{expires}` using the JWK named by `kid` in `/.well-known/ucp`. Requires signing keys. | `https://shop.example.com/checkout/embedded` |
 | `FULFILLMENT_BASE_URL` | No | Shipping rate service. Without it the built-in static rate table is used. | `http://fulfillment:8080` |
 | `MIGRATE_ONLY` | No | `true` applies pending migrations and exits, same as passing `--migrate`. Used by the migration Job. | `true` |
 | `BIND_ADDR` | No | Listen address. | `0.0.0.0:8080` |

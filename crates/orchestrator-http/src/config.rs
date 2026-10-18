@@ -848,6 +848,11 @@ pub struct ServerSection {
     pub log_level: String,
     /// Public base URL for this orchestrator (e.g. https://orchestrator.example.com). Used for discovery manifest rest_endpoint.
     pub public_base_url: Option<String>,
+    /// Merchant-hosted page that completes a UCP embedded checkout. With signing
+    /// keys configured, this enables the embedded transport; without it the
+    /// transport is not advertised and `embedded-link` returns `501`.
+    #[serde(default)]
+    pub embedded_checkout_url: Option<String>,
 }
 
 fn default_bind_addr() -> String {
@@ -904,6 +909,10 @@ impl ServerConfig {
             if !t.is_empty() {
                 self.server.public_base_url = Some(t);
             }
+        }
+        if let Ok(v) = std::env::var("EMBEDDED_CHECKOUT_URL") {
+            let t = v.trim().to_string();
+            self.server.embedded_checkout_url = (!t.is_empty()).then_some(t);
         }
         if let Ok(v) = std::env::var("RUST_LOG") {
             let t = v.trim().to_string();

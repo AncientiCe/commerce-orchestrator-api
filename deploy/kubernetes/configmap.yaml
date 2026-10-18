@@ -23,6 +23,7 @@ data:
   # FULFILLMENT_BASE_URL: "http://fulfillment-service:8080"
   # PAYMENT_DELEGATION_BASE_URL: "http://psp-delegation:8080"
   # IDENTITY_LINK_BASE_URL: "http://identity-service:8080"
+  # EMBEDDED_CHECKOUT_URL: "https://shop.example.com/checkout/embedded"
   # Outbox processor: poll interval, batch size, and shutdown drain budget.
   OUTBOX_INTERVAL_MS: "1000"
   OUTBOX_BATCH_SIZE: "50"

@@ -475,11 +475,18 @@ async fn ucp_checkout_and_payment_handler_routes_exist() {
     assert_ne!(acp.status_code().as_u16(), 404);
 }
 
+/// The merchant's hosted embedded checkout page plus signing material: the two
+/// things an embedded handoff link needs to be both reachable and verifiable.
+const EMBEDDED_CHECKOUT_URL: &str = "https://shop.example.com/checkout/embedded";
+
+fn embedded_state() -> AppState {
+    test_state_with_signing("https://orchestrator.example.com")
+        .with_embedded_checkout_url(EMBEDDED_CHECKOUT_URL.to_string())
+}
+
 #[tokio::test]
 async fn well_known_ucp_advertises_embedded_transport() {
-    let state = test_state_with_base_url("https://orchestrator.example.com");
-    let app = app::app().with_state(state);
-    let server = TestServer::new(app).unwrap();
+    let server = TestServer::new(app::app().with_state(embedded_state())).unwrap();
 
     let response = server.get("/.well-known/ucp").await;
     response.assert_status_ok();
@@ -506,11 +513,44 @@ async fn well_known_ucp_advertises_embedded_transport() {
 }
 
 #[tokio::test]
-async fn ucp_checkout_embedded_link_returns_signed_handoff_url() {
-    let state = test_state_with_base_url("https://orchestrator.example.com");
-    let app = app::app().with_state(state);
-    let server = TestServer::new(app).unwrap();
+async fn embedded_transport_is_not_advertised_without_a_hosted_checkout_url() {
+    // Signing alone is not enough: with nowhere to send the buyer, the link is dead.
+    let server = TestServer::new(
+        app::app().with_state(test_state_with_signing("https://orchestrator.example.com")),
+    )
+    .unwrap();
 
+    let json: serde_json::Value = server.get("/.well-known/ucp").await.json();
+    let services = json["ucp"]["services"]["dev.ucp.shopping"]
+        .as_array()
+        .expect("shopping service bindings");
+    assert!(
+        !services
+            .iter()
+            .any(|binding| binding["transport"] == "embedded"),
+        "embedded transport must not be advertised without EMBEDDED_CHECKOUT_URL"
+    );
+    assert_eq!(
+        json["ucp"]["capability_flags"]["dev.ucp.shopping.checkout.embedded"],
+        false
+    );
+}
+
+#[tokio::test]
+async fn embedded_transport_is_not_advertised_without_signing_keys() {
+    // Without a key the handoff token cannot be verified by the hosted page.
+    let state = test_state_with_base_url("https://orchestrator.example.com")
+        .with_embedded_checkout_url(EMBEDDED_CHECKOUT_URL.to_string());
+    let server = TestServer::new(app::app().with_state(state)).unwrap();
+
+    let json: serde_json::Value = server.get("/.well-known/ucp").await.json();
+    assert_eq!(
+        json["ucp"]["capability_flags"]["dev.ucp.shopping.checkout.embedded"],
+        false
+    );
+}
+
+async fn create_ucp_checkout(server: &TestServer) -> String {
     let create = serde_json::json!({
         "merchant_id": "m",
         "currency": "USD",
@@ -519,7 +559,15 @@ async fn ucp_checkout_embedded_link_returns_signed_handoff_url() {
     let created = server.post("/api/v1/ucp/checkout").json(&create).await;
     created.assert_status_ok();
     let checkout: serde_json::Value = created.json();
-    let cart_id = checkout["id"].as_str().expect("id present");
+    checkout["id"].as_str().expect("id present").to_string()
+}
+
+#[tokio::test]
+async fn ucp_checkout_embedded_link_points_at_the_hosted_page_with_a_verifiable_token() {
+    let state = embedded_state();
+    let keyring = state.signing.clone().expect("signing configured");
+    let server = TestServer::new(app::app().with_state(state)).unwrap();
+    let cart_id = create_ucp_checkout(&server).await;
 
     let response = server
         .post(&format!("/api/v1/ucp/checkout/{cart_id}/embedded-link"))
@@ -527,24 +575,54 @@ async fn ucp_checkout_embedded_link_returns_signed_handoff_url() {
     response.assert_status_ok();
     let body: serde_json::Value = response.json();
     let embedded_url = body["embedded_url"].as_str().expect("embedded_url present");
-    assert!(embedded_url.starts_with("https://orchestrator.example.com/api/v1/ucp/checkout/"));
-    assert!(embedded_url.contains("token="));
     let session_id = body["checkout_session_id"]
         .as_str()
         .expect("checkout_session_id present");
-    assert!(embedded_url.contains(session_id));
-    assert!(body["expires_at"].as_i64().expect("expires_at present") > 0);
+    let expires_at = body["expires_at"].as_i64().expect("expires_at present");
+    assert!(
+        embedded_url.starts_with(&format!("{EMBEDDED_CHECKOUT_URL}?")),
+        "link must target the merchant's hosted page, got {embedded_url}"
+    );
     assert!(body["ucp"]["capabilities"]
         .as_object()
         .unwrap()
         .contains_key("dev.ucp.shopping.checkout.embedded"));
+
+    let query: std::collections::HashMap<String, String> =
+        url::form_urlencoded::parse(embedded_url.split_once('?').unwrap().1.as_bytes())
+            .into_owned()
+            .collect();
+    assert_eq!(query["session"], session_id);
+    assert_eq!(query["expires"], expires_at.to_string());
+    assert_eq!(query["kid"], keyring.active_kid());
+    keyring
+        .verify(
+            &query["kid"],
+            orchestrator_api::embedded_link_signing_base(session_id, expires_at).as_bytes(),
+            &query["token"],
+        )
+        .expect("token verifies against the key published in discovery");
+}
+
+#[tokio::test]
+async fn ucp_checkout_embedded_link_returns_501_when_not_configured() {
+    let server = TestServer::new(
+        app::app().with_state(test_state_with_base_url("https://orchestrator.example.com")),
+    )
+    .unwrap();
+    let cart_id = create_ucp_checkout(&server).await;
+
+    let response = server
+        .post(&format!("/api/v1/ucp/checkout/{cart_id}/embedded-link"))
+        .await;
+    assert_eq!(response.status_code().as_u16(), 501);
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["code"], "NOT_CONFIGURED");
 }
 
 #[tokio::test]
 async fn ucp_checkout_embedded_link_returns_404_for_unknown_checkout() {
-    let state = test_state_with_base_url("http://localhost:8080");
-    let app = app::app().with_state(state);
-    let server = TestServer::new(app).unwrap();
+    let server = TestServer::new(app::app().with_state(embedded_state())).unwrap();
 
     let response = server
         .post("/api/v1/ucp/checkout/00000000-0000-0000-0000-000000000099/embedded-link")

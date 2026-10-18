@@ -97,7 +97,7 @@ All arrive as `401` with a `code` field:
 | `PUT` | `/api/v1/ucp/checkout/:id` | UCP checkout session line update. |
 | `POST` | `/api/v1/ucp/checkout/:id/complete` | Complete UCP checkout (execute checkout). |
 | `POST` | `/api/v1/ucp/checkout/:id/cancel` | Cancel UCP checkout session. |
-| `POST` | `/api/v1/ucp/checkout/:id/embedded-link` | UCP embedded transport: returns a short-lived, signed handoff URL (`embedded_url`, `checkout_session_id`, `expires_at`) for completing checkout on the merchant's hosted embedded surface. 404 if the checkout does not exist. |
+| `POST` | `/api/v1/ucp/checkout/:id/embedded-link` | UCP embedded transport: returns a short-lived handoff URL (`embedded_url`, `checkout_session_id`, `expires_at`) on the merchant's hosted page (`EMBEDDED_CHECKOUT_URL`). The `token` query parameter is an Ed25519 signature over `ucp-embedded-checkout:{session}:{expires}`, verifiable with the discovery JWK named by `kid`. 404 if the checkout does not exist; 501 `NOT_CONFIGURED` when no hosted page or signing key is configured. |
 | `POST` | `/api/v1/ucp/checkout/:id/fulfillment` | UCP fulfillment extension for a checkout session; same request/response shape as the cart fulfillment endpoint. |
 | `GET` | `/api/v1/ucp/payment-handlers` | List configured payment handlers. |
 | `GET` | `/api/v1/ucp/payment-handlers/:id` | Get a payment handler by id. |
@@ -326,7 +326,7 @@ The orchestrator is a middleware API layer. Operators configure where each downs
 | `RECEIPT_BASE_URL` | Receipt service base URL. |
 | `UCP_SIGNING_KEY_ID`, `UCP_SIGNING_KEY` | Ed25519 signing material; production will not start without them. |
 
-Optional: `AUTH_TENANT_ID`, `AUTH_CALLER_ID` (default `prod` for static mode), `AP2_TRUSTED_ISSUERS` (comma-separated allowlist for strict AP2 issuer checks and JWT issuer checks), `UCP_SIGNING_PREVIOUS_KEYS` and `UCP_AGENT_KEYS` (see [Message signing](#message-signing-ucp-2026-04-08)), `FULFILLMENT_BASE_URL`, `PAYMENT_DELEGATION_BASE_URL`, and `IDENTITY_LINK_BASE_URL`. Capabilities backed by an optional service are advertised only when that service is configured; the endpoint returns `501` with `code: NOT_CONFIGURED` otherwise. Config can be loaded from a file (`CONFIG_FILE` or `config.yaml`) with env overrides.
+Optional: `AUTH_TENANT_ID`, `AUTH_CALLER_ID` (default `prod` for static mode), `AP2_TRUSTED_ISSUERS` (comma-separated allowlist for strict AP2 issuer checks and JWT issuer checks), `UCP_SIGNING_PREVIOUS_KEYS` and `UCP_AGENT_KEYS` (see [Message signing](#message-signing-ucp-2026-04-08)), `FULFILLMENT_BASE_URL`, `PAYMENT_DELEGATION_BASE_URL`, `IDENTITY_LINK_BASE_URL`, and `EMBEDDED_CHECKOUT_URL`. Capabilities backed by an optional service are advertised only when that service is configured; the endpoint returns `501` with `code: NOT_CONFIGURED` otherwise. Config can be loaded from a file (`CONFIG_FILE` or `config.yaml`) with env overrides.
 
 AP2 note: this release aligns with AP2 **0.2** (closed mandates plus optional open/HNP mandates with amount and currency constraints). Strict mode remains fail-closed.
 
