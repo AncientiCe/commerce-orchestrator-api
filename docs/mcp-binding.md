@@ -26,7 +26,7 @@ The bearer token resolves to an `AuthContext` (caller, tenant, scopes) before di
 
 ### Signatures
 
-If the deployment configures `UCP_AGENT_KEYS`, requests to `/api/v1` — including `/api/v1/mcp/message` — must carry valid `Signature` and `Timestamp` headers, and responses are signed back. See [message signing](consumption-guide.md#message-signing-ucp-2026-04-08).
+If the deployment configures agent keys (`UCP_AGENT_JWKS` or `UCP_AGENT_KEYS`), requests to `/api/v1` — including `/api/v1/mcp/message` — must carry valid RFC 9421 `Signature-Input`/`Signature` headers and a matching `Content-Digest`, and responses are signed back. See [message signing](consumption-guide.md#message-signing-ucp-rfc-9421).
 
 ## Version negotiation
 

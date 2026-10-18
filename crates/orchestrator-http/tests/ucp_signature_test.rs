@@ -1,8 +1,9 @@
-//! Inbound UCP signature verification and outbound response signing.
+//! Inbound UCP request verification and outbound response signing over HTTP
+//! (RFC 9421 `Signature-Input` / `Signature`, RFC 9530 `Content-Digest`).
 
-use axum_test::TestServer;
+use axum_test::{TestRequest, TestServer};
 use orchestrator_api::{
-    request_signing_base, response_signing_base, SignatureHeader, SigningKeyring, VerifyingKeyring,
+    content_digest, KeyAlgorithm, KeySpec, MessageComponents, SigningKeyring, VerifyingKeyring,
     MAX_SIGNATURE_SKEW_SECONDS,
 };
 use orchestrator_http::{app, AppState};
@@ -15,6 +16,9 @@ use std::sync::Arc;
 const AGENT_SEED: &str = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8";
 const AGENT_SEED_B: &str = "IB8eHRwbGhkYFxYVFBMSERAPDg0MCwoJCAcGBQQDAgE";
 const ORCH_SEED: &str = "MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTI";
+const P256_SECRET: &str = "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA";
+const HOST: &str = "orchestrator.example.com";
+const PATH: &str = "/api/v1/ucp/cart";
 
 fn base_state() -> AppState {
     let facade = orchestrator_api::OrchestratorFacade::new(
@@ -30,16 +34,9 @@ fn base_state() -> AppState {
 }
 
 fn verifier_for(keyrings: &[&SigningKeyring]) -> VerifyingKeyring {
-    let jwks: Vec<_> = keyrings
-        .iter()
-        .flat_map(|k| k.public_jwks())
-        .map(|jwk| (jwk.kid, jwk.x.expect("ed25519 x")))
-        .collect();
-    let pairs: Vec<(&str, &str)> = jwks
-        .iter()
-        .map(|(kid, x)| (kid.as_str(), x.as_str()))
-        .collect();
-    VerifyingKeyring::from_public_keys(&pairs).expect("verifying keyring")
+    let keys: Vec<_> = keyrings.iter().flat_map(|k| k.public_jwks()).collect();
+    VerifyingKeyring::from_jwks(&serde_json::json!({ "keys": keys }).to_string())
+        .expect("verifying keyring")
 }
 
 fn server(state: AppState) -> TestServer {
@@ -54,245 +51,284 @@ fn now_unix() -> i64 {
         .as_secs() as i64
 }
 
-fn cart_body() -> serde_json::Value {
-    serde_json::json!({ "merchant_id": "m1", "currency": "USD", "line_items": [] })
+fn cart_body() -> Vec<u8> {
+    serde_json::to_vec(
+        &serde_json::json!({ "merchant_id": "m1", "currency": "USD", "line_items": [] }),
+    )
+    .unwrap()
 }
 
-fn sign_header(keyring: &SigningKeyring, path: &str, timestamp: i64, body: &[u8]) -> String {
-    let signature = keyring.sign(&request_signing_base("POST", path, timestamp, body));
-    SignatureHeader::new(signature.kid, signature.signature).to_string()
+const COVERED: &[&str] = &[
+    "@method",
+    "@authority",
+    "@path",
+    "content-digest",
+    "content-type",
+];
+
+/// Sign a `POST /api/v1/ucp/cart` the way a UCP platform would.
+fn signed_post(
+    server: &TestServer,
+    keyring: &SigningKeyring,
+    body: &[u8],
+    covered: &[&str],
+    created: i64,
+) -> TestRequest {
+    let digest = content_digest(body);
+    let components = MessageComponents::new()
+        .with("@method", "POST")
+        .with("@authority", HOST)
+        .with("@path", PATH)
+        .with("content-digest", &digest)
+        .with("content-type", "application/json");
+    let signed = keyring.sign_message(&components, covered, created).unwrap();
+    server
+        .post(PATH)
+        .add_header("host", HOST)
+        .add_header("content-digest", digest)
+        .add_header("signature-input", signed.signature_input)
+        .add_header("signature", signed.signature)
+        .bytes(body.to_vec().into())
+        .content_type("application/json")
+}
+
+fn agent() -> SigningKeyring {
+    SigningKeyring::from_seeds("agent-1", AGENT_SEED, &[]).unwrap()
+}
+
+fn verifying_state(keyrings: &[&SigningKeyring]) -> AppState {
+    base_state().with_inbound_verification(verifier_for(keyrings))
+}
+
+async fn error_code(response: axum_test::TestResponse) -> (u16, String) {
+    let status = response.status_code().as_u16();
+    let json: serde_json::Value = response.json();
+    (
+        status,
+        json["code"].as_str().unwrap_or_default().to_string(),
+    )
 }
 
 #[tokio::test]
 async fn a_correctly_signed_request_is_accepted() {
-    let agent = SigningKeyring::from_seeds("agent-1", AGENT_SEED, &[]).unwrap();
-    let state = base_state().with_inbound_verification(verifier_for(&[&agent]));
-    let server = server(state);
+    let agent = agent();
+    let server = server(verifying_state(&[&agent]));
+    signed_post(&server, &agent, &cart_body(), COVERED, now_unix())
+        .await
+        .assert_status_ok();
+}
 
-    let body = cart_body();
-    let raw = serde_json::to_vec(&body).unwrap();
-    let timestamp = now_unix();
-    let response = server
-        .post("/api/v1/ucp/cart")
-        .add_header(
-            "signature",
-            sign_header(&agent, "/api/v1/ucp/cart", timestamp, &raw),
-        )
-        .add_header("timestamp", timestamp.to_string())
-        .bytes(raw.into())
-        .content_type("application/json")
-        .await;
-
-    response.assert_status_ok();
+#[tokio::test]
+async fn an_es256_signed_request_is_accepted() {
+    let agent = SigningKeyring::from_specs(
+        KeySpec {
+            kid: "agent-ec",
+            algorithm: KeyAlgorithm::Es256,
+            secret: P256_SECRET,
+        },
+        &[],
+    )
+    .unwrap();
+    let server = server(verifying_state(&[&agent]));
+    signed_post(&server, &agent, &cart_body(), COVERED, now_unix())
+        .await
+        .assert_status_ok();
 }
 
 #[tokio::test]
 async fn an_unsigned_request_is_rejected_when_verification_is_configured() {
-    let agent = SigningKeyring::from_seeds("agent-1", AGENT_SEED, &[]).unwrap();
-    let state = base_state().with_inbound_verification(verifier_for(&[&agent]));
-    let server = server(state);
+    let server = server(verifying_state(&[&agent()]));
+    let body = cart_body();
+    let response = server
+        .post(PATH)
+        .add_header("content-digest", content_digest(&body))
+        .bytes(body.into())
+        .content_type("application/json")
+        .await;
+    assert_eq!(
+        error_code(response).await,
+        (401, "signature_missing".to_string())
+    );
+}
 
-    let response = server.post("/api/v1/ucp/cart").json(&cart_body()).await;
-
-    assert_eq!(response.status_code().as_u16(), 401);
-    let json: serde_json::Value = response.json();
-    assert_eq!(json["code"], "SIGNATURE_REQUIRED");
+#[tokio::test]
+async fn a_body_that_does_not_match_its_digest_is_rejected() {
+    let agent = agent();
+    let server = server(verifying_state(&[&agent]));
+    let body = cart_body();
+    let signed = signed_post(&server, &agent, &body, COVERED, now_unix());
+    // Swap the body after signing; the digest header still describes the original.
+    let response = signed
+        .bytes(b"{\"merchant_id\":\"evil\"}".to_vec().into())
+        .await;
+    assert_eq!(
+        error_code(response).await,
+        (400, "digest_mismatch".to_string())
+    );
 }
 
 #[tokio::test]
 async fn a_forged_signature_is_rejected() {
-    let agent = SigningKeyring::from_seeds("agent-1", AGENT_SEED, &[]).unwrap();
     let rogue = SigningKeyring::from_seeds("agent-1", AGENT_SEED_B, &[]).unwrap();
-    let state = base_state().with_inbound_verification(verifier_for(&[&agent]));
-    let server = server(state);
+    let server = server(verifying_state(&[&agent()]));
+    let response = signed_post(&server, &rogue, &cart_body(), COVERED, now_unix()).await;
+    assert_eq!(
+        error_code(response).await,
+        (401, "signature_invalid".to_string())
+    );
+}
 
-    let raw = serde_json::to_vec(&cart_body()).unwrap();
-    let timestamp = now_unix();
-    let response = server
-        .post("/api/v1/ucp/cart")
-        .add_header(
-            "signature",
-            sign_header(&rogue, "/api/v1/ucp/cart", timestamp, &raw),
-        )
-        .add_header("timestamp", timestamp.to_string())
-        .bytes(raw.into())
-        .content_type("application/json")
-        .await;
-
-    assert_eq!(response.status_code().as_u16(), 401);
-    let json: serde_json::Value = response.json();
-    assert_eq!(json["code"], "SIGNATURE_INVALID");
+#[tokio::test]
+async fn a_signature_that_does_not_cover_the_body_is_rejected() {
+    let agent = agent();
+    let server = server(verifying_state(&[&agent]));
+    let response = signed_post(
+        &server,
+        &agent,
+        &cart_body(),
+        &["@method", "@authority", "@path"],
+        now_unix(),
+    )
+    .await;
+    assert_eq!(
+        error_code(response).await,
+        (401, "signature_invalid".to_string())
+    );
 }
 
 #[tokio::test]
 async fn a_replayed_request_outside_the_skew_window_is_rejected() {
-    let agent = SigningKeyring::from_seeds("agent-1", AGENT_SEED, &[]).unwrap();
-    let state = base_state().with_inbound_verification(verifier_for(&[&agent]));
-    let server = server(state);
-
-    let raw = serde_json::to_vec(&cart_body()).unwrap();
-    let timestamp = now_unix() - MAX_SIGNATURE_SKEW_SECONDS - 60;
-    let response = server
-        .post("/api/v1/ucp/cart")
-        .add_header(
-            "signature",
-            sign_header(&agent, "/api/v1/ucp/cart", timestamp, &raw),
-        )
-        .add_header("timestamp", timestamp.to_string())
-        .bytes(raw.into())
-        .content_type("application/json")
-        .await;
-
-    assert_eq!(response.status_code().as_u16(), 401);
-    let json: serde_json::Value = response.json();
-    assert_eq!(json["code"], "SIGNATURE_TIMESTAMP_STALE");
+    let agent = agent();
+    let server = server(verifying_state(&[&agent]));
+    let created = now_unix() - MAX_SIGNATURE_SKEW_SECONDS - 60;
+    let response = signed_post(&server, &agent, &cart_body(), COVERED, created).await;
+    assert_eq!(
+        error_code(response).await,
+        (401, "signature_invalid".to_string())
+    );
 }
 
 #[tokio::test]
-async fn an_unknown_kid_is_rejected() {
-    let agent = SigningKeyring::from_seeds("agent-1", AGENT_SEED, &[]).unwrap();
+async fn an_unknown_keyid_is_rejected() {
     let stranger = SigningKeyring::from_seeds("agent-unknown", AGENT_SEED_B, &[]).unwrap();
-    let state = base_state().with_inbound_verification(verifier_for(&[&agent]));
-    let server = server(state);
-
-    let raw = serde_json::to_vec(&cart_body()).unwrap();
-    let timestamp = now_unix();
-    let response = server
-        .post("/api/v1/ucp/cart")
-        .add_header(
-            "signature",
-            sign_header(&stranger, "/api/v1/ucp/cart", timestamp, &raw),
-        )
-        .add_header("timestamp", timestamp.to_string())
-        .bytes(raw.into())
-        .content_type("application/json")
-        .await;
-
-    assert_eq!(response.status_code().as_u16(), 401);
-    let json: serde_json::Value = response.json();
-    assert_eq!(json["code"], "SIGNATURE_UNKNOWN_KID");
+    let server = server(verifying_state(&[&agent()]));
+    let response = signed_post(&server, &stranger, &cart_body(), COVERED, now_unix()).await;
+    assert_eq!(
+        error_code(response).await,
+        (401, "key_not_found".to_string())
+    );
 }
 
 #[tokio::test]
 async fn both_kids_are_accepted_during_rotation() {
     let old = SigningKeyring::from_seeds("agent-2025", AGENT_SEED, &[]).unwrap();
     let new = SigningKeyring::from_seeds("agent-2026", AGENT_SEED_B, &[]).unwrap();
-    let state = base_state().with_inbound_verification(verifier_for(&[&old, &new]));
-    let server = server(state);
-
+    let server = server(verifying_state(&[&old, &new]));
     for keyring in [&old, &new] {
-        let raw = serde_json::to_vec(&cart_body()).unwrap();
-        let timestamp = now_unix();
-        let response = server
-            .post("/api/v1/ucp/cart")
-            .add_header(
-                "signature",
-                sign_header(keyring, "/api/v1/ucp/cart", timestamp, &raw),
-            )
-            .add_header("timestamp", timestamp.to_string())
-            .bytes(raw.into())
-            .content_type("application/json")
-            .await;
-        response.assert_status_ok();
+        signed_post(&server, keyring, &cart_body(), COVERED, now_unix())
+            .await
+            .assert_status_ok();
     }
+}
+
+#[tokio::test]
+async fn an_idempotency_key_header_must_be_covered() {
+    let agent = agent();
+    let server = server(verifying_state(&[&agent]));
+    let response = signed_post(&server, &agent, &cart_body(), COVERED, now_unix())
+        .add_header("idempotency-key", "added-by-an-intermediary")
+        .await;
+    assert_eq!(
+        error_code(response).await,
+        (401, "signature_invalid".to_string())
+    );
 }
 
 #[tokio::test]
 async fn unsigned_deployments_still_accept_unsigned_requests() {
     let server = server(base_state());
-    let response = server.post("/api/v1/ucp/cart").json(&cart_body()).await;
-    response.assert_status_ok();
+    server
+        .post(PATH)
+        .bytes(cart_body().into())
+        .content_type("application/json")
+        .await
+        .assert_status_ok();
 }
 
 #[tokio::test]
 async fn discovery_is_reachable_without_a_signature() {
-    let agent = SigningKeyring::from_seeds("agent-1", AGENT_SEED, &[]).unwrap();
-    let state = base_state().with_inbound_verification(verifier_for(&[&agent]));
-    let server = server(state);
-
+    let server = server(verifying_state(&[&agent()]));
     server.get("/.well-known/ucp").await.assert_status_ok();
     server.get("/health/live").await.assert_status_ok();
+}
+
+/// What a client does with a signed response: rebuild the components and check
+/// the signature against the JWK the orchestrator publishes in discovery.
+fn verify_response(response: &axum_test::TestResponse, orchestrator: &SigningKeyring) -> String {
+    let headers = response.headers();
+    let get = |name: &str| {
+        headers
+            .get(name)
+            .unwrap_or_else(|| panic!("signed response carries {name}"))
+            .to_str()
+            .unwrap()
+            .to_string()
+    };
+    let digest = get("content-digest");
+    assert_eq!(digest, content_digest(response.as_bytes()));
+    let components = MessageComponents::new()
+        .with("@status", response.status_code().as_str())
+        .with("content-digest", &digest)
+        .with("content-type", &get("content-type"));
+    verifier_for(&[orchestrator])
+        .verify_message(
+            &components,
+            &get("signature-input"),
+            &get("signature"),
+            &["@status".to_string(), "content-digest".to_string()],
+            now_unix(),
+        )
+        .expect("a client can verify the response with the discovery JWK")
 }
 
 #[tokio::test]
 async fn responses_are_signed_with_the_active_key() {
     let orchestrator = SigningKeyring::from_seeds("orch-2026-a", ORCH_SEED, &[]).unwrap();
-    let state = base_state().with_signing(orchestrator.clone());
-    let server = server(state);
+    let server = server(base_state().with_signing(orchestrator.clone()));
 
-    let response = server.post("/api/v1/ucp/cart").json(&cart_body()).await;
+    let response = server
+        .post(PATH)
+        .bytes(cart_body().into())
+        .content_type("application/json")
+        .await;
     response.assert_status_ok();
-
-    let header = response
-        .headers()
-        .get("signature")
-        .expect("signed response carries a Signature header")
-        .to_str()
-        .unwrap()
-        .to_string();
-    let timestamp: i64 = response
-        .headers()
-        .get("timestamp")
-        .expect("signed response carries a Timestamp header")
-        .to_str()
-        .unwrap()
-        .parse()
-        .expect("unix seconds");
-    let parsed = SignatureHeader::parse(&header).expect("parse");
-    assert_eq!(parsed.kid, "orch-2026-a");
-
-    let body = response.as_bytes().to_vec();
-    orchestrator
-        .verify(
-            &parsed.kid,
-            &response_signing_base(200, timestamp, &body),
-            &parsed.signature,
-        )
-        .expect("a client can verify the response with the discovery JWK");
+    assert_eq!(verify_response(&response, &orchestrator), "orch-2026-a");
 }
 
 #[tokio::test]
 async fn unsigned_deployments_do_not_add_signature_headers() {
     let server = server(base_state());
-    let response = server.post("/api/v1/ucp/cart").json(&cart_body()).await;
+    let response = server
+        .post(PATH)
+        .bytes(cart_body().into())
+        .content_type("application/json")
+        .await;
     response.assert_status_ok();
     assert!(response.headers().get("signature").is_none());
+    assert!(response.headers().get("signature-input").is_none());
 }
 
 #[tokio::test]
 async fn rejections_are_signed_too_so_clients_can_trust_them() {
-    let agent = SigningKeyring::from_seeds("agent-1", AGENT_SEED, &[]).unwrap();
     let orchestrator = SigningKeyring::from_seeds("orch-2026-a", ORCH_SEED, &[]).unwrap();
-    let state = base_state()
-        .with_inbound_verification(verifier_for(&[&agent]))
-        .with_signing(orchestrator.clone());
+    let state = verifying_state(&[&agent()]).with_signing(orchestrator.clone());
     let server = server(state);
 
-    let response = server.post("/api/v1/ucp/cart").json(&cart_body()).await;
+    let response = server
+        .post(PATH)
+        .bytes(cart_body().into())
+        .content_type("application/json")
+        .await;
     assert_eq!(response.status_code().as_u16(), 401);
-
-    let parsed = SignatureHeader::parse(
-        response
-            .headers()
-            .get("signature")
-            .expect("even a rejection is signed")
-            .to_str()
-            .unwrap(),
-    )
-    .expect("parse");
-    let timestamp: i64 = response
-        .headers()
-        .get("timestamp")
-        .unwrap()
-        .to_str()
-        .unwrap()
-        .parse()
-        .unwrap();
-    orchestrator
-        .verify(
-            &parsed.kid,
-            &response_signing_base(401, timestamp, response.as_bytes()),
-            &parsed.signature,
-        )
-        .expect("rejection signature verifies");
+    verify_response(&response, &orchestrator);
 }

@@ -66,7 +66,7 @@ Set `ENV=production` and provide (all required in production):
 - `PUBLIC_BASE_URL`: Public HTTPS base URL advertised in `/.well-known/ucp` discovery (for example `https://orchestrator.example.com`).
 - `DATABASE_URL`: PostgreSQL connection string for all durable state.
 - `AUTH_BEARER_TOKEN`: Secret token for API auth; clients must send `Authorization: Bearer <token>`. With `AUTH_MODE=jwt`, supply `AUTH_JWT_HS256_SECRET` instead.
-- `UCP_SIGNING_KEY_ID` and `UCP_SIGNING_KEY`: Ed25519 key material for UCP response signing. The server refuses to start without them.
+- `UCP_SIGNING_KEY_ID` and `UCP_SIGNING_KEY`: key material (Ed25519, or ES256 with `UCP_SIGNING_KEY_ALG=ES256`) for RFC 9421 UCP response signing. The server refuses to start without them.
 - All six downstream component base URLs (no trailing slash):
   - `CATALOG_BASE_URL` – catalog service (e.g. `http://catalog-service:8080`).
   - `PRICING_BASE_URL` – pricing service.
@@ -75,7 +75,7 @@ Set `ENV=production` and provide (all required in production):
   - `PAYMENT_BASE_URL` – payment service.
   - `RECEIPT_BASE_URL` – receipt service.
 
-Optional: `AUTH_TENANT_ID`, `AUTH_CALLER_ID` (default `prod`), `AP2_TRUSTED_ISSUERS`, `UCP_SIGNING_PREVIOUS_KEYS`, `UCP_AGENT_KEYS`, `FULFILLMENT_BASE_URL`, `PAYMENT_DELEGATION_BASE_URL`, `IDENTITY_LINK_BASE_URL`, `EMBEDDED_CHECKOUT_URL`. The last four gate capabilities: leave one unset and the matching endpoint returns `501 NOT_CONFIGURED` and the capability is not advertised in discovery.
+Optional: `AUTH_TENANT_ID`, `AUTH_CALLER_ID` (default `prod`), `AP2_TRUSTED_ISSUERS`, `UCP_SIGNING_KEY_ALG`, `UCP_SIGNING_PREVIOUS_KEYS`, `UCP_AGENT_KEYS`, `UCP_AGENT_JWKS`, `FULFILLMENT_BASE_URL`, `PAYMENT_DELEGATION_BASE_URL`, `IDENTITY_LINK_BASE_URL`, `EMBEDDED_CHECKOUT_URL`. The last four gate capabilities: leave one unset and the matching endpoint returns `501 NOT_CONFIGURED` and the capability is not advertised in discovery.
 
 Config is loaded from the ConfigMap and Secret in Kubernetes (see `configmap.yaml` and `secret.yaml`). Edit the ConfigMap to point each `*_BASE_URL` to your actual service endpoints.
 

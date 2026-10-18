@@ -16,62 +16,74 @@ See [consumer-integration.md](consumer-integration.md) for the high-level integr
   Authorization: Bearer <your-token>
   ```
 
-## Message signing (UCP `2026-04-08`)
+## Message signing (UCP, RFC 9421)
 
 Bearer auth answers *who is calling*; message signing answers *was this exact message altered*. The two are independent — a signed request still needs its `Authorization` header.
+
+Signatures follow [RFC 9421 HTTP Message Signatures](https://www.rfc-editor.org/rfc/rfc9421) with an [RFC 9530](https://www.rfc-editor.org/rfc/rfc9530) `Content-Digest`, as the UCP signatures specification requires. Ed25519 (`EdDSA`) and ECDSA P-256 (`ES256`) keys are supported in both directions. ES256 is the one algorithm every UCP verifier must accept, so operators whose counterparties are unknown should prefer it (`UCP_SIGNING_KEY_ALG=ES256`). The algorithm is always derived from the key named by `keyid`, never from the message.
+
+```mermaid
+sequenceDiagram
+    participant A as Agent / platform
+    participant O as Orchestrator
+    A->>O: GET /.well-known/ucp (unsigned)
+    O-->>A: profile + public JWKs
+    A->>O: POST /api/v1/... with Content-Digest, Signature-Input, Signature
+    O->>O: digest matches body, required components covered, keyid known, signature valid
+    O-->>A: response with Content-Digest, Signature-Input, Signature over @status
+```
 
 ### Verifying our responses
 
 When the deployment is configured with `UCP_SIGNING_KEY_ID` and `UCP_SIGNING_KEY` (mandatory in production), every response carries:
 
 ```http
-Signature: kid="orch-2026-a",alg="ed25519",sig="<base64url>"
-Timestamp: 1760000000
+Content-Digest: sha-256=:<base64 SHA-256 of the body>:
+Signature-Input: sig1=("@status" "content-digest" "content-type");created=1760000000;keyid="orch-2026-a"
+Signature: sig1=:<base64 signature>:
 ```
 
-The signature is Ed25519 over this exact byte string, newline-separated:
-
-```
-<http status code>
-<Timestamp header value>
-<lowercase hex SHA-256 of the response body>
-```
-
-Fetch the public key from `/.well-known/ucp` → `ucp.signing_keys`, an array of JWKs (`kty: OKP`, `crv: Ed25519`, `x` base64url). Match the `kid` from the header. A deployment with no signing material advertises **no** `signing_keys` and sets no `dev.ucp.security.signatures` capability flag — there is no default key, so an unsigned deployment is honest about being unsigned rather than publishing a key everybody shares.
+Bodyless responses cover only `"@status"`. Rebuild the RFC 9421 signature base from those components and verify it with the JWK whose `kid` matches `keyid`, fetched from `/.well-known/ucp` (`kty: OKP`/`crv: Ed25519`, or `kty: EC`/`crv: P-256`). A deployment with no signing material advertises **no** keys and sets no `dev.ucp.security.signatures` capability flag — there is no default key, so an unsigned deployment is honest about being unsigned rather than publishing a key everybody shares.
 
 ### Signing your requests
 
-If the operator has configured `UCP_AGENT_KEYS` with your public key, every `/api/v1` request must be signed; unsigned calls get `401`. Discovery and health endpoints stay open, because you must read discovery before you can sign anything.
+If the operator has configured your public key (`UCP_AGENT_JWKS` as a JWK Set, or `UCP_AGENT_KEYS` as Ed25519 `kid:x` pairs), every `/api/v1` request must be signed; unsigned calls get `401`. Discovery and health endpoints stay open, because you must read discovery before you can sign anything.
 
-Send the same two headers. The request base is:
+Use the label `sig1` and cover at least:
 
+| Component | When |
+|-----------|------|
+| `"@method"`, `"@authority"`, `"@path"` | Always |
+| `"@query"` | The request has a query string |
+| `"content-digest"`, `"content-type"` | The request has a body (send a matching `Content-Digest`) |
+| `"idempotency-key"`, `"ucp-agent"`, `"signature-agent"` | That header is present |
+
+```http
+POST /api/v1/ucp/cart HTTP/1.1
+Host: orchestrator.example.com
+Content-Type: application/json
+Content-Digest: sha-256=:<base64 SHA-256 of the body>:
+Signature-Input: sig1=("@method" "@authority" "@path" "content-digest" "content-type");created=1760000000;keyid="agent-1"
+Signature: sig1=:<base64 signature>:
 ```
-<HTTP method, uppercase>
-<path with query string>
-<Timestamp header value>
-<lowercase hex SHA-256 of the request body>
-```
 
-Timestamps must be within **300 seconds** of the orchestrator's clock in either direction, which is what stops a captured request from being replayed later.
+`created` is optional, but when present it must be within **300 seconds** of the orchestrator's clock; `expires`, when present, must not have passed. Replay protection otherwise comes from idempotency keys. A request may carry several signatures (for example one added by a proxy); it is accepted when any one of them verifies.
 
 ### Rotation
 
-Both directions are keyed by `kid`. To rotate ours, set the new key as `UCP_SIGNING_KEY_ID`/`UCP_SIGNING_KEY` and list the old one in `UCP_SIGNING_PREVIOUS_KEYS` (`kid:seed`); both appear in discovery until you drop the old entry. To rotate yours, ask the operator to list both `kid:public_key` pairs in `UCP_AGENT_KEYS`, switch, then have the old one removed.
+Both directions are keyed by `kid`. To rotate ours, set the new key as `UCP_SIGNING_KEY_ID`/`UCP_SIGNING_KEY` and list the old one in `UCP_SIGNING_PREVIOUS_KEYS` (`kid:seed`, or `kid:ES256:secret`); both appear in discovery until you drop the old entry. To rotate yours, ask the operator to list both keys, switch, then have the old one removed.
 
 ### Signature errors
 
-All arrive as `401` with a `code` field:
+Codes follow the UCP signatures specification:
 
-| Code | Meaning |
-|------|---------|
-| `SIGNATURE_REQUIRED` | No `Signature` header on a deployment that requires one. |
-| `SIGNATURE_TIMESTAMP_REQUIRED` | `Signature` present but `Timestamp` missing. |
-| `SIGNATURE_TIMESTAMP_INVALID` | `Timestamp` is not unix seconds. |
-| `SIGNATURE_TIMESTAMP_STALE` | Outside the 300s window — check your clock. |
-| `SIGNATURE_MALFORMED` | Header is not `kid=…,alg=…,sig=…`, or the signature is not base64. |
-| `SIGNATURE_ALGORITHM_UNSUPPORTED` | Only `ed25519` is accepted. |
-| `SIGNATURE_UNKNOWN_KID` | The `kid` is not configured on this deployment. |
-| `SIGNATURE_INVALID` | The signature does not match method, path, timestamp, and body. |
+| HTTP | Code | Meaning |
+|------|------|---------|
+| 401 | `signature_missing` | No `Signature-Input`/`Signature` on a deployment that requires them. |
+| 401 | `signature_invalid` | Verification failed, a required component is not covered, `created` is outside the 300s window, `expires` has passed, or a header is malformed. The `error` text says which. |
+| 401 | `key_not_found` | The `keyid` is not configured on this deployment. |
+| 400 | `digest_mismatch` | The body does not match the `sha-256` `Content-Digest`, or the digest is missing. |
+| 400 | `algorithm_unsupported` | An `alg` parameter disagrees with the key's algorithm. |
 
 ## Endpoints
 
@@ -324,9 +336,9 @@ The orchestrator is a middleware API layer. Operators configure where each downs
 | `GEO_BASE_URL` | Geo service base URL. |
 | `PAYMENT_BASE_URL` | Payment service base URL. |
 | `RECEIPT_BASE_URL` | Receipt service base URL. |
-| `UCP_SIGNING_KEY_ID`, `UCP_SIGNING_KEY` | Ed25519 signing material; production will not start without them. |
+| `UCP_SIGNING_KEY_ID`, `UCP_SIGNING_KEY` | Signing material (Ed25519 seed, or P-256 scalar with `UCP_SIGNING_KEY_ALG=ES256`); production will not start without them. |
 
-Optional: `AUTH_TENANT_ID`, `AUTH_CALLER_ID` (default `prod` for static mode), `AP2_TRUSTED_ISSUERS` (comma-separated allowlist for strict AP2 issuer checks and JWT issuer checks), `UCP_SIGNING_PREVIOUS_KEYS` and `UCP_AGENT_KEYS` (see [Message signing](#message-signing-ucp-2026-04-08)), `FULFILLMENT_BASE_URL`, `PAYMENT_DELEGATION_BASE_URL`, `IDENTITY_LINK_BASE_URL`, and `EMBEDDED_CHECKOUT_URL`. Capabilities backed by an optional service are advertised only when that service is configured; the endpoint returns `501` with `code: NOT_CONFIGURED` otherwise. Config can be loaded from a file (`CONFIG_FILE` or `config.yaml`) with env overrides.
+Optional: `AUTH_TENANT_ID`, `AUTH_CALLER_ID` (default `prod` for static mode), `AP2_TRUSTED_ISSUERS` (comma-separated allowlist for strict AP2 issuer checks and JWT issuer checks), `UCP_SIGNING_KEY_ALG`, `UCP_SIGNING_PREVIOUS_KEYS`, `UCP_AGENT_KEYS`, and `UCP_AGENT_JWKS` (see [Message signing](#message-signing-ucp-rfc-9421)), `FULFILLMENT_BASE_URL`, `PAYMENT_DELEGATION_BASE_URL`, `IDENTITY_LINK_BASE_URL`, and `EMBEDDED_CHECKOUT_URL`. Capabilities backed by an optional service are advertised only when that service is configured; the endpoint returns `501` with `code: NOT_CONFIGURED` otherwise. Config can be loaded from a file (`CONFIG_FILE` or `config.yaml`) with env overrides.
 
 AP2 note: this release aligns with AP2 **0.2** (closed mandates plus optional open/HNP mandates with amount and currency constraints). Strict mode remains fail-closed.
 

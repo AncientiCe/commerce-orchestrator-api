@@ -105,10 +105,12 @@ Configure the server with these (see also [Consumption guide – Config referenc
 | `GEO_BASE_URL` | Yes | Geo service base URL. | `http://geo-service:8080` |
 | `PAYMENT_BASE_URL` | Yes | Payment service base URL. | `http://payment-service:8080` |
 | `RECEIPT_BASE_URL` | Yes | Receipt service base URL. | `http://receipt-service:8080` |
-| `UCP_SIGNING_KEY_ID` | Yes | Key id advertised in discovery and sent as `kid` in the `Signature` header. | `orch-2026-a` |
-| `UCP_SIGNING_KEY` | Yes | Base64 32-byte Ed25519 seed for the active signing key. Production refuses to start without it. | (secret) |
-| `UCP_SIGNING_PREVIOUS_KEYS` | No | Retired keys still published for verification during rotation, `kid:seed` comma-separated. | `orch-2025-b:<seed>` |
-| `UCP_AGENT_KEYS` | No | Agent public keys, `kid:base64-public-key` comma-separated. Setting this makes inbound signatures **mandatory** on `/api/v1`. | `agent-1:<public key>` |
+| `UCP_SIGNING_KEY_ID` | Yes | Key id advertised in discovery and sent as `keyid` in `Signature-Input`. | `orch-2026-a` |
+| `UCP_SIGNING_KEY` | Yes | Base64 32 bytes for the active signing key: an Ed25519 seed, or a P-256 private scalar with `UCP_SIGNING_KEY_ALG=ES256`. Production refuses to start without it. | (secret) |
+| `UCP_SIGNING_KEY_ALG` | No | `EdDSA` (default) or `ES256`. ES256 is the algorithm every UCP verifier must support. | `ES256` |
+| `UCP_SIGNING_PREVIOUS_KEYS` | No | Retired keys still published for verification during rotation, `kid:seed` or `kid:ES256:secret`, comma-separated. | `orch-2025-b:<seed>` |
+| `UCP_AGENT_JWKS` | No | Agent public keys as a JWK Set JSON (`{"keys":[...]}`, Ed25519 or P-256), as agents publish them in their UCP profile. Setting this or `UCP_AGENT_KEYS` makes inbound RFC 9421 signatures **mandatory** on `/api/v1`. | `{"keys":[{"kid":"agent-1","kty":"EC",...}]}` |
+| `UCP_AGENT_KEYS` | No | Ed25519 agent public keys, `kid:base64-public-key` comma-separated. | `agent-1:<public key>` |
 | `PAYMENT_DELEGATION_BASE_URL` | No | PSP delegation service. Without it `POST /api/v1/acp/delegate_payment` returns `501` and the ACP `delegate_payment` service is not advertised. | `http://psp-delegation:8080` |
 | `IDENTITY_LINK_BASE_URL` | No | Identity system for agent identity linking. Without it identity linking returns `501` and `dev.ucp.common.identity_linking` is not advertised. | `http://identity:8080` |
 | `EMBEDDED_CHECKOUT_URL` | No | Your hosted embedded checkout page. Handoff links point here with `session`, `expires`, `kid` and `token` query parameters; verify `token` as an Ed25519 signature over `ucp-embedded-checkout:{session}:{expires}` using the JWK named by `kid` in `/.well-known/ucp`. Requires signing keys. | `https://shop.example.com/checkout/embedded` |

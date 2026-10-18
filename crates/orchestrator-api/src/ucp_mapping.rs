@@ -351,11 +351,16 @@ pub struct UcpSection {
 pub struct SigningKeyDescriptor {
     pub kid: String,
     pub kty: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub crv: Option<String>,
+    /// JOSE algorithm. Optional on JWKs we read; always set on the ones we publish.
+    #[serde(default)]
     pub alg: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub x: Option<String>,
+    /// Second coordinate of an EC (P-256) public key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub y: Option<String>,
     #[serde(rename = "use", skip_serializing_if = "Option::is_none")]
     pub use_: Option<String>,
 }

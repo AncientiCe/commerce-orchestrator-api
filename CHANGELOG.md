@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **BREAKING — UCP message signatures now follow RFC 9421.** The previous `Signature: kid=…,alg=…,sig=…` + `Timestamp` scheme was never what the UCP signatures specification defines (in `2026-04-08` or since), so no conformant platform could verify it. Requests and responses now use `Signature-Input` / `Signature` (label `sig1`) over the required components with an RFC 9530 `Content-Digest`; any one valid signature authenticates; error codes are UCP's (`signature_missing`, `signature_invalid`, `key_not_found`, `digest_mismatch`, `algorithm_unsupported`) with UCP's HTTP statuses. Existing Ed25519 keys keep working unchanged.
+
+### Added
+
+- **ES256 signing and verification** alongside Ed25519. ES256 is the one algorithm every UCP verifier must support: set `UCP_SIGNING_KEY_ALG=ES256` (P-256 private scalar in `UCP_SIGNING_KEY`), and previous keys may be `kid:ES256:secret`.
+- **`UCP_AGENT_JWKS`**: configure agent public keys as an RFC 7517 JWK Set (Ed25519 or P-256), the shape agents publish in their UCP profile. `UCP_AGENT_KEYS` (`kid:x` Ed25519 pairs) still works and the two can be combined.
+- `ucp_signature_verify` operation latency/count metrics and `ucp_signature_rejected_{coverage,digest,stale,…}_total` rejection counters.
+
 ### Security
 
 - **Embedded checkout handoff links are no longer forgeable.** The token was an HMAC keyed by an undocumented `UCP_SIGNING_SECRET` that defaulted to an empty string, so anyone could mint a valid one, and the link pointed at `/api/v1/ucp/checkout/:id/embedded`, a route that never existed. Links now target the merchant's hosted page (`EMBEDDED_CHECKOUT_URL`) and the token is an Ed25519 signature by the active discovery key over `ucp-embedded-checkout:{session}:{expires}`. Without a hosted page or signing keys the `embedded` transport is not advertised and `embedded-link` returns `501 NOT_CONFIGURED`.

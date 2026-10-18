@@ -41,7 +41,7 @@ The Commerce Orchestrator is a middleware API layer. Your clients call its REST 
 - **Provider connectivity:** Per-provider outbound auth (bearer, API key, OAuth2 client-credentials, mTLS), retries restricted to retryable statuses with `Retry-After` and jitter, and a per-provider circuit breaker.
 - **Reliability:** Outbox, inbox, and dead-letter primitives with a background outbox processor that delivers webhooks and drains on shutdown; operational endpoints to process outbox, list/replay dead-letter, and run reconciliation.
 - **Auth and multi-tenancy:** Bearer token auth, tenant and scope checks; idempotency and state scoped by tenant.
-- **Message signing:** Ed25519 UCP request verification and response signing with `kid`-based rotation; production refuses to start without real key material.
+- **Message signing:** RFC 9421 HTTP Message Signatures with `Content-Digest` (Ed25519 or ES256) for UCP request verification and response signing, with `kid`-based rotation; production refuses to start without real key material.
 - **Observability:** Request IDs, tracing, Prometheus metrics; health probes for liveness and readiness; a starter Grafana dashboard.
 - **Deployment:** Docker image, Kubernetes manifests (Deployment, Service, migration Job, HPA, PDB, NetworkPolicy, ServiceMonitor, ConfigMap, Secret) on a PostgreSQL, multi-replica contract.
 
@@ -110,8 +110,8 @@ Details: [deploy/README.md](deploy/README.md).
 
 ## Security
 
-- Production mode (`ENV=production`) requires `PUBLIC_BASE_URL`, a Bearer token, and Ed25519 signing key material (`UCP_SIGNING_KEY_ID`, `UCP_SIGNING_KEY`); the server refuses to start without them. Never log tokens or raw payment data.
-- Set `UCP_AGENT_KEYS` to require and verify inbound agent signatures on `/api/v1`; responses are signed with the active key and old keys stay verifiable by `kid` during rotation.
+- Production mode (`ENV=production`) requires `PUBLIC_BASE_URL`, a Bearer token, and signing key material (`UCP_SIGNING_KEY_ID`, `UCP_SIGNING_KEY`); the server refuses to start without them. Never log tokens or raw payment data.
+- Set `UCP_AGENT_JWKS` (or `UCP_AGENT_KEYS`) to require and verify inbound RFC 9421 agent signatures on `/api/v1`; responses are signed with the active key and old keys stay verifiable by `kid` during rotation.
 - Use [redaction helpers](SECURITY.md) for any logging of checkout/payment payloads.
 - Report vulnerabilities privately; see [SECURITY.md](SECURITY.md).
 

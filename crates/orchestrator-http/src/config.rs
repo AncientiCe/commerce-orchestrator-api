@@ -1,7 +1,7 @@
 //! Server configuration: one source of truth for server, auth, persistence, and all downstream component APIs.
 //! Load from config file (file-first) with env overrides; fail-fast validation in production.
 
-use orchestrator_api::{SigningKeyring, VerifyingKeyring};
+use orchestrator_api::{KeyAlgorithm, KeySpec, SigningKeyring, VerifyingKeyring};
 use std::path::Path;
 use std::time::Duration;
 
@@ -633,19 +633,30 @@ pub struct ServerConfig {
 /// production refuses to start until real material is supplied.
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct SigningSection {
-    /// Key id advertised in discovery and sent in the `Signature` header.
+    /// Key id advertised in discovery and sent as `keyid` in `Signature-Input`.
     #[serde(default)]
     pub key_id: Option<String>,
-    /// Base64-encoded 32-byte Ed25519 seed for the active key.
+    /// Base64-encoded 32 bytes for the active key: an Ed25519 seed, or a P-256
+    /// private scalar when `key_algorithm` is `ES256`.
     #[serde(default)]
     pub key: Option<String>,
-    /// Superseded keys still trusted for verification, as `kid:seed` pairs.
+    /// `EdDSA` (default) or `ES256`. ES256 is the one algorithm every UCP
+    /// verifier must support.
+    #[serde(default)]
+    pub key_algorithm: Option<String>,
+    /// Superseded keys still published for verification, as `kid:secret`
+    /// (Ed25519) or `kid:ALG:secret` entries.
     #[serde(default)]
     pub previous_keys: Vec<String>,
-    /// Public keys of agents whose requests we require to be signed, as
-    /// `kid:base64-public-key` pairs. Empty means inbound signatures are optional.
+    /// Ed25519 public keys of agents whose requests we require to be signed, as
+    /// `kid:base64-public-key` pairs.
     #[serde(default)]
     pub agent_keys: Vec<String>,
+    /// Agent public keys as an RFC 7517 JWK Set (Ed25519 or P-256), the shape
+    /// an agent publishes in its UCP profile `keys[]`. With `agent_keys`, empty
+    /// means inbound signatures are optional.
+    #[serde(default)]
+    pub agent_jwks: Option<String>,
 }
 
 impl SigningSection {
@@ -660,6 +671,18 @@ impl SigningSection {
             let t = v.trim().to_string();
             if !t.is_empty() {
                 self.key = Some(t);
+            }
+        }
+        if let Ok(v) = std::env::var("UCP_SIGNING_KEY_ALG") {
+            let t = v.trim().to_string();
+            if !t.is_empty() {
+                self.key_algorithm = Some(t);
+            }
+        }
+        if let Ok(v) = std::env::var("UCP_AGENT_JWKS") {
+            let t = v.trim().to_string();
+            if !t.is_empty() {
+                self.agent_jwks = Some(t);
             }
         }
         if let Ok(v) = std::env::var("UCP_SIGNING_PREVIOUS_KEYS") {
@@ -691,26 +714,32 @@ impl SigningSection {
                 return Err("UCP_SIGNING_KEY_ID is required when UCP_SIGNING_KEY is set".to_string())
             }
         };
+        let algorithm = match self.key_algorithm.as_deref().filter(|s| !s.is_empty()) {
+            Some(name) => KeyAlgorithm::parse(name).map_err(|e| e.to_string())?,
+            None => KeyAlgorithm::EdDsa,
+        };
         let previous = self
             .previous_keys
             .iter()
-            .map(|pair| {
-                pair.split_once(':')
-                    .map(|(kid, seed)| (kid.trim(), seed.trim()))
-                    .ok_or_else(|| {
-                        format!("previous signing key '{pair}' must be in 'kid:seed' form")
-                    })
-            })
+            .map(|entry| parse_previous_key(entry))
             .collect::<Result<Vec<_>, _>>()?;
-        SigningKeyring::from_seeds(key_id, key, &previous)
-            .map(Some)
-            .map_err(|e| e.to_string())
+        SigningKeyring::from_specs(
+            KeySpec {
+                kid: key_id,
+                algorithm,
+                secret: key,
+            },
+            &previous,
+        )
+        .map(Some)
+        .map_err(|e| e.to_string())
     }
 
     /// Build the inbound verification keyring, or `None` when agent signatures
     /// are not required by this deployment.
     pub fn to_verifying_keyring(&self) -> Result<Option<VerifyingKeyring>, String> {
-        if self.agent_keys.is_empty() {
+        let jwks = self.agent_jwks.as_deref().filter(|s| !s.trim().is_empty());
+        if self.agent_keys.is_empty() && jwks.is_none() {
             return Ok(None);
         }
         let parsed = self
@@ -724,10 +753,34 @@ impl SigningSection {
                     })
             })
             .collect::<Result<Vec<_>, _>>()?;
-        VerifyingKeyring::from_public_keys(&parsed)
-            .map(Some)
-            .map_err(|e| e.to_string())
+        let pairs = VerifyingKeyring::from_public_keys(&parsed).map_err(|e| e.to_string())?;
+        let keyring = match jwks {
+            Some(json) => pairs
+                .merge(
+                    VerifyingKeyring::from_jwks(json)
+                        .map_err(|e| format!("UCP_AGENT_JWKS: {e}"))?,
+                )
+                .map_err(|e| e.to_string())?,
+            None => pairs,
+        };
+        Ok(Some(keyring))
     }
+}
+
+/// `kid:secret` (Ed25519) or `kid:ALG:secret`.
+fn parse_previous_key(entry: &str) -> Result<KeySpec<'_>, String> {
+    let malformed =
+        || format!("previous signing key '{entry}' must be 'kid:seed' or 'kid:ALG:secret'");
+    let (kid, rest) = entry.split_once(':').ok_or_else(malformed)?;
+    let (algorithm, secret) = match rest.split_once(':') {
+        Some((alg, secret)) => (KeyAlgorithm::parse(alg).map_err(|e| e.to_string())?, secret),
+        None => (KeyAlgorithm::EdDsa, rest),
+    };
+    Ok(KeySpec {
+        kid: kid.trim(),
+        algorithm,
+        secret: secret.trim(),
+    })
 }
 
 fn split_pairs(value: &str) -> Vec<String> {
@@ -1203,6 +1256,74 @@ mod tests {
             .expect("valid")
             .expect("keyring");
         assert_eq!(keyring.kids(), vec!["agent-1"]);
+    }
+
+    /// Base64url P-256 private scalar, tests only.
+    const TEST_P256_SECRET: &str = "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA";
+
+    #[test]
+    fn an_es256_active_key_is_published_as_an_ec_jwk() {
+        let section = SigningSection {
+            key_id: Some("orch-ec".into()),
+            key: Some(TEST_P256_SECRET.into()),
+            key_algorithm: Some("ES256".into()),
+            ..Default::default()
+        };
+        let jwk = &section
+            .to_keyring()
+            .unwrap()
+            .expect("keyring")
+            .public_jwks()[0];
+        assert_eq!((jwk.kty.as_str(), jwk.alg.as_str()), ("EC", "ES256"));
+    }
+
+    #[test]
+    fn an_unknown_signing_algorithm_is_a_configuration_error() {
+        let section = SigningSection {
+            key_id: Some("orch".into()),
+            key: Some(TEST_SEED.into()),
+            key_algorithm: Some("RS256".into()),
+            ..Default::default()
+        };
+        assert!(section.to_keyring().unwrap_err().contains("RS256"));
+    }
+
+    #[test]
+    fn previous_keys_may_name_their_algorithm() {
+        let section = SigningSection {
+            key_id: Some("orch-2026-b".into()),
+            key: Some(OTHER_TEST_SEED.into()),
+            previous_keys: vec![format!("orch-2026-a:ES256:{TEST_P256_SECRET}")],
+            ..Default::default()
+        };
+        let jwks = section
+            .to_keyring()
+            .unwrap()
+            .expect("keyring")
+            .public_jwks();
+        assert_eq!(jwks[1].alg, "ES256");
+    }
+
+    #[test]
+    fn agent_jwks_build_an_inbound_verifying_keyring_alongside_kid_pairs() {
+        let ed = SigningKeyring::from_seeds("agent-ed", TEST_SEED, &[]).unwrap();
+        let x = ed.public_jwks()[0].x.clone().unwrap();
+        let ec = SigningKeyring::from_specs(
+            orchestrator_api::KeySpec {
+                kid: "agent-ec",
+                algorithm: orchestrator_api::KeyAlgorithm::Es256,
+                secret: TEST_P256_SECRET,
+            },
+            &[],
+        )
+        .unwrap();
+        let section = SigningSection {
+            agent_keys: vec![format!("agent-ed:{x}")],
+            agent_jwks: Some(serde_json::json!({ "keys": ec.public_jwks() }).to_string()),
+            ..Default::default()
+        };
+        let keyring = section.to_verifying_keyring().unwrap().expect("keyring");
+        assert_eq!(keyring.kids(), vec!["agent-ed", "agent-ec"]);
     }
 
     #[test]
