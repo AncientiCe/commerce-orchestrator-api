@@ -5,7 +5,7 @@
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
-use serde_yaml::Value;
+use serde_norway::Value;
 
 fn deploy_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -18,7 +18,7 @@ fn manifest(name: &str) -> Value {
     let path = deploy_dir().join("kubernetes").join(name);
     let raw =
         std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {}", path.display(), e));
-    serde_yaml::from_str(&raw).unwrap_or_else(|e| panic!("parse {}: {}", path.display(), e))
+    serde_norway::from_str(&raw).unwrap_or_else(|e| panic!("parse {}: {}", path.display(), e))
 }
 
 fn pod_spec(workload: &Value) -> &Value {

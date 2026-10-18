@@ -880,7 +880,7 @@ impl ServerConfig {
             if p.exists() {
                 let s =
                     std::fs::read_to_string(p).map_err(|e| format!("read config file: {}", e))?;
-                serde_yaml::from_str(&s).map_err(|e| format!("parse config: {}", e))?
+                serde_norway::from_str(&s).map_err(|e| format!("parse config: {}", e))?
             } else {
                 Self::default()
             }
