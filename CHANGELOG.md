@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- RFC 9421 dictionary-member signature verification (`;key=`), a prerequisite for the current Web Bot Auth wire format. Key discovery and Web Bot Auth identity policy remain separate.
+
 ### Security
 
 - Update crypto-bigint, ctutils, rustls-webpki, and webpki-roots to resolve RUSTSEC-2026-0387, RUSTSEC-2026-0385, RUSTSEC-2026-0382, and RUSTSEC-2026-0381.

@@ -487,12 +487,25 @@ fn signature_base(
 ) -> Result<String, SignatureError> {
     let mut base = String::new();
     for name in covered {
-        let value = components.get(name).ok_or_else(|| {
+        let (field, key) = component_selector(name)?;
+        let raw = components.get(field).ok_or_else(|| {
             SignatureError::Malformed(format!(
                 "covered component '{name}' is absent from the message"
             ))
         })?;
-        base.push_str(&format!("\"{name}\": {value}\n"));
+        let (identifier, value) = if let Some(key) = key {
+            let value = parse_dictionary(raw)?
+                .into_iter()
+                .find(|(member, _)| member == key)
+                .map(|(_, value)| value)
+                .ok_or_else(|| {
+                    SignatureError::Malformed("selected dictionary member is absent".into())
+                })?;
+            (name.to_string(), value)
+        } else {
+            (format!("\"{field}\""), raw.to_string())
+        };
+        base.push_str(&format!("{identifier}: {value}\n"));
     }
     base.push_str(&format!("\"@signature-params\": {params}"));
     Ok(base)
@@ -692,8 +705,8 @@ struct SignatureParams {
 }
 
 /// Parse `("@method" "@path");created=1;keyid="k"` — the subset of RFC 8941
-/// inner lists RFC 9421 uses. Component parameters (`;sf`, `;key=`) are refused
-/// rather than silently ignored, because ignoring them would change the base.
+/// inner lists RFC 9421 uses, including dictionary member selectors (`;key=`).
+/// Other component parameters are rejected rather than silently ignored.
 fn parse_signature_params(raw: &str) -> Result<SignatureParams, SignatureError> {
     let malformed = |reason: &str| SignatureError::Malformed(reason.to_string());
     let rest = raw
@@ -706,13 +719,15 @@ fn parse_signature_params(raw: &str) -> Result<SignatureParams, SignatureError> 
     let (list, params) = (&rest[..close], &rest[close + 1..]);
     let mut covered = Vec::new();
     for item in list.split_whitespace() {
-        let name = item
-            .strip_prefix('"')
-            .and_then(|i| i.strip_suffix('"'))
-            .ok_or_else(|| {
-                malformed("covered components must be quoted strings without parameters")
-            })?;
-        covered.push(name.to_string());
+        if !item.starts_with('"') {
+            return Err(malformed("covered components must be quoted strings"));
+        }
+        let (name, key) = component_selector(item)?;
+        if key.is_some() {
+            covered.push(item.to_string());
+        } else {
+            covered.push(name.to_string());
+        }
     }
     let mut parsed = SignatureParams {
         covered,
@@ -748,6 +763,42 @@ fn parse_signature_params(raw: &str) -> Result<SignatureParams, SignatureError> 
         return Err(malformed("keyid parameter is required"));
     }
     Ok(parsed)
+}
+
+/// Resolve a plain component or an RFC 9421 dictionary-member selector.
+/// Unsupported parameters fail closed rather than changing the signature base.
+fn component_selector(identifier: &str) -> Result<(&str, Option<&str>), SignatureError> {
+    let malformed = || SignatureError::Malformed("unsupported component selector".into());
+    if !identifier.starts_with('"') {
+        if identifier.contains([';', '"']) || identifier.is_empty() {
+            return Err(malformed());
+        }
+        return Ok((identifier, None));
+    }
+    let rest = &identifier[1..];
+    let close = rest.find('"').ok_or_else(malformed)?;
+    let field = &rest[..close];
+    if field.is_empty() || field.contains(['\\', ';']) {
+        return Err(malformed());
+    }
+    let suffix = &rest[close + 1..];
+    if suffix.is_empty() {
+        return Ok((field, None));
+    }
+    let key = suffix
+        .strip_prefix(";key=\"")
+        .and_then(|v| v.strip_suffix('"'))
+        .filter(|key| {
+            !key.is_empty()
+                && key
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b"_.*-".contains(&b))
+        })
+        .ok_or_else(malformed)?;
+    if field.starts_with('@') {
+        return Err(malformed());
+    }
+    Ok((field, Some(key)))
 }
 
 /// Split an RFC 8941 dictionary into `(key, raw member value)` pairs, honouring
