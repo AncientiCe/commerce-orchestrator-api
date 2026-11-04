@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- Update crypto-bigint, ctutils, rustls-webpki, and webpki-roots to resolve RUSTSEC-2026-0387, RUSTSEC-2026-0385, RUSTSEC-2026-0382, and RUSTSEC-2026-0381.
+
 ## [0.10.0] - 2026-10-18
 
 "Standards-Current": the orchestrator now speaks the current releases of the protocols it claims, and proves it. UCP moves to **`2026-08-25`**, with discovery, fulfillment, cart, checkout, and order bodies validated in tests against the official UCP JSON Schemas. UCP messages are signed with RFC 9421 HTTP Message Signatures. A2A **`1.0`** is spoken natively through an Agent Card and `SendMessage`. ACP `2026-04-17`, AP2 `0.2`, and MCP `2026-07-28` remain current.
