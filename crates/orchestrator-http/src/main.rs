@@ -261,6 +261,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         None => state,
     };
 
+    let state = if server_config.server.web_bot_auth_directory_urls.is_empty() {
+        state
+    } else {
+        let directories = orchestrator_http::web_bot_auth::HttpsDirectories::new(
+            server_config.server.web_bot_auth_directory_urls.clone(),
+        )?;
+        state.with_web_bot_auth(Arc::new(orchestrator_http::web_bot_auth::WebBotAuth::new(
+            Arc::new(directories),
+        )))
+    };
+
     let router = app::app();
     let addr: SocketAddr = server_config.server.bind_addr.parse()?;
     tracing::info!(

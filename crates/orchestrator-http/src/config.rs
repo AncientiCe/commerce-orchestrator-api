@@ -895,6 +895,9 @@ impl OutboxSection {
 
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct ServerSection {
+    /// Optional HTTPS key directories; nonempty enables Web Bot Auth on /api/v1/.
+    #[serde(default)]
+    pub web_bot_auth_directory_urls: Vec<String>,
     #[serde(default = "default_bind_addr")]
     pub bind_addr: String,
     #[serde(default = "default_log_level")]
@@ -1038,6 +1041,14 @@ impl ServerConfig {
             if !t.is_empty() {
                 self.server.public_base_url = Some(t);
             }
+        }
+        if let Ok(v) = std::env::var("WEB_BOT_AUTH_DIRECTORY_URLS") {
+            self.server.web_bot_auth_directory_urls = v
+                .split(',')
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+                .map(str::to_string)
+                .collect();
         }
         if let Ok(v) = std::env::var("EMBEDDED_CHECKOUT_URL") {
             let t = v.trim().to_string();

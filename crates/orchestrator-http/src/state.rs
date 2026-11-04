@@ -8,6 +8,7 @@ use std::sync::Arc;
 #[derive(Clone)]
 pub struct AppState {
     pub facade: OrchestratorFacade,
+    pub web_bot_auth: Option<Arc<crate::web_bot_auth::WebBotAuth>>,
     pub authn: Option<Arc<dyn AuthnResolver>>,
     /// When true, allow unauthenticated dev context when authn is None. When false (production), require authn and reject missing/invalid tokens.
     pub allow_dev_auth: bool,
@@ -31,9 +32,15 @@ pub struct AppState {
 }
 
 impl AppState {
+    pub fn with_web_bot_auth(mut self, auth: Arc<crate::web_bot_auth::WebBotAuth>) -> Self {
+        self.web_bot_auth = Some(auth);
+        self
+    }
+
     pub fn new(facade: OrchestratorFacade) -> Self {
         Self {
             facade,
+            web_bot_auth: None,
             authn: None,
             allow_dev_auth: true,
             shutdown_flag: Arc::new(AtomicBool::new(false)),

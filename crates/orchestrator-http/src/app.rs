@@ -21,6 +21,10 @@ pub fn signed_router(router: Router<AppState>, state: AppState) -> Router<AppSta
     router
         .layer(middleware::from_fn_with_state(
             state.clone(),
+            crate::web_bot_auth::verify_request,
+        ))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
             crate::signing::verify_request_signature,
         ))
         .layer(middleware::from_fn_with_state(

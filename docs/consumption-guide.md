@@ -414,3 +414,18 @@ AP2 note: this release aligns with AP2 **0.2** (closed mandates plus optional op
 
 - Deploy the orchestrator using [deploy/README.md](../deploy/README.md) and configure all six component base URLs so the service can call your catalog, pricing, tax, geo, payment, and receipt APIs.
 - In production, set `ENV=production`, `PUBLIC_BASE_URL`, `DATABASE_URL`, and auth variables for your selected `AUTH_MODE` (`AUTH_BEARER_TOKEN` or `AUTH_JWT_HS256_SECRET`).
+
+
+## Web Bot Auth agent identity
+
+Web Bot Auth is an optional identity layer based on [draft-ietf-webbotauth-httpsig-protocol-01](https://datatracker.ietf.org/doc/html/draft-ietf-webbotauth-httpsig-protocol-01), a work-in-progress specification. It identifies an agent operator; customer consent, tenant authorization and payment authority remain separate checks.
+
+Configure `server.web_bot_auth_directory_urls` as a list of HTTPS key-directory URLs, or set the comma-separated environment override `WEB_BOT_AUTH_DIRECTORY_URLS`. An empty list disables this layer. With it enabled, all `/api/v1/` requests need Web Bot Auth in addition to configured bearer/UCP checks. Discovery and health stay open. Deploy behind HTTPS, configure `PUBLIC_BASE_URL`, and preserve the public Host and request path at proxies.
+
+Requests carry dictionary-form `Signature-Agent`, `Signature-Input` and `Signature`. Each accepted signature covers its own Signature-Agent dictionary member and either `@authority` or `@target-uri`. Its tag is `web-bot-auth`, its keyid is the JWK SHA-256 thumbprint, and created/expires are required. The local freshness policy permits at most 300 seconds of clock skew. Expired/not-yet-valid keys are rejected. Ed25519 and P-256 are supported. A supplied Content-Digest must match the body. Applications receive `WebBotIdentity` in request extensions.
+
+Discovery fetches the configured HTTPS URL directly. Redirects, URL credentials, queries in configured URLs, private/special addresses and responses over 64 KiB are rejected. DNS is checked before connecting and pinned for TLS. Proxies are disabled. DNS/connect/read operations have timeouts. Cache lifetime follows max-age capped at 300 seconds; no-store/no-cache are honored. Key removal takes effect after cache expiry. Caches hold at most 64 URLs and each response at most 128 keys. Configure only operator-controlled directory URLs. Unknown URLs fail without an outbound request.
+
+Missing/failed signatures return 403 with `Accept-Signature`. A valid signature proves control of a key published at the resolved URL; it grants no commerce scopes. Authority-only signatures remain reusable until expiry. For request-specific replay resistance, sign method, path/query, body digest and idempotency key, and use existing commerce idempotency. This layer has no durable nonce registry.
+
+Metrics use orchestrator-observability: `web_bot_auth_verified_total`, `web_bot_auth_rejected_total`, and counts/errors/latency for `web_bot_auth_verify` and `web_bot_auth_discovery`. Credentials and keys are not logged. RSA, legacy bare-string Signature-Agent, directory redistribution proofs and Signed-Agent-Metadata policy are outside this profile.

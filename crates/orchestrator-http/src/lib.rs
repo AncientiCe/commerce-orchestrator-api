@@ -19,3 +19,5 @@ pub use config::{
 };
 pub use error::ApiError;
 pub use state::AppState;
+
+pub mod web_bot_auth;
