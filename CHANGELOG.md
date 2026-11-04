@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-11-04
+
 ### Added
 
 - Opt-in Web Bot Auth agent identity with bounded HTTPS key discovery, thumbprint key selection, HTTP verification, configuration and metrics.
@@ -277,6 +279,7 @@ Recorded in the [conformance matrix](https://github.com/AncientiCe/commerce-orch
 
 - File-backed persistence is directory-based JSON; not suitable for high concurrency without external locking.
 
+[0.11.0]: https://github.com/AncientiCe/commerce-orchestrator-api/releases/tag/v0.11.0
 [0.10.0]: https://github.com/AncientiCe/commerce-orchestrator-api/releases/tag/v0.10.0
 [0.9.0]: https://github.com/AncientiCe/commerce-orchestrator-api/releases/tag/v0.9.0
 [0.8.0]: https://github.com/AncientiCe/commerce-orchestrator-api/releases/tag/v0.8.0
