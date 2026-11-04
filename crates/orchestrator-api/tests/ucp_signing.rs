@@ -433,3 +433,18 @@ fn a_known_key_type_with_broken_material_is_refused() {
     let jwks = r#"{"keys":[{"kid":"ec-1","kty":"EC","crv":"P-256","x":"AAAA","y":"AAAA"}]}"#;
     assert!(VerifyingKeyring::from_jwks(jwks).is_err());
 }
+
+#[test]
+fn an_extreme_created_timestamp_is_rejected_without_overflow() {
+    let keys = ed_keyring("agent", AGENT_SEED);
+    let verifier = verifier_for(&[&keys]);
+    assert!(verifier
+        .verify_message(
+            &MessageComponents::new(),
+            "sig1=();created=-9223372036854775808;keyid=\"agent\"",
+            "sig1=:AA==:",
+            &[],
+            NOW
+        )
+        .is_err());
+}

@@ -23,6 +23,9 @@ use thiserror::Error;
 
 use crate::ucp_mapping::SigningKeyDescriptor;
 
+pub mod web_bot;
+pub use web_bot::{WebBotIdentity, WebBotSignature};
+
 /// RFC 9421 header naming the covered components and signature parameters.
 pub const SIGNATURE_INPUT_HEADER: &str = "signature-input";
 /// RFC 9421 header carrying the signature bytes.
@@ -665,8 +668,8 @@ impl VerifyingKeyring {
             return Err(SignatureError::CoverageInsufficient(missing.clone()));
         }
         if let Some(created) = params.created {
-            let skew = now - created;
-            if skew.abs() > MAX_SIGNATURE_SKEW_SECONDS {
+            let skew = now.saturating_sub(created);
+            if skew.saturating_abs() > MAX_SIGNATURE_SKEW_SECONDS {
                 return Err(SignatureError::Stale { skew_seconds: skew });
             }
         }
@@ -736,8 +739,12 @@ fn parse_signature_params(raw: &str) -> Result<SignatureParams, SignatureError> 
         keyid: String::new(),
         alg: None,
     };
+    let mut seen = std::collections::BTreeSet::new();
     for param in params.split(';').map(str::trim).filter(|p| !p.is_empty()) {
         let (name, value) = param.split_once('=').unwrap_or((param, "?1"));
+        if !seen.insert(name) {
+            return Err(malformed("duplicate signature parameter"));
+        }
         let string = || {
             value
                 .strip_prefix('"')
