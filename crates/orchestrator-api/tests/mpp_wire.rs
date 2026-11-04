@@ -72,3 +72,20 @@ fn malformed_or_noncanonical_challenges_cannot_be_bound() {
     let mut c = challenge();
     assert!(c.bind(b"").is_err());
 }
+
+#[test]
+fn challenge_verification_is_counted_by_outcome() {
+    let mut c = challenge();
+    c.bind(b"test-vector-secret").unwrap();
+    c.verify_binding(b"test-vector-secret").unwrap();
+    c.verify_binding(b"another-secret").unwrap_err();
+    let rendered = orchestrator_observability::render_prometheus().unwrap();
+    for status in ["success", "error"] {
+        assert!(
+            rendered.contains(&format!(
+                "operation=\"mpp_challenge_verify\",status=\"{status}\""
+            )),
+            "missing {status} sample in {rendered}"
+        );
+    }
+}

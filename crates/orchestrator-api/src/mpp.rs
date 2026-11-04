@@ -139,6 +139,16 @@ impl MppChallenge {
         Ok(())
     }
     pub fn verify_binding(&self, secret: &[u8]) -> Result<(), MppError> {
+        let started = std::time::Instant::now();
+        let result = self.verify_binding_inner(secret);
+        orchestrator_observability::observe_operation(
+            "mpp_challenge_verify",
+            if result.is_ok() { "success" } else { "error" },
+            started.elapsed().as_secs_f64(),
+        );
+        result
+    }
+    fn verify_binding_inner(&self, secret: &[u8]) -> Result<(), MppError> {
         if secret.is_empty() {
             return Err(MppError("challenge secret is required"));
         }
