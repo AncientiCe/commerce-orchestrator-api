@@ -1,4 +1,4 @@
-﻿# Changelog
+# Changelog
 
 All notable changes to this project will be documented in this file.
 
@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - RFC 9421 dictionary-member signature verification (`;key=`), a prerequisite for the current Web Bot Auth wire format. Key discovery and Web Bot Auth identity policy remain separate.
 
-- MPP Payment challenge, credential and receipt primitives (`orchestrator_api::mpp`) with HMAC-SHA256 challenge binding checked against the published draft vectors, counted as `mpp_challenge_verify`. Checkout does not issue 402 challenges with them yet.
+- MPP Payment challenge, credential and receipt primitives (`orchestrator_api::mpp`) with HMAC-SHA256 challenge binding checked against the published draft vectors and counted as `mpp_challenge_verify`. Checkout does not issue 402 challenges with them yet.
 
 ### Security
 
@@ -37,10 +37,10 @@ This release changes wire formats that clients read. Before you upgrade:
 
 ### Changed
 
-- **BREAKING â€” UCP message signatures now follow RFC 9421.** The previous `Signature: kid=â€¦,alg=â€¦,sig=â€¦` + `Timestamp` scheme was never what the UCP signatures specification defines (in `2026-04-08` or since), so no conformant platform could verify it. Requests and responses now use `Signature-Input` / `Signature` (label `sig1`) over the required components with an RFC 9530 `Content-Digest`. Any one valid signature authenticates. Error codes are UCP's (`signature_missing`, `signature_invalid`, `key_not_found`, `digest_mismatch`, `algorithm_unsupported`) with UCP's HTTP statuses. Existing Ed25519 keys keep working unchanged.
-- **BREAKING â€” `/.well-known/ucp` is a UCP `2026-08-25` business profile**, validated in tests against the official UCP JSON Schema. Signing keys move from `ucp.signing_keys` to the top-level `keys[]` JWK Set. `ucp.payment_handlers` is a reverse-DNS keyed registry (`{}` unless `UCP_PAYMENT_HANDLERS` is set) instead of a built-in list. The non-existent `dev.ucp.shopping.payment_handlers` capability is gone. The `mcp` and `acp` bindings leave `dev.ucp.shopping`, because neither is a UCP binding the orchestrator implements; their endpoints, the neighbouring protocol versions, and `capability_flags` move to a top-level `orchestrator` member. The previous shape stays available at `?ucp_version=2026-04-08`, linked from `supported_versions`. The profile is served with `Cache-Control: public, max-age=300`, and response envelopes report `ucp.version: 2026-08-25`.
-- **BREAKING â€” UCP cart, checkout, and order bodies follow the `2026-08-25` schemas** (validated in tests). `totals[].amount` is a plain integer in minor units (orders sent `{ "amount": n }` with a per-entry `currency`). Totals always hold one `subtotal` and one `total`, and list `discount` only when non-zero. Lines gain `item: { id, title, price }` and `totals[]`. Checkout sessions report UCP status (`incomplete`, `ready_for_complete`, `canceled`) instead of `draft`/`checkout_ready`, and carry `links[]` and `ucp.payment_handlers`. Orders gain `checkout_id` and `fulfillment`, and their line `quantity` becomes `{ original, total, fulfilled }` with a line `status`. The orchestrator's `*_minor` fields remain on carts and checkouts.
-- **BREAKING â€” UCP fulfillment objects follow the `2026-08-25` schema** (validated in tests). Methods carry typed `destinations[]` (`shipping_address` / `business_location`), and options carry a `description` object and `totals[]`. `amount_minor` stays on options as an alias. Clients that read `description` as a string must read `description.plain`.
+- **BREAKING — UCP message signatures now follow RFC 9421.** The previous `Signature: kid=…,alg=…,sig=…` + `Timestamp` scheme was never what the UCP signatures specification defines (in `2026-04-08` or since), so no conformant platform could verify it. Requests and responses now use `Signature-Input` / `Signature` (label `sig1`) over the required components with an RFC 9530 `Content-Digest`. Any one valid signature authenticates. Error codes are UCP's (`signature_missing`, `signature_invalid`, `key_not_found`, `digest_mismatch`, `algorithm_unsupported`) with UCP's HTTP statuses. Existing Ed25519 keys keep working unchanged.
+- **BREAKING — `/.well-known/ucp` is a UCP `2026-08-25` business profile**, validated in tests against the official UCP JSON Schema. Signing keys move from `ucp.signing_keys` to the top-level `keys[]` JWK Set. `ucp.payment_handlers` is a reverse-DNS keyed registry (`{}` unless `UCP_PAYMENT_HANDLERS` is set) instead of a built-in list. The non-existent `dev.ucp.shopping.payment_handlers` capability is gone. The `mcp` and `acp` bindings leave `dev.ucp.shopping`, because neither is a UCP binding the orchestrator implements; their endpoints, the neighbouring protocol versions, and `capability_flags` move to a top-level `orchestrator` member. The previous shape stays available at `?ucp_version=2026-04-08`, linked from `supported_versions`. The profile is served with `Cache-Control: public, max-age=300`, and response envelopes report `ucp.version: 2026-08-25`.
+- **BREAKING — UCP cart, checkout, and order bodies follow the `2026-08-25` schemas** (validated in tests). `totals[].amount` is a plain integer in minor units (orders sent `{ "amount": n }` with a per-entry `currency`). Totals always hold one `subtotal` and one `total`, and list `discount` only when non-zero. Lines gain `item: { id, title, price }` and `totals[]`. Checkout sessions report UCP status (`incomplete`, `ready_for_complete`, `canceled`) instead of `draft`/`checkout_ready`, and carry `links[]` and `ucp.payment_handlers`. Orders gain `checkout_id` and `fulfillment`, and their line `quantity` becomes `{ original, total, fulfilled }` with a line `status`. The orchestrator's `*_minor` fields remain on carts and checkouts.
+- **BREAKING — UCP fulfillment objects follow the `2026-08-25` schema** (validated in tests). Methods carry typed `destinations[]` (`shipping_address` / `business_location`), and options carry a `description` object and `totals[]`. `amount_minor` stays on options as an alias. Clients that read `description` as a string must read `description.plain`.
 - Agent JWK Sets skip keys of types the orchestrator does not recognise instead of refusing the whole set, as UCP requires.
 - The workspace declares `rust-version = "1.89"`, and the Docker builder uses `rust:1.98`. A manifest test fails when the Dockerfile falls below the declared minimum.
 - `serde_yaml` (archived; pulls in the unmaintained `unsafe-libyaml`, RUSTSEC-2024-0449) is replaced by the maintained `serde_norway` fork, and the lockfile is refreshed.
@@ -54,7 +54,7 @@ This release changes wire formats that clients read. Before you upgrade:
 - **`UCP_PAYMENT_HANDLERS`**: publish your payment providers' UCP handlers in discovery. Names must be reverse-DNS, and entries need an `id` and a dated `version`; both are checked at startup.
 - **`EMBEDDED_CHECKOUT_URL`**: the merchant-hosted page that embedded checkout handoff links point to.
 - **Conformance tests against the official schemas**: `ucp_profile_schema_test`, `ucp_response_schema_test`, `ucp_fulfillment_schema_test`, `ucp_rest_binding_test`, `ucp_signature_test`, and `a2a_binding_test` run in CI's conformance step. The UCP schemas they use are vendored, unmodified, under `crates/orchestrator-http/tests/fixtures/ucp/2026-08-25`.
-- Metrics: `ucp_signature_verify` and `a2a_send_message` operation latency and counts; `ucp_signature_rejected_{coverage,digest,stale,â€¦}_total`; A2A per-skill and error counters; `a2a_agent_card_total`; `a2a_version_unsupported_total`; and `a2a_task_not_found_total`.
+- Metrics: `ucp_signature_verify` and `a2a_send_message` operation latency and counts; `ucp_signature_rejected_{coverage,digest,stale,…}_total`; A2A per-skill and error counters; `a2a_agent_card_total`; `a2a_version_unsupported_total`; and `a2a_task_not_found_total`.
 
 ### Fixed
 
@@ -72,7 +72,7 @@ Recorded in the [conformance matrix](https://github.com/AncientiCe/commerce-orch
 
 ## [0.9.0] - 2026-08-20
 
-"Trustworthy Integration": closes the gap between what the orchestrator advertised and what it actually did. Outbound auth to your providers, safe retries, working webhook delivery, correct money, real signatures, and honest discovery. No protocol version changes â€” UCP `2026-04-08` and ACP `2026-04-17` remain current.
+"Trustworthy Integration": closes the gap between what the orchestrator advertised and what it actually did. Outbound auth to your providers, safe retries, working webhook delivery, correct money, real signatures, and honest discovery. No protocol version changes — UCP `2026-04-08` and ACP `2026-04-17` remain current.
 
 ### Added
 
@@ -87,7 +87,7 @@ Recorded in the [conformance matrix](https://github.com/AncientiCe/commerce-orch
 - **Migration Job**: `deploy/kubernetes/job-migrate.yaml` runs the server image with `--migrate` (or `MIGRATE_ONLY=true`) to apply migrations and exit.
 - **Monitoring artifacts**: `deploy/kubernetes/servicemonitor.yaml` and a starter dashboard at `deploy/grafana/orchestrator-dashboard.json`.
 - **`set_fulfillment_selection` MCP tool**, closing the one gap the conformance matrix acknowledged.
-- **`docs/mcp-binding.md`**: transport, version negotiation, tool catalogue, resources, and error codes â€” referenced by the conformance matrix since v0.6.0 but never written.
+- **`docs/mcp-binding.md`**: transport, version negotiation, tool catalogue, resources, and error codes — referenced by the conformance matrix since v0.6.0 but never written.
 - **Postgres backend tests against a live database** (`postgres_backend_test`) plus a CI job with a Postgres service: migrations, the outbox lease, the tenant-scoped webhook lookup, a full checkout and the `--migrate` path are now executed rather than asserted as SQL strings. They skip themselves when `DATABASE_URL` is unset.
 
 ### Changed
@@ -110,7 +110,7 @@ Recorded in the [conformance matrix](https://github.com/AncientiCe/commerce-orch
 - **Counter metric names** were double-suffixed in the Prometheus exposition (`orchestrator_events_total_total`) because the encoder appends `_total` to counter families. Counters are now registered without the suffix, so `/metrics` exposes `orchestrator_events_total`, `orchestrator_operation_calls_total`, and `orchestrator_provider_http_calls_total`.
 - **The PostgreSQL backend could not open a connection at all**: `sqlx-core` was pulled in with `default-features = false`, so no async runtime was enabled and every pool connect panicked with "either the `runtime-async-std` or `runtime-tokio` feature must be enabled". In practice that meant production startup (`DATABASE_URL` is required there), `--migrate`, and the migration Job all panicked. Nothing caught it because no test ever opened a pool.
 - **Migrations could not be applied**: each file was sent through the prepared-statement protocol, which rejects the multi-statement files (`CREATE TABLE` plus its indexes) with "cannot insert multiple commands into a prepared statement". They now go through `raw_sql`.
-- **A half-open circuit breaker could wedge**: a probe that never reported an outcome â€” an outbound call whose OAuth token fetch failed before the request was sent â€” left the breaker half-open and rejected every later call. Auth failures are now reported to the breaker, and a probe that does not settle within `PROVIDER_CIRCUIT_PROBE_TIMEOUT_SECS` is superseded.
+- **A half-open circuit breaker could wedge**: a probe that never reported an outcome — an outbound call whose OAuth token fetch failed before the request was sent — left the breaker half-open and rejected every later call. Auth failures are now reported to the breaker, and a probe that does not settle within `PROVIDER_CIRCUIT_PROBE_TIMEOUT_SECS` is superseded.
 - **`h2`** bumped to `0.4.18` for RUSTSEC-2026-0258 (unbounded empty DATA frames).
 
 ### Security
@@ -144,7 +144,7 @@ Recorded in the [conformance matrix](https://github.com/AncientiCe/commerce-orch
 
 ### Fixed
 
-- **Dependency audit remediation**: Bumped `wiremock` (0.5â†’0.6), `utoipa-axum` (0.1â†’0.2), `axum-test` (14â†’16), and patched `anyhow`, `rand`, and `event-listener` to resolve RustSec advisories reported since the `v0.6.0` release; `cargo audit` is clean (one documented, justified ignore remains for the unmaintained, upstream-unfixable `paste` proc-macro pulled in transitively by `utoipa-axum`; see `audit.toml`).
+- **Dependency audit remediation**: Bumped `wiremock` (0.5→0.6), `utoipa-axum` (0.1→0.2), `axum-test` (14→16), and patched `anyhow`, `rand`, and `event-listener` to resolve RustSec advisories reported since the `v0.6.0` release; `cargo audit` is clean (one documented, justified ignore remains for the unmaintained, upstream-unfixable `paste` proc-macro pulled in transitively by `utoipa-axum`; see `audit.toml`).
 - **Repository metadata**: Corrected `Cargo.toml` repository URL, `CHANGELOG.md` release links, and the README CI badge to point at the actual `AncientiCe/commerce-orchestrator-api` GitHub repository.
 
 ### Changed
