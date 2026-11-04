@@ -161,6 +161,8 @@ These are part of the current UCP release and are **not** advertised in discover
 | MPP capability flag in discovery | required | Discovery capability flags include `dev.ucp.payments.mpp=true` for staged rollout signaling | `ucp_mapping.rs`, `discovery_test` |
 | Downstream payment adapter forwarding hints | optional | HTTP payment adapter forwards MPP context to downstream payment services (`X-Payment-Method`, `X-Mpp-Method`, `X-Mpp-Intent`) when payment method is MPP | `integration-adapters/src/payment.rs`, `adapters_http_test` |
 
+| Payment challenge binding primitives | optional | `MppChallenge` binds with HMAC-SHA256 over the published draft-httpauth-payment vectors; credentials and receipts encode/decode as base64url JCS. Not yet wired into checkout, so no 402 challenge is issued | `orchestrator-api/src/mpp.rs`, `mpp_wire` |
+
 ## Acceptance Criteria (Summary)
 
 1. **Discovery**: A client can GET `/.well-known/ucp` and learn UCP profile, ACP/MCP/A2A/AP2 version metadata, signing keys, and payment handlers; every advertised capability is implemented.

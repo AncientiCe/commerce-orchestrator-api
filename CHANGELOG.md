@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - RFC 9421 dictionary-member signature verification (`;key=`), a prerequisite for the current Web Bot Auth wire format. Key discovery and Web Bot Auth identity policy remain separate.
 
+- MPP Payment challenge, credential and receipt primitives (`orchestrator_api::mpp`) with HMAC-SHA256 challenge binding checked against the published draft vectors. Checkout does not issue 402 challenges with them yet.
+
 ### Security
 
 - Reject extreme signature timestamps without arithmetic overflow and reject duplicate signature parameters.
