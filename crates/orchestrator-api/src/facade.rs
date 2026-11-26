@@ -104,6 +104,18 @@ impl OrchestratorFacade {
         self
     }
 
+    /// Deliver webhooks like [`Self::with_webhook_delivery`], and also sign each
+    /// one with RFC 9421 message signatures (e.g. the discovery [`crate::SigningKeyring`]).
+    pub fn with_signed_webhook_delivery(
+        mut self,
+        signer: Arc<dyn orchestrator_runtime::WebhookSigner>,
+    ) -> Self {
+        let deliverer = orchestrator_runtime::WebhookDeliverer::new(self.runner.webhook_store())
+            .with_signer(signer);
+        self.runner = self.runner.with_outbox_deliverer(Arc::new(deliverer));
+        self
+    }
+
     /// Start the background outbox processor. The returned handle completes once
     /// `shutdown` is set and the queue has drained.
     pub fn spawn_outbox_processor(

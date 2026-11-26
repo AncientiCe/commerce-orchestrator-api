@@ -53,7 +53,6 @@ These are part of the current UCP release and are **not** advertised in discover
 | Location search / lookup (`dev.ucp.common.location.*`) | not_supported_yet | No store-location provider contract |
 | Fractional quantities (`measure.json`, sale basis) | not_supported_yet | Quantities are integers |
 | Buyer consent (`dev.ucp.consent.*`), loyalty, policies, attribution, permalink | not_supported_yet | |
-| Signed webhooks (RFC 9421) | not_supported_yet | Webhooks are signed with HMAC `X-Webhook-Signature`; UCP requires business-to-platform webhooks to carry message signatures |
 
 ### Fulfillment (UCP)
 
@@ -131,6 +130,7 @@ These are part of the current UCP release and are **not** advertised in discover
 | Webhook listing | required | `GET /api/v1/webhooks` returns tenant-scoped webhook registrations | api_integration_test |
 | Webhook unregistration | required | `DELETE /api/v1/webhooks/:id` removes a webhook | api_integration_test |
 | HMAC-SHA256 signing | required | WebhookDeliverer signs payloads with `X-Webhook-Signature` using the registration secret | webhooks.rs HMAC test |
+| RFC 9421 signed webhooks (UCP) | required when signing keys are configured | With UCP signing keys configured, every delivery also carries `Content-Digest` and an RFC 9421 `Signature-Input`/`Signature` (`sig1`) by the active key, covering `@method`, `@authority`, `@path`, `@query` (when present), `content-digest` and `content-type`. It verifies against the discovery `keys[]` JWK. A delivery that cannot be signed is not sent and counts `webhook_signing_failure_total` | `signed_webhooks::webhooks_carry_signatures_verifiable_with_the_published_keys`, `ucp_signing::a_signed_webhook_verifies_under_the_published_keys`, `ucp_signing::a_signed_webhook_covers_the_query_when_the_url_has_one`, `webhook_delivery_metrics_test::a_configured_signer_adds_message_signatures_beside_the_hmac`, `webhook_delivery_metrics_test::a_delivery_that_cannot_be_signed_is_not_sent_unsigned` |
 | Outbox delivery via webhooks | required | `WebhookDeliverer` implements `OutboxDeliverer` and delivers to matching registrations **of the tenant that owns the event**; the topic lookup is tenant-scoped in every store | `webhooks.rs::a_topic_lookup_never_crosses_tenants`, `webhook_delivery_metrics_test::another_tenants_endpoint_is_not_called` |
 
 ### Catalog
@@ -184,6 +184,7 @@ Conformance is asserted by the following tests; CI runs them in the "Conformance
 - `cargo test -p orchestrator-http --test ucp_fulfillment_schema_test` — fulfillment objects validate against the official UCP fulfillment schema
 - `cargo test -p orchestrator-http --test ucp_rest_binding_test` — every UCP REST binding operation is routed at its spec path
 - `cargo test -p orchestrator-http --test ucp_signature_test` and `cargo test -p orchestrator-api --test ucp_signing` — RFC 9421 signatures, Content-Digest, ES256/Ed25519, UCP error codes, RFC 9421 test vector
+- `cargo test -p orchestrator-api --test signed_webhooks` — webhook deliveries verify against the discovery JWKs
 - `cargo test -p orchestrator-http --test a2a_binding_test` — A2A 1.0 Agent Card, `SendMessage`, task operations, error shape
 - `cargo test -p orchestrator-api --test authz_and_adapters` — authz, AP2 0.2 HNP, A2A version negotiation, AP2 strict mode
 - `cargo test -p orchestrator-http --test mpp_checkout_test` — MPP `402` challenge, credential binding and single use, receipts, problem types

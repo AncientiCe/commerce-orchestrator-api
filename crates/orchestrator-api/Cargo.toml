@@ -30,6 +30,7 @@ p256 = { version = "0.14", features = ["ecdsa"] }
 url = "2"
 
 [dev-dependencies]
+wiremock = "0.6"
 provider-mocks = { path = "../provider-mocks" }
 rand_core = "0.10.1"
 tempfile = "3"

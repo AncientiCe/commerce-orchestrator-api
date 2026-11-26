@@ -15,7 +15,7 @@ grew without bound and no webhook was ever delivered.
 flowchart LR
   Checkout[execute_checkout] -->|enqueue| Outbox[(outbox)]
   Processor[Background processor] -->|dequeue| Outbox
-  Processor -->|POST + HMAC| Subscriber[Your webhook endpoint]
+  Processor -->|POST + HMAC + RFC 9421 when keys are set| Subscriber[Your webhook endpoint]
   Processor -->|attempts exhausted| DeadLetter[(dead_letter)]
   DeadLetter -->|replay| Outbox
 ```
@@ -71,6 +71,7 @@ outbox for the next process (or another replica) to pick up. Nothing is lost.
 | `orchestrator_events_total{name="webhook_delivery_failure_total"}` | counter | Deliveries rejected or unreachable. |
 | `orchestrator_events_total{name="outbox_dead_letter_total"}` | counter | Messages moved to dead-letter. |
 | `orchestrator_operation_latency_seconds{operation="webhook_delivery"}` | histogram | Per-subscriber delivery latency. |
+| `orchestrator_events_total{name="webhook_signing_failure_total"}` | counter | Deliveries not sent because they could not be signed (counted as failed attempts). |
 
 Suggested alerts:
 
@@ -96,6 +97,14 @@ and these headers:
 - `X-Webhook-Topic` — the event topic.
 - `X-Webhook-Signature` — hex HMAC-SHA256 of the raw body using the secret you
   supplied at registration. Verify it before trusting the payload.
+- `Content-Digest`, `Signature-Input`, `Signature` — when the deployment has UCP
+  signing keys (`UCP_SIGNING_KEY`), every delivery also carries an RFC 9421
+  message signature (label `sig1`) by the active key. It covers `@method`,
+  `@authority`, `@path`, `@query` (when the URL has one), `content-digest` and
+  `content-type`. Verify it with the JWK named by `keyid` in the top-level `keys[]`
+  of `/.well-known/ucp`, as UCP requires for business-to-platform webhooks.
+  Unlike the HMAC, this needs no shared secret. A delivery that cannot be signed
+  is not sent unsigned; it fails and is retried.
 
 Any 2xx is treated as accepted. Anything else, including a connection failure,
 counts as a failed attempt.

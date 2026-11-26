@@ -448,3 +448,93 @@ fn an_extreme_created_timestamp_is_rejected_without_overflow() {
         )
         .is_err());
 }
+
+/// What a platform rebuilds from a webhook it received.
+fn received_webhook(
+    authority: &str,
+    path: &str,
+    headers: &[(String, String)],
+) -> MessageComponents {
+    let get = |name: &str| {
+        headers
+            .iter()
+            .find(|(n, _)| n.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.clone())
+            .unwrap_or_else(|| panic!("{name} header missing"))
+    };
+    MessageComponents::new()
+        .with("@method", "POST")
+        .with("@authority", authority)
+        .with("@path", path)
+        .with("content-type", "application/json")
+        .with("content-digest", &get("content-digest"))
+}
+
+fn header<'a>(headers: &'a [(String, String)], name: &str) -> &'a str {
+    &headers
+        .iter()
+        .find(|(n, _)| n.eq_ignore_ascii_case(name))
+        .expect("header present")
+        .1
+}
+
+#[test]
+fn a_signed_webhook_verifies_under_the_published_keys() {
+    use orchestrator_runtime::WebhookSigner;
+    let business = es_keyring("biz-es");
+    let headers = business
+        .signature_headers("https://platform.example.com:8443/hooks/orders", BODY)
+        .expect("signed");
+
+    verify_content_digest(header(&headers, "content-digest"), BODY).expect("digest matches");
+    let required: Vec<String> = [
+        "@method",
+        "@authority",
+        "@path",
+        "content-digest",
+        "content-type",
+    ]
+    .iter()
+    .map(|c| c.to_string())
+    .collect();
+    let now = jiff::Timestamp::now().as_second();
+    let kid = verifier_for(&[&business])
+        .verify_message(
+            &received_webhook("platform.example.com:8443", "/hooks/orders", &headers),
+            header(&headers, "signature-input"),
+            header(&headers, "signature"),
+            &required,
+            now,
+        )
+        .expect("verifies");
+    assert_eq!(kid, "biz-es");
+}
+
+#[test]
+fn a_signed_webhook_covers_the_query_when_the_url_has_one() {
+    use orchestrator_runtime::WebhookSigner;
+    let business = ed_keyring("biz-ed", AGENT_SEED);
+    let headers = business
+        .signature_headers("https://platform.example.com/hooks?tenant=t1", BODY)
+        .expect("signed");
+    assert!(header(&headers, "signature-input").contains("\"@query\""));
+    let components =
+        received_webhook("platform.example.com", "/hooks", &headers).with("@query", "?tenant=t1");
+    verifier_for(&[&business])
+        .verify_message(
+            &components,
+            header(&headers, "signature-input"),
+            header(&headers, "signature"),
+            &["@query".to_string()],
+            jiff::Timestamp::now().as_second(),
+        )
+        .expect("verifies with the query");
+}
+
+#[test]
+fn a_webhook_url_that_is_not_absolute_cannot_be_signed() {
+    use orchestrator_runtime::WebhookSigner;
+    assert!(ed_keyring("biz-ed", AGENT_SEED)
+        .signature_headers("/relative/hook", BODY)
+        .is_err());
+}

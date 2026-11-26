@@ -261,3 +261,91 @@ async fn another_tenants_endpoint_is_not_called() {
         "another tenant's endpoint must never see this event"
     );
 }
+
+/// Signs every delivery with fixed headers, or fails when told to.
+struct FixedSigner {
+    fail: bool,
+}
+
+impl orchestrator_runtime::WebhookSigner for FixedSigner {
+    fn signature_headers(&self, url: &str, body: &[u8]) -> Result<Vec<(String, String)>, String> {
+        if self.fail {
+            return Err("no signing key".to_string());
+        }
+        assert!(url.ends_with("/hook"));
+        assert!(!body.is_empty());
+        Ok(vec![
+            ("Content-Digest".to_string(), "sha-256=:test:".to_string()),
+            (
+                "Signature-Input".to_string(),
+                "sig1=();created=1".to_string(),
+            ),
+            ("Signature".to_string(), "sig1=:c2ln:".to_string()),
+        ])
+    }
+}
+
+async fn signed_runner(server: &MockServer, id: &str, fail: bool) -> Runner {
+    let runner = Runner::new(providers(), PolicyEngine::default());
+    runner
+        .register_webhook(WebhookRegistration {
+            id: id.to_string(),
+            tenant_id: "t1".to_string(),
+            url: format!("{}/hook", server.uri()),
+            secret: "shhh".to_string(),
+            event_filter: None,
+            active: true,
+        })
+        .await
+        .unwrap();
+    let deliverer = Arc::new(
+        WebhookDeliverer::new(runner.webhook_store()).with_signer(Arc::new(FixedSigner { fail })),
+    );
+    runner.with_outbox_deliverer(deliverer)
+}
+
+#[tokio::test]
+async fn a_configured_signer_adds_message_signatures_beside_the_hmac() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/hook"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&server)
+        .await;
+    let runner = signed_runner(&server, "wh_signed", false).await;
+
+    checkout_once(&runner).await;
+    OutboxProcessor::new(runner.clone(), processor_config())
+        .drain()
+        .await;
+
+    let requests = server.received_requests().await.unwrap();
+    let delivered = requests.first().expect("delivered");
+    assert_eq!(delivered.headers["signature"], "sig1=:c2ln:");
+    assert_eq!(delivered.headers["signature-input"], "sig1=();created=1");
+    assert_eq!(delivered.headers["content-digest"], "sha-256=:test:");
+    assert!(
+        delivered.headers.contains_key("x-webhook-signature"),
+        "the HMAC header stays for existing subscribers"
+    );
+}
+
+#[tokio::test]
+async fn a_delivery_that_cannot_be_signed_is_not_sent_unsigned() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/hook"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&server)
+        .await;
+    let runner = signed_runner(&server, "wh_unsignable", true).await;
+    let before = orchestrator_observability::get_count("webhook_signing_failure_total");
+
+    checkout_once(&runner).await;
+    OutboxProcessor::new(runner.clone(), processor_config())
+        .process_batch()
+        .await;
+
+    assert!(server.received_requests().await.unwrap().is_empty());
+    assert!(orchestrator_observability::get_count("webhook_signing_failure_total") > before);
+}

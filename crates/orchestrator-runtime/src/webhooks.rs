@@ -92,10 +92,20 @@ impl WebhookStore for InMemoryWebhookStore {
     }
 }
 
-/// Delivers outbox messages to registered webhook URLs with HMAC-SHA256 signatures.
+/// Produces HTTP message signature headers for an outgoing webhook, e.g. RFC
+/// 9421 `Content-Digest`, `Signature-Input` and `Signature` under the
+/// operator's published keys. Lives here so the runtime need not know the keys.
+pub trait WebhookSigner: Send + Sync {
+    /// Headers to add to a JSON `POST` of `body` to `url`.
+    fn signature_headers(&self, url: &str, body: &[u8]) -> Result<Vec<(String, String)>, String>;
+}
+
+/// Delivers outbox messages to registered webhook URLs with HMAC-SHA256
+/// signatures, plus message signatures when a [`WebhookSigner`] is configured.
 pub struct WebhookDeliverer {
     webhook_store: Arc<dyn WebhookStore>,
     client: reqwest::Client,
+    signer: Option<Arc<dyn WebhookSigner>>,
 }
 
 impl WebhookDeliverer {
@@ -103,7 +113,15 @@ impl WebhookDeliverer {
         Self {
             webhook_store,
             client: reqwest::Client::new(),
+            signer: None,
         }
+    }
+
+    /// Also sign every delivery with this signer. A delivery that cannot be
+    /// signed is not sent; it fails and is retried like any other failure.
+    pub fn with_signer(mut self, signer: Arc<dyn WebhookSigner>) -> Self {
+        self.signer = Some(signer);
+        self
     }
 
     fn compute_signature(secret: &str, body: &[u8]) -> String {
@@ -161,18 +179,36 @@ impl OutboxDeliverer for WebhookDeliverer {
         let mut last_error = None;
         for reg in &registrations {
             let signature = Self::compute_signature(&reg.secret, &body_bytes);
+            let message_signature = match &self.signer {
+                Some(signer) => match signer.signature_headers(&reg.url, &body_bytes) {
+                    Ok(headers) => headers,
+                    Err(e) => {
+                        orchestrator_observability::incr("webhook_signing_failure_total");
+                        tracing::warn!(
+                            webhook_id = %reg.id,
+                            topic = %message.topic,
+                            error = %e,
+                            "webhook not sent: it could not be signed"
+                        );
+                        last_error = Some(format!("webhook {} could not be signed: {e}", reg.url));
+                        continue;
+                    }
+                },
+                None => Vec::new(),
+            };
             // Timed per registration so one slow subscriber does not distort the others.
             let started = std::time::Instant::now();
-            let result = self
+            let mut request = self
                 .client
                 .post(&reg.url)
                 .header("Content-Type", "application/json")
                 .header("X-Webhook-Id", &message.id)
                 .header("X-Webhook-Topic", &message.topic)
-                .header("X-Webhook-Signature", &signature)
-                .body(body_bytes.clone())
-                .send()
-                .await;
+                .header("X-Webhook-Signature", &signature);
+            for (name, value) in &message_signature {
+                request = request.header(name, value);
+            }
+            let result = request.body(body_bytes.clone()).send().await;
 
             match result {
                 Ok(resp) if resp.status().is_success() => {

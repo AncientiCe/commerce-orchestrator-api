@@ -377,6 +377,42 @@ impl SigningKeyring {
         })
     }
 
+    /// RFC 9421 headers for a business-to-platform webhook: a JSON `POST` of
+    /// `body` to `url`, covering `@method`, `@authority`, `@path`, `@query`
+    /// (when the URL has one), `content-digest` and `content-type`.
+    pub fn sign_webhook(&self, url: &str, body: &[u8]) -> Result<Vec<(String, String)>, String> {
+        let target = url::Url::parse(url).map_err(|e| format!("webhook URL: {e}"))?;
+        let host = target
+            .host_str()
+            .ok_or("webhook URL has no host")?
+            .to_ascii_lowercase();
+        let authority = match target.port() {
+            Some(port) => format!("{host}:{port}"),
+            None => host,
+        };
+        let digest = content_digest(body);
+        let mut components = MessageComponents::new()
+            .with("@method", "POST")
+            .with("@authority", &authority)
+            .with("@path", target.path())
+            .with("content-digest", &digest)
+            .with("content-type", "application/json");
+        let mut covered = vec!["@method", "@authority", "@path"];
+        if let Some(query) = target.query() {
+            components.insert("@query", &format!("?{query}"));
+            covered.push("@query");
+        }
+        covered.extend(["content-digest", "content-type"]);
+        let signed = self
+            .sign_message(&components, &covered, jiff::Timestamp::now().as_second())
+            .map_err(|e| format!("webhook signature: {e}"))?;
+        Ok(vec![
+            ("Content-Digest".to_string(), digest),
+            ("Signature-Input".to_string(), signed.signature_input),
+            ("Signature".to_string(), signed.signature),
+        ])
+    }
+
     /// Public halves, active key first, as advertised in discovery.
     pub fn public_jwks(&self) -> Vec<SigningKeyDescriptor> {
         self.keys
@@ -905,4 +941,11 @@ fn decode_base64(value: &str) -> Option<Vec<u8>> {
         .decode(trimmed.trim_end_matches('='))
         .or_else(|_| BASE64_STANDARD.decode(trimmed))
         .ok()
+}
+
+/// Webhooks are signed with the same keys discovery publishes in `keys[]`.
+impl orchestrator_runtime::WebhookSigner for SigningKeyring {
+    fn signature_headers(&self, url: &str, body: &[u8]) -> Result<Vec<(String, String)>, String> {
+        self.sign_webhook(url, body)
+    }
 }

@@ -221,6 +221,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         }
         (facade, None, true, discovery_base_url, signing)
     };
+    // Platforms verify webhooks with the keys discovery publishes, so a
+    // deployment that signs its responses signs its webhooks too.
+    let facade = match &signing {
+        Some(keyring) => facade.with_signed_webhook_delivery(Arc::new(keyring.clone())),
+        None => facade,
+    };
     let (outbox_shutdown_tx, outbox_shutdown_rx) = tokio::sync::watch::channel(false);
     let outbox_processor = facade.spawn_outbox_processor(
         server_config.outbox.to_processor_config(),
