@@ -679,10 +679,10 @@ impl Runner {
                     id: format!("evt_{}", Uuid::new_v4()),
                     event_type: "created".to_string(),
                     description: "Order created from committed checkout".to_string(),
-                    occurred_at: chrono::Utc::now(),
+                    occurred_at: jiff::Timestamp::now(),
                 }],
                 adjustments: Vec::new(),
-                created_at: chrono::Utc::now(),
+                created_at: jiff::Timestamp::now(),
             })
             .await?;
 

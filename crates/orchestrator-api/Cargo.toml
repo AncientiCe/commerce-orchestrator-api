@@ -25,7 +25,7 @@ base64 = "0.23.1"
 sha2 = "0.10"
 hmac = "0.12"
 serde_jcs = "0.2"
-chrono = { version = "0.4", features = ["serde"] }
+jiff = { version = "0.2", features = ["serde"] }
 p256 = { version = "0.14", features = ["ecdsa"] }
 url = "2"
 

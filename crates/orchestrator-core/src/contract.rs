@@ -315,7 +315,7 @@ pub struct OrderRecord {
     pub totals: TotalsBreakdown,
     pub events: Vec<OrderEvent>,
     pub adjustments: Vec<OrderAdjustment>,
-    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub created_at: jiff::Timestamp,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -332,7 +332,7 @@ pub struct OrderEvent {
     pub id: String,
     pub event_type: String,
     pub description: String,
-    pub occurred_at: chrono::DateTime<chrono::Utc>,
+    pub occurred_at: jiff::Timestamp,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

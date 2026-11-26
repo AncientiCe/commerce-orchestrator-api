@@ -134,7 +134,7 @@ mod tests {
             totals: Default::default(),
             events: Vec::new(),
             adjustments: Vec::new(),
-            created_at: chrono::Utc::now(),
+            created_at: jiff::Timestamp::now(),
         };
         store.put(order).await;
         let updated = store.update_status("ord_1", OrderStatus::Fulfilled).await;

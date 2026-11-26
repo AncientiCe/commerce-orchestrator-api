@@ -410,7 +410,7 @@ struct ReservationDto {
 
 impl ReservationDto {
     fn to_record(&self) -> ReservationRecord {
-        let now_secs = chrono::Utc::now().timestamp();
+        let now_secs = jiff::Timestamp::now().as_second();
         let remaining = (self.lease_until_secs - now_secs).max(0) as u64;
         ReservationRecord {
             cart_id: self.cart_id,
@@ -442,7 +442,7 @@ impl ReservationStore for PostgresReservationStore {
             sku: sku.clone(),
             quantity,
             state: crate::inventory::ReservationState::Reserved,
-            lease_until_secs: chrono::Utc::now().timestamp() + ttl.as_secs() as i64,
+            lease_until_secs: jiff::Timestamp::now().as_second() + ttl.as_secs() as i64,
         };
         let key = reservation_key(cart_id, &sku);
         query(
@@ -476,7 +476,7 @@ impl ReservationStore for PostgresReservationStore {
     }
 
     async fn sweep_expired(&self) -> Result<usize, StoreError> {
-        let now = chrono::Utc::now().timestamp();
+        let now = jiff::Timestamp::now().as_second();
         let rows = query("SELECT reservation_key, record FROM reservations")
             .fetch_all(&self.pool)
             .await
@@ -880,7 +880,7 @@ impl PostgresMandateDedupeStore {
 #[async_trait]
 impl MandateDedupeStore for PostgresMandateDedupeStore {
     async fn record_mandate(&self, mandate_id: &str, expires_at: i64) -> Result<bool, StoreError> {
-        let now = chrono::Utc::now().timestamp();
+        let now = jiff::Timestamp::now().as_second();
         query("DELETE FROM mandate_dedupe WHERE expires_at <= $1")
             .bind(now)
             .execute(&self.pool)

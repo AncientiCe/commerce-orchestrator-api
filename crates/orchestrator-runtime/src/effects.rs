@@ -90,7 +90,7 @@ impl DeadLetter {
 impl MandateDedupeStore for InMemoryMandateDedupeStore {
     async fn record_mandate(&self, mandate_id: &str, expires_at: i64) -> Result<bool, StoreError> {
         let mut guard = self.seen.lock().await;
-        let now = chrono::Utc::now().timestamp();
+        let now = jiff::Timestamp::now().as_second();
         guard.retain(|_, expiry| *expiry > now);
         if guard.contains_key(mandate_id) {
             return Ok(false);

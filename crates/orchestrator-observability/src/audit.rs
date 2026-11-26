@@ -9,7 +9,7 @@ pub struct AuditEvent {
     pub id: Uuid,
     pub correlation_id: Uuid,
     pub event_type: String,
-    pub occurred_at: chrono::DateTime<chrono::Utc>,
+    pub occurred_at: jiff::Timestamp,
     pub message: String,
 }
 

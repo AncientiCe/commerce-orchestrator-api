@@ -37,7 +37,7 @@ struct ReservationDto {
 
 impl ReservationDto {
     fn to_record(&self) -> ReservationRecord {
-        let now_secs = chrono::Utc::now().timestamp();
+        let now_secs = jiff::Timestamp::now().as_second();
         let remaining = (self.lease_until_secs - now_secs).max(0) as u64;
         ReservationRecord {
             cart_id: self.cart_id,
@@ -378,7 +378,7 @@ impl ReservationStore for FileBackedReservationStore {
         quantity: u32,
         ttl: std::time::Duration,
     ) -> Result<(), StoreError> {
-        let lease_until_secs = chrono::Utc::now().timestamp() + ttl.as_secs() as i64;
+        let lease_until_secs = jiff::Timestamp::now().as_second() + ttl.as_secs() as i64;
         let key = Self::key(cart_id, &sku);
         let dto = ReservationDto {
             cart_id,
@@ -418,7 +418,7 @@ impl ReservationStore for FileBackedReservationStore {
         Ok(())
     }
     async fn sweep_expired(&self) -> Result<usize, StoreError> {
-        let now = chrono::Utc::now().timestamp();
+        let now = jiff::Timestamp::now().as_second();
         let mut guard = self.inner.write().await;
         let mut count = 0;
         for v in guard.values_mut() {
@@ -741,7 +741,7 @@ impl FileBackedMandateDedupeStore {
 impl MandateDedupeStore for FileBackedMandateDedupeStore {
     async fn record_mandate(&self, mandate_id: &str, expires_at: i64) -> Result<bool, StoreError> {
         let mut guard = self.seen.write().await;
-        let now = chrono::Utc::now().timestamp();
+        let now = jiff::Timestamp::now().as_second();
         guard.retain(|_, expiry| *expiry > now);
         if guard.contains_key(mandate_id) {
             return Ok(false);

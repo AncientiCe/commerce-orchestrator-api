@@ -10,6 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Refresh the lockfile (tokio 1.54, rustls-webpki 0.103.17, webpki-roots 1.0.12 and others) and drop dependencies nothing used. Removing the unused `utoipa-axum` also removes `paste` (RUSTSEC-2024-0436), so `audit.toml` no longer ignores any advisory. Member crates inherit the workspace `authors`, `license` and `repository`.
+- **BREAKING for Rust embedders — timestamps are `jiff::Timestamp`.** `OrderRecord.created_at`, `OrderEvent.occurred_at` and `AuditEvent.occurred_at` were `chrono::DateTime<Utc>`. Orders stored by earlier releases (UTC `Z` or `+00:00`) still load. REST order `created_at` / `occurred_at` stay RFC 3339 but now write UTC as `Z` instead of `+00:00`.
+
+### Security
+
+- Replace `chrono`, now unmaintained (RUSTSEC-2026-0543), with `jiff`.
 
 ## [0.11.0] - 2026-11-04
 

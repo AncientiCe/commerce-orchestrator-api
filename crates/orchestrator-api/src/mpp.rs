@@ -106,7 +106,8 @@ impl MppChallenge {
             return Err(MppError("invalid credential header"));
         }
         if let Some(expires) = &self.expires {
-            chrono::DateTime::parse_from_rfc3339(expires)
+            expires
+                .parse::<jiff::Timestamp>()
                 .map_err(|_| MppError("invalid challenge expiry"))?;
         }
         if self.digest.as_deref().is_some_and(|v| !ascii(v))
@@ -162,9 +163,10 @@ impl MppChallenge {
     pub fn validate_request(&self, secret: &[u8], now: i64, body: &[u8]) -> Result<(), MppError> {
         self.verify_binding(secret)?;
         if let Some(expires) = &self.expires {
-            if chrono::DateTime::parse_from_rfc3339(expires)
+            if expires
+                .parse::<jiff::Timestamp>()
                 .map_err(|_| MppError("invalid expiry"))?
-                .timestamp()
+                .as_second()
                 <= now
             {
                 return Err(MppError("challenge expired"));
@@ -235,7 +237,8 @@ impl MppReceipt {
         {
             return Err(MppError("receipt requires successful settlement"));
         }
-        chrono::DateTime::parse_from_rfc3339(&self.timestamp)
+        self.timestamp
+            .parse::<jiff::Timestamp>()
             .map_err(|_| MppError("invalid settlement timestamp"))?;
         encode_json(self)
     }

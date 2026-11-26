@@ -546,7 +546,7 @@ impl From<OrderRecord> for OrderDto {
                 .into_iter()
                 .map(OrderAdjustmentDto::from)
                 .collect(),
-            created_at: r.created_at.to_rfc3339(),
+            created_at: r.created_at.to_string(),
         }
     }
 }
@@ -557,7 +557,7 @@ impl From<OrderEvent> for OrderEventDto {
             id: e.id,
             event_type: e.event_type,
             description: e.description,
-            occurred_at: e.occurred_at.to_rfc3339(),
+            occurred_at: e.occurred_at.to_string(),
         }
     }
 }
@@ -1295,7 +1295,7 @@ impl From<OrderRecord> for UcpOrderResponseDto {
             fulfillment: UcpOrderFulfillmentDto::default(),
             totals: ucp_totals(&order.totals),
             events: order.events.into_iter().map(OrderEventDto::from).collect(),
-            created_at: order.created_at.to_rfc3339(),
+            created_at: order.created_at.to_string(),
         }
     }
 }
