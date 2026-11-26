@@ -159,10 +159,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     (!trimmed.is_empty()).then(|| trimmed.to_string())
                 })
                 .collect::<Vec<_>>();
-            Arc::new(orchestrator_api::JwtAuthnResolver::new_hs256(
-                &prod.auth_token,
-                trusted_issuers,
-            ))
+            Arc::new(
+                orchestrator_api::JwtAuthnResolver::new_hs256(&prod.auth_token, trusted_issuers)
+                    .map_err(|e| format!("jwt auth: {}", e))?,
+            )
         } else {
             Arc::new(StaticTokenAuthnResolver::new(
                 prod.auth_token,

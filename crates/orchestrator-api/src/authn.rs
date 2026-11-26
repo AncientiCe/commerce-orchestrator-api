@@ -26,15 +26,21 @@ pub struct JwtAuthnResolver {
     trusted_issuers: Vec<String>,
 }
 
+/// An HS256 resolver cannot be built from an empty secret.
+#[derive(Debug, thiserror::Error)]
+#[error("the JWT HS256 secret must not be empty")]
+pub struct EmptyJwtSecret;
+
 impl JwtAuthnResolver {
-    pub fn new_hs256(secret: &str, trusted_issuers: Vec<String>) -> Self {
+    pub fn new_hs256(secret: &str, trusted_issuers: Vec<String>) -> Result<Self, EmptyJwtSecret> {
         let mut validation = jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::HS256);
         validation.validate_exp = true;
-        Self {
-            decoding_key: jsonwebtoken::DecodingKey::from_secret(secret.as_bytes()),
+        Ok(Self {
+            decoding_key: jsonwebtoken::DecodingKey::from_secret(secret.as_bytes())
+                .map_err(|_| EmptyJwtSecret)?,
             validation,
             trusted_issuers,
-        }
+        })
     }
 }
 
@@ -80,7 +86,8 @@ mod tests {
 
     #[test]
     fn jwt_resolver_accepts_valid_token() {
-        let resolver = JwtAuthnResolver::new_hs256("secret", vec!["issuer.example".to_string()]);
+        let resolver = JwtAuthnResolver::new_hs256("secret", vec!["issuer.example".to_string()])
+            .expect("non-empty secret");
         let claims = TestClaims {
             sub: "caller_1".to_string(),
             tenant_id: "tenant_1".to_string(),
@@ -95,11 +102,16 @@ mod tests {
         let token = jsonwebtoken::encode(
             &jsonwebtoken::Header::default(),
             &claims,
-            &jsonwebtoken::EncodingKey::from_secret("secret".as_bytes()),
+            &jsonwebtoken::EncodingKey::from_secret("secret".as_bytes()).expect("key"),
         )
         .expect("encode token");
         let context = resolver.resolve_bearer(&token).expect("resolve context");
         assert_eq!(context.caller_id, "caller_1");
         assert_eq!(context.tenant_id, "tenant_1");
+    }
+
+    #[test]
+    fn an_empty_hs256_secret_is_refused() {
+        assert!(JwtAuthnResolver::new_hs256("", vec![]).is_err());
     }
 }
