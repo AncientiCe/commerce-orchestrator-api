@@ -18,7 +18,7 @@ serde = { version = "1", features = ["derive"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 tokio = { version = "1", features = ["sync", "time", "fs", "io-util", "rt", "macros"] }
 tracing = "0.1"
-jiff = { version = "0.2", features = ["serde"] }
+jiff = { version = "1", features = ["serde"] }
 serde_json = "1"
 # `_rt-tokio` is what binds sqlx's pool to the Tokio runtime. Without it every
 # `PgPool` connect panics with "either the `runtime-async-std` or `runtime-tokio`

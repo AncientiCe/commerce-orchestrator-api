@@ -79,7 +79,7 @@ fn test_state_production_auth() -> AppState {
 async fn health_live_returns_ok() {
     let state = test_state();
     let app = app::app().with_state(state);
-    let server = TestServer::new(app).unwrap();
+    let server = TestServer::new(app);
 
     let response = server.get("/health/live").await;
     response.assert_status_ok();
@@ -90,7 +90,7 @@ async fn health_live_returns_ok() {
 async fn health_ready_returns_ok() {
     let state = test_state();
     let app = app::app().with_state(state);
-    let server = TestServer::new(app).unwrap();
+    let server = TestServer::new(app);
 
     let response = server.get("/health/ready").await;
     response.assert_status_ok();
@@ -101,7 +101,7 @@ async fn health_ready_returns_ok() {
 async fn metrics_returns_request_count() {
     let state = test_state();
     let app = app::app().with_state(state);
-    let server = TestServer::new(app).unwrap();
+    let server = TestServer::new(app);
 
     let _ = server.get("/health/live").await;
     let response = server.get("/metrics").await;
@@ -115,7 +115,7 @@ async fn metrics_returns_request_count() {
 async fn openapi_endpoint_returns_json_document() {
     let state = test_state();
     let app = app::app().with_state(state);
-    let server = TestServer::new(app).unwrap();
+    let server = TestServer::new(app);
 
     let response = server.get("/api/v1/openapi.json").await;
     response.assert_status_ok();
@@ -127,7 +127,7 @@ async fn openapi_endpoint_returns_json_document() {
 async fn cart_command_create_returns_cart() {
     let state = test_state();
     let app = app::app().with_state(state);
-    let server = TestServer::new(app).unwrap();
+    let server = TestServer::new(app);
 
     let body = serde_json::json!({
         "command": {
@@ -148,7 +148,7 @@ async fn cart_command_create_returns_cart() {
 async fn protected_route_returns_401_when_auth_required_and_no_token() {
     let state = test_state_production_auth();
     let app = app::app().with_state(state);
-    let server = TestServer::new(app).unwrap();
+    let server = TestServer::new(app);
 
     let body = serde_json::json!({
         "command": {
@@ -165,7 +165,7 @@ async fn protected_route_returns_401_when_auth_required_and_no_token() {
 async fn protected_route_returns_401_when_auth_required_and_invalid_token() {
     let state = test_state_production_auth();
     let app = app::app().with_state(state);
-    let server = TestServer::new(app).unwrap();
+    let server = TestServer::new(app);
 
     let body = serde_json::json!({
         "command": {
@@ -189,7 +189,7 @@ async fn protected_route_returns_401_when_auth_required_and_invalid_token() {
 async fn protected_route_succeeds_with_valid_token() {
     let state = test_state_production_auth();
     let app = app::app().with_state(state);
-    let server = TestServer::new(app).unwrap();
+    let server = TestServer::new(app);
 
     let body = serde_json::json!({
         "command": {
@@ -213,7 +213,7 @@ async fn protected_route_succeeds_with_valid_token() {
 async fn get_order_returns_order_after_checkout() {
     let state = test_state();
     let app = app::app().with_state(state);
-    let server = TestServer::new(app).unwrap();
+    let server = TestServer::new(app);
 
     let create = serde_json::json!({
         "command": { "kind": "create_cart", "merchant_id": "m1", "currency": "USD" }
@@ -276,7 +276,7 @@ async fn get_order_returns_order_after_checkout() {
 async fn checkout_with_a_mismatched_amount_returns_422_amount_mismatch() {
     let state = test_state();
     let app = app::app().with_state(state);
-    let server = TestServer::new(app).unwrap();
+    let server = TestServer::new(app);
 
     let create = serde_json::json!({
         "command": { "kind": "create_cart", "merchant_id": "m1", "currency": "USD" }
@@ -328,7 +328,7 @@ async fn checkout_with_a_mismatched_amount_returns_422_amount_mismatch() {
 async fn list_orders_returns_tenant_orders() {
     let state = test_state();
     let app = app::app().with_state(state);
-    let server = TestServer::new(app).unwrap();
+    let server = TestServer::new(app);
 
     let create = serde_json::json!({
         "command": { "kind": "create_cart", "merchant_id": "m1", "currency": "USD" }
@@ -386,7 +386,7 @@ async fn list_orders_returns_tenant_orders() {
 async fn get_order_not_found_returns_404() {
     let state = test_state();
     let app = app::app().with_state(state);
-    let server = TestServer::new(app).unwrap();
+    let server = TestServer::new(app);
 
     let response = server.get("/api/v1/orders/nonexistent").await;
     response.assert_status_not_found();
@@ -396,7 +396,7 @@ async fn get_order_not_found_returns_404() {
 async fn mcp_message_initialize_returns_server_info() {
     let state = test_state();
     let app = app::app().with_state(state);
-    let server = TestServer::new(app).unwrap();
+    let server = TestServer::new(app);
 
     let body = serde_json::json!({
         "jsonrpc": "2.0",
@@ -415,7 +415,7 @@ async fn mcp_message_initialize_returns_server_info() {
 async fn mcp_tools_list_returns_tools() {
     let state = test_state();
     let app = app::app().with_state(state);
-    let server = TestServer::new(app).unwrap();
+    let server = TestServer::new(app);
 
     let body = serde_json::json!({
         "jsonrpc": "2.0",
@@ -433,7 +433,7 @@ async fn mcp_tools_list_returns_tools() {
 async fn mcp_tool_call_create_cart() {
     let state = test_state();
     let app = app::app().with_state(state);
-    let server = TestServer::new(app).unwrap();
+    let server = TestServer::new(app);
 
     let body = serde_json::json!({
         "jsonrpc": "2.0",
@@ -459,7 +459,7 @@ async fn mcp_tool_call_create_cart() {
 async fn webhook_register_list_and_unregister() {
     let state = test_state();
     let app = app::app().with_state(state);
-    let server = TestServer::new(app).unwrap();
+    let server = TestServer::new(app);
 
     let body = serde_json::json!({
         "url": "https://example.com/webhook",
@@ -495,7 +495,7 @@ async fn webhook_register_list_and_unregister() {
 async fn catalog_lookup_returns_item() {
     let state = test_state();
     let app = app::app().with_state(state);
-    let server = TestServer::new(app).unwrap();
+    let server = TestServer::new(app);
 
     let response = server.get("/api/v1/catalog/items/SKU-1").await;
     response.assert_status_ok();
@@ -509,7 +509,7 @@ async fn catalog_lookup_returns_item() {
 async fn catalog_lookup_not_found_returns_error() {
     let state = test_state();
     let app = app::app().with_state(state);
-    let server = TestServer::new(app).unwrap();
+    let server = TestServer::new(app);
 
     let response = server.get("/api/v1/catalog/items/NONEXISTENT").await;
     let status = response.status_code();
@@ -520,7 +520,7 @@ async fn catalog_lookup_not_found_returns_error() {
 async fn ucp_cart_create_get_update_and_cancel_return_ucp_envelopes() {
     let state = test_state();
     let app = app::app().with_state(state);
-    let server = TestServer::new(app).unwrap();
+    let server = TestServer::new(app);
 
     let create = serde_json::json!({
         "merchant_id": "m1",
@@ -584,7 +584,7 @@ async fn ucp_cart_create_get_update_and_cancel_return_ucp_envelopes() {
 async fn ucp_cart_fulfillment_quotes_and_selects_shipping_option() {
     let state = test_state();
     let app = app::app().with_state(state);
-    let server = TestServer::new(app).unwrap();
+    let server = TestServer::new(app);
 
     let create = serde_json::json!({
         "merchant_id": "m1",
@@ -654,7 +654,7 @@ async fn ucp_cart_fulfillment_quotes_and_selects_shipping_option() {
 async fn ucp_catalog_search_lookup_and_product_return_ucp_envelopes() {
     let state = test_state();
     let app = app::app().with_state(state);
-    let server = TestServer::new(app).unwrap();
+    let server = TestServer::new(app);
 
     let search = serde_json::json!({ "query": "test" });
     let search_response = server
@@ -706,7 +706,7 @@ async fn ucp_catalog_search_lookup_and_product_return_ucp_envelopes() {
 async fn ucp_order_get_returns_current_order_shape() {
     let state = test_state();
     let app = app::app().with_state(state);
-    let server = TestServer::new(app).unwrap();
+    let server = TestServer::new(app);
 
     let create = serde_json::json!({
         "command": { "kind": "create_cart", "merchant_id": "m1", "currency": "USD" }
@@ -783,7 +783,7 @@ async fn ucp_order_get_returns_current_order_shape() {
 async fn a2a_identity_link_returns_link_result_envelope() {
     let state = test_state_with_optional_providers();
     let app = app::app().with_state(state);
-    let server = TestServer::new(app).unwrap();
+    let server = TestServer::new(app);
 
     let body = serde_json::json!({
         "capability": "dev.ucp.identity.linking",
@@ -818,7 +818,7 @@ async fn a2a_identity_link_returns_link_result_envelope() {
 async fn acp_checkout_session_lifecycle_and_delegate_payment() {
     let state = test_state_with_optional_providers();
     let app = app::app().with_state(state);
-    let server = TestServer::new(app).unwrap();
+    let server = TestServer::new(app);
 
     let create = serde_json::json!({
         "merchant_id": "m1",
@@ -909,7 +909,7 @@ async fn acp_checkout_session_lifecycle_and_delegate_payment() {
 async fn acp_post_routes_require_idempotency_key_header() {
     let state = test_state();
     let app = app::app().with_state(state);
-    let server = TestServer::new(app).unwrap();
+    let server = TestServer::new(app);
 
     let create_without_key = server
         .post("/api/v1/acp/checkout_sessions")
@@ -991,7 +991,7 @@ async fn acp_post_routes_require_idempotency_key_header() {
 async fn acp_cart_create_get_update_and_cancel_lifecycle() {
     let state = test_state();
     let app = app::app().with_state(state);
-    let server = TestServer::new(app).unwrap();
+    let server = TestServer::new(app);
 
     let create = server
         .post("/api/v1/acp/carts")

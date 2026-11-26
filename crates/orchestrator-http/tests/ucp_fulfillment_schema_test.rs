@@ -28,7 +28,7 @@ fn server() -> TestServer {
         Arc::new(MockReceiptProvider),
         orchestrator_core::policy::PolicyEngine::default(),
     );
-    TestServer::new(app::app().with_state(AppState::new(facade))).unwrap()
+    TestServer::new(app::app().with_state(AppState::new(facade)))
 }
 
 async fn checkout_with(server: &TestServer, selection: serde_json::Value) -> serde_json::Value {

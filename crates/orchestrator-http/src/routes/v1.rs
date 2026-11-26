@@ -47,62 +47,62 @@ pub fn routes() -> Router<AppState> {
         .route("/cart/commands", post(dispatch_cart_command))
         // UCP REST binding paths (services/shopping/rest.openapi.json).
         .route("/ucp/carts", post(ucp_create_cart))
-        .route("/ucp/carts/:id", get(ucp_get_cart).put(ucp_update_cart))
-        .route("/ucp/carts/:id/cancel", post(ucp_cancel_cart))
+        .route("/ucp/carts/{id}", get(ucp_get_cart).put(ucp_update_cart))
+        .route("/ucp/carts/{id}/cancel", post(ucp_cancel_cart))
         .route("/ucp/checkout-sessions", post(ucp_create_checkout))
         .route(
-            "/ucp/checkout-sessions/:id",
+            "/ucp/checkout-sessions/{id}",
             get(ucp_get_checkout).put(ucp_update_checkout),
         )
         .route(
-            "/ucp/checkout-sessions/:id/complete",
+            "/ucp/checkout-sessions/{id}/complete",
             post(ucp_complete_checkout),
         )
         .route(
-            "/ucp/checkout-sessions/:id/cancel",
+            "/ucp/checkout-sessions/{id}/cancel",
             post(ucp_cancel_checkout),
         )
         // Pre-binding paths, kept so existing integrations keep working.
         .route("/ucp/cart", post(ucp_create_cart))
-        .route("/ucp/cart/:id", get(ucp_get_cart))
-        .route("/ucp/cart/:id", put(ucp_update_cart))
-        .route("/ucp/cart/:id/cancel", post(ucp_cancel_cart))
-        .route("/ucp/cart/:id/fulfillment", post(ucp_set_cart_fulfillment))
+        .route("/ucp/cart/{id}", get(ucp_get_cart))
+        .route("/ucp/cart/{id}", put(ucp_update_cart))
+        .route("/ucp/cart/{id}/cancel", post(ucp_cancel_cart))
+        .route("/ucp/cart/{id}/fulfillment", post(ucp_set_cart_fulfillment))
         .route("/ucp/checkout", post(ucp_create_checkout))
-        .route("/ucp/checkout/:id", get(ucp_get_checkout))
-        .route("/ucp/checkout/:id", put(ucp_update_checkout))
-        .route("/ucp/checkout/:id/complete", post(ucp_complete_checkout))
-        .route("/ucp/checkout/:id/cancel", post(ucp_cancel_checkout))
+        .route("/ucp/checkout/{id}", get(ucp_get_checkout))
+        .route("/ucp/checkout/{id}", put(ucp_update_checkout))
+        .route("/ucp/checkout/{id}/complete", post(ucp_complete_checkout))
+        .route("/ucp/checkout/{id}/cancel", post(ucp_cancel_checkout))
         .route(
-            "/ucp/checkout/:id/fulfillment",
+            "/ucp/checkout/{id}/fulfillment",
             post(ucp_set_checkout_fulfillment),
         )
         .route(
-            "/ucp/checkout/:id/embedded-link",
+            "/ucp/checkout/{id}/embedded-link",
             post(ucp_create_embedded_checkout_link),
         )
         .route("/ucp/payment-handlers", get(ucp_list_payment_handlers))
-        .route("/ucp/payment-handlers/:id", get(ucp_get_payment_handler))
+        .route("/ucp/payment-handlers/{id}", get(ucp_get_payment_handler))
         .route("/ucp/catalog/search", post(ucp_catalog_search))
         .route("/ucp/catalog/lookup", post(ucp_catalog_lookup))
         .route("/ucp/catalog/product", post(ucp_catalog_product))
-        .route("/ucp/orders/:id", get(ucp_get_order))
+        .route("/ucp/orders/{id}", get(ucp_get_order))
         .route("/acp/checkout_sessions", post(acp_create_session))
-        .route("/acp/checkout_sessions/:id", get(acp_get_session))
-        .route("/acp/checkout_sessions/:id", put(acp_update_session))
+        .route("/acp/checkout_sessions/{id}", get(acp_get_session))
+        .route("/acp/checkout_sessions/{id}", put(acp_update_session))
         .route(
-            "/acp/checkout_sessions/:id/complete",
+            "/acp/checkout_sessions/{id}/complete",
             post(acp_complete_session),
         )
         .route(
-            "/acp/checkout_sessions/:id/cancel",
+            "/acp/checkout_sessions/{id}/cancel",
             post(acp_cancel_session),
         )
         .route("/acp/delegate_payment", post(acp_delegate_payment))
         .route("/acp/carts", post(acp_create_cart))
-        .route("/acp/carts/:id", get(acp_get_cart))
-        .route("/acp/carts/:id", put(acp_update_cart_endpoint))
-        .route("/acp/carts/:id/cancel", post(acp_cancel_cart_endpoint))
+        .route("/acp/carts/{id}", get(acp_get_cart))
+        .route("/acp/carts/{id}", put(acp_update_cart_endpoint))
+        .route("/acp/carts/{id}/cancel", post(acp_cancel_cart_endpoint))
         .route("/checkout/execute", post(execute_checkout))
         .route("/a2a/checkout", post(a2a_execute_checkout))
         .route("/a2a/cart", post(a2a_dispatch_cart_command))
@@ -110,17 +110,17 @@ pub fn routes() -> Router<AppState> {
         .route("/a2a/orders", post(a2a_get_order))
         // A2A 1.0 HTTP+JSON binding: `/message:send` (the colon is part of the
         // path, so it is matched as an operation name) and task operations.
-        .route("/a2a/:operation", post(super::a2a::post_operation))
+        .route("/a2a/{operation}", post(super::a2a::post_operation))
         .route(
-            "/a2a/tasks/:task",
+            "/a2a/tasks/{task}",
             get(super::a2a::get_task).post(super::a2a::post_task),
         )
         .route("/orders", get(list_orders))
-        .route("/orders/:id", get(get_order))
-        .route("/catalog/items/:id", get(lookup_catalog_item))
+        .route("/orders/{id}", get(get_order))
+        .route("/catalog/items/{id}", get(lookup_catalog_item))
         .route("/webhooks", post(register_webhook))
         .route("/webhooks", get(list_webhooks))
-        .route("/webhooks/:id", axum::routing::delete(unregister_webhook))
+        .route("/webhooks/{id}", axum::routing::delete(unregister_webhook))
         .route("/payments/capture", post(capture_payment))
         .route("/payments/void", post(void_payment))
         .route("/payments/refund", post(refund_payment))

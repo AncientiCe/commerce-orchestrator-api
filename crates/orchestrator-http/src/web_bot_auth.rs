@@ -23,7 +23,7 @@ pub struct DirectoryDocument {
 }
 /// Implementations must authenticate the directory URL and never substitute keys
 /// fetched from another URL. Production uses HTTPS with public-address pinning.
-#[axum::async_trait]
+#[async_trait::async_trait]
 pub trait DirectoryResolver: Send + Sync {
     async fn resolve(&self, url: &str) -> Result<DirectoryDocument, String>;
 }
@@ -82,7 +82,7 @@ fn public_address(ip: IpAddr) -> bool {
         }
     }
 }
-#[axum::async_trait]
+#[async_trait::async_trait]
 impl DirectoryResolver for HttpsDirectories {
     async fn resolve(&self, value: &str) -> Result<DirectoryDocument, String> {
         if !self.allowed.contains(value) {

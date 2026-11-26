@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **BREAKING for Rust embedders — `JwtAuthnResolver::new_hs256` returns `Result<_, EmptyJwtSecret>`.** jsonwebtoken 12 refuses empty HMAC secrets, and the server now fails at startup with `jwt auth: …` instead of accepting tokens signed with an empty key.
 
+- The HTTP server moves to axum 0.8, tower-http 0.7 and utoipa 6. Routes and responses are unchanged. The rest of the major dependencies move too: sqlx 0.9, jsonwebtoken 12, sha2 0.11 / hmac 0.13, serde_jcs 0.4, prometheus-client 0.26 and jiff 1.
+- The workspace `rust-version` rises from 1.89 to 1.94, which sqlx 0.9 requires. The Docker builder stays on `rust:1.98`.
 - Outbound HTTPS moves to reqwest 0.13, which verifies servers against the operating system's trust store instead of the bundled `webpki-roots` list. The shipped image already installs `ca-certificates`. Custom images need it too, and private CAs can now go in the OS store.
 
 ### Security

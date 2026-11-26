@@ -1,7 +1,6 @@
 //! Auth extractors and enforcement for API routes.
 
 use axum::{
-    async_trait,
     extract::FromRequestParts,
     http::{header::AUTHORIZATION, request::Parts},
 };
@@ -26,7 +25,6 @@ fn dev_auth_context() -> AuthContext {
 /// When allow_dev_auth is false (production): requires authn to be configured and valid token; returns 401 otherwise.
 pub struct AuthContextExtractor(pub AuthContext);
 
-#[async_trait]
 impl FromRequestParts<AppState> for AuthContextExtractor {
     type Rejection = ApiError;
 
@@ -109,7 +107,6 @@ impl AuthnResolver for StaticTokenAuthnResolver {
 /// Optional auth: returns None when no resolver or no/invalid token.
 pub struct OptionalAuthContext(pub Option<AuthContext>);
 
-#[async_trait]
 impl FromRequestParts<AppState> for OptionalAuthContext {
     type Rejection = ApiError;
 

@@ -69,7 +69,7 @@ fn configured_state() -> AppState {
 }
 
 async fn profile(state: AppState) -> serde_json::Value {
-    let server = TestServer::new(app::app().with_state(state)).unwrap();
+    let server = TestServer::new(app::app().with_state(state));
     let response = server.get("/.well-known/ucp").await;
     response.assert_status_ok();
     response.json()
@@ -177,7 +177,7 @@ async fn payment_handlers_are_not_a_capability() {
 
 #[tokio::test]
 async fn the_profile_is_publicly_cacheable_for_at_least_a_minute() {
-    let server = TestServer::new(app::app().with_state(bare_state())).unwrap();
+    let server = TestServer::new(app::app().with_state(bare_state()));
     let response = server.get("/.well-known/ucp").await;
     let cache_control = response
         .headers()
@@ -198,7 +198,7 @@ async fn the_profile_is_publicly_cacheable_for_at_least_a_minute() {
 
 #[tokio::test]
 async fn older_versions_link_to_self_contained_profiles() {
-    let server = TestServer::new(app::app().with_state(configured_state())).unwrap();
+    let server = TestServer::new(app::app().with_state(configured_state()));
     let latest: serde_json::Value = server.get("/.well-known/ucp").await.json();
     let supported = latest["ucp"]["supported_versions"].as_object().unwrap();
     for version in ["2026-04-08", "2026-01-23", "2026-01-11"] {

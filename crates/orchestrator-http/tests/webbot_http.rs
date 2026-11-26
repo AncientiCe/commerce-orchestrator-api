@@ -16,7 +16,7 @@ use sha2::{Digest, Sha256};
 use std::sync::Arc;
 
 struct Directory(Value);
-#[axum::async_trait]
+#[async_trait::async_trait]
 impl DirectoryResolver for Directory {
     async fn resolve(&self, url: &str) -> Result<DirectoryDocument, String> {
         if url != "https://agent.example/keys" {
@@ -65,7 +65,7 @@ fn fixture() -> (TestServer, String, String) {
     );
     let router = app::signed_router(router, state.clone()).with_state(state);
     (
-        TestServer::new(router).unwrap(),
+        TestServer::new(router),
         format!("sig1={params}"),
         format!("sig1=:{signature}:"),
     )

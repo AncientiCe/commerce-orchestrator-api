@@ -66,7 +66,7 @@ fn facade() -> orchestrator_api::OrchestratorFacade {
 }
 
 fn server(state: AppState) -> TestServer {
-    TestServer::new(app::app().with_state(state)).expect("test server")
+    TestServer::new(app::app().with_state(state))
 }
 
 fn acp_headers(request: axum_test::TestRequest) -> axum_test::TestRequest {

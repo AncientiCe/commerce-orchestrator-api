@@ -54,7 +54,7 @@ fn test_state_with_signing(base_url: &str) -> AppState {
 async fn well_known_acp_returns_200_and_manifest() {
     let state = fully_configured_state("https://orchestrator.example.com");
     let app = app::app().with_state(state);
-    let server = TestServer::new(app).unwrap();
+    let server = TestServer::new(app);
 
     let response = server.get("/.well-known/acp.json").await;
     response.assert_status_ok();
@@ -102,7 +102,7 @@ async fn well_known_acp_returns_200_and_manifest() {
 async fn well_known_ucp_returns_200_and_manifest() {
     let state = test_state_with_base_url("https://orchestrator.example.com");
     let app = app::app().with_state(state);
-    let server = TestServer::new(app).unwrap();
+    let server = TestServer::new(app);
 
     let response = server.get("/.well-known/ucp").await;
     response.assert_status_ok();
@@ -164,7 +164,7 @@ async fn well_known_ucp_returns_200_and_manifest() {
 async fn well_known_ucp_advertises_current_core_capabilities() {
     let state = fully_configured_state("http://localhost:8080");
     let app = app::app().with_state(state);
-    let server = TestServer::new(app).unwrap();
+    let server = TestServer::new(app);
 
     let response = server.get("/.well-known/ucp").await;
     response.assert_status_ok();
@@ -203,7 +203,7 @@ async fn well_known_ucp_advertises_current_core_capabilities() {
 async fn well_known_ucp_advertises_fulfillment_extension() {
     let state = test_state_with_base_url("http://localhost:8080");
     let app = app::app().with_state(state);
-    let server = TestServer::new(app).unwrap();
+    let server = TestServer::new(app);
 
     let response = server.get("/.well-known/ucp").await;
     response.assert_status_ok();
@@ -235,7 +235,7 @@ async fn well_known_ucp_advertises_fulfillment_extension() {
 async fn advertised_capabilities_have_implemented_routes() {
     let state = test_state_with_base_url("http://localhost:8080");
     let app = app::app().with_state(state);
-    let server = TestServer::new(app).unwrap();
+    let server = TestServer::new(app);
 
     // Cart/checkout routes must exist (not 404)
     let create = serde_json::json!({
@@ -331,7 +331,7 @@ async fn advertised_capabilities_have_implemented_routes() {
 async fn well_known_ucp_legacy_version_retains_manifest_compatibility() {
     let state = test_state_with_base_url("https://orchestrator.example.com");
     let app = app::app().with_state(state);
-    let server = TestServer::new(app).unwrap();
+    let server = TestServer::new(app);
 
     let response = server
         .get("/.well-known/ucp")
@@ -355,7 +355,7 @@ async fn well_known_ucp_legacy_version_retains_manifest_compatibility() {
 async fn a2a_cart_envelope_normalizes_and_returns_cart() {
     let state = test_state_with_base_url("http://localhost:8080");
     let app = app::app().with_state(state);
-    let server = TestServer::new(app).unwrap();
+    let server = TestServer::new(app);
 
     let envelope = serde_json::json!({
         "capability": "dev.ucp.shopping.checkout",
@@ -374,7 +374,7 @@ async fn a2a_cart_envelope_normalizes_and_returns_cart() {
 async fn a2a_checkout_envelope_requires_valid_payload() {
     let state = test_state_with_base_url("http://localhost:8080");
     let app = app::app().with_state(state);
-    let server = TestServer::new(app).unwrap();
+    let server = TestServer::new(app);
 
     let envelope = serde_json::json!({
         "capability": "dev.ucp.shopping.checkout",
@@ -397,7 +397,7 @@ async fn a2a_checkout_envelope_requires_valid_payload() {
 async fn discovery_advertises_acp_signing_and_payment_handlers() {
     let state = test_state_with_signing("http://localhost:8080");
     let app = app::app().with_state(state);
-    let server = TestServer::new(app).unwrap();
+    let server = TestServer::new(app);
 
     let response = server.get("/.well-known/ucp").await;
     response.assert_status_ok();
@@ -425,7 +425,7 @@ async fn discovery_advertises_acp_signing_and_payment_handlers() {
 async fn discovery_omits_signing_keys_when_no_keyring_is_configured() {
     let state = test_state_with_base_url("http://localhost:8080");
     let app = app::app().with_state(state);
-    let server = TestServer::new(app).unwrap();
+    let server = TestServer::new(app);
 
     let response = server.get("/.well-known/ucp").await;
     response.assert_status_ok();
@@ -444,7 +444,7 @@ async fn discovery_omits_signing_keys_when_no_keyring_is_configured() {
 async fn ucp_checkout_and_payment_handler_routes_exist() {
     let state = test_state_with_base_url("http://localhost:8080");
     let app = app::app().with_state(state);
-    let server = TestServer::new(app).unwrap();
+    let server = TestServer::new(app);
 
     let create = serde_json::json!({
         "merchant_id": "m",
@@ -480,7 +480,7 @@ fn embedded_state() -> AppState {
 
 #[tokio::test]
 async fn well_known_ucp_advertises_embedded_transport() {
-    let server = TestServer::new(app::app().with_state(embedded_state())).unwrap();
+    let server = TestServer::new(app::app().with_state(embedded_state()));
 
     let response = server.get("/.well-known/ucp").await;
     response.assert_status_ok();
@@ -511,8 +511,7 @@ async fn embedded_transport_is_not_advertised_without_a_hosted_checkout_url() {
     // Signing alone is not enough: with nowhere to send the buyer, the link is dead.
     let server = TestServer::new(
         app::app().with_state(test_state_with_signing("https://orchestrator.example.com")),
-    )
-    .unwrap();
+    );
 
     let json: serde_json::Value = server.get("/.well-known/ucp").await.json();
     let services = json["ucp"]["services"]["dev.ucp.shopping"]
@@ -535,7 +534,7 @@ async fn embedded_transport_is_not_advertised_without_signing_keys() {
     // Without a key the handoff token cannot be verified by the hosted page.
     let state = test_state_with_base_url("https://orchestrator.example.com")
         .with_embedded_checkout_url(EMBEDDED_CHECKOUT_URL.to_string());
-    let server = TestServer::new(app::app().with_state(state)).unwrap();
+    let server = TestServer::new(app::app().with_state(state));
 
     let json: serde_json::Value = server.get("/.well-known/ucp").await.json();
     assert_eq!(
@@ -560,7 +559,7 @@ async fn create_ucp_checkout(server: &TestServer) -> String {
 async fn ucp_checkout_embedded_link_points_at_the_hosted_page_with_a_verifiable_token() {
     let state = embedded_state();
     let keyring = state.signing.clone().expect("signing configured");
-    let server = TestServer::new(app::app().with_state(state)).unwrap();
+    let server = TestServer::new(app::app().with_state(state));
     let cart_id = create_ucp_checkout(&server).await;
 
     let response = server
@@ -602,8 +601,7 @@ async fn ucp_checkout_embedded_link_points_at_the_hosted_page_with_a_verifiable_
 async fn ucp_checkout_embedded_link_returns_501_when_not_configured() {
     let server = TestServer::new(
         app::app().with_state(test_state_with_base_url("https://orchestrator.example.com")),
-    )
-    .unwrap();
+    );
     let cart_id = create_ucp_checkout(&server).await;
 
     let response = server
@@ -616,7 +614,7 @@ async fn ucp_checkout_embedded_link_returns_501_when_not_configured() {
 
 #[tokio::test]
 async fn ucp_checkout_embedded_link_returns_404_for_unknown_checkout() {
-    let server = TestServer::new(app::app().with_state(embedded_state())).unwrap();
+    let server = TestServer::new(app::app().with_state(embedded_state()));
 
     let response = server
         .post("/api/v1/ucp/checkout/00000000-0000-0000-0000-000000000099/embedded-link")
@@ -628,7 +626,7 @@ async fn ucp_checkout_embedded_link_returns_404_for_unknown_checkout() {
 async fn a2a_rejects_unsupported_version_header() {
     let state = test_state_with_base_url("http://localhost:8080");
     let app = app::app().with_state(state);
-    let server = TestServer::new(app).unwrap();
+    let server = TestServer::new(app);
 
     let envelope = serde_json::json!({
         "capability": "dev.ucp.shopping.checkout",

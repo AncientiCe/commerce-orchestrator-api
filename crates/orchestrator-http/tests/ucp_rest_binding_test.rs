@@ -30,7 +30,7 @@ fn server() -> TestServer {
         Arc::new(MockReceiptProvider),
         orchestrator_core::policy::PolicyEngine::default(),
     );
-    TestServer::new(app::app().with_state(AppState::new(facade))).unwrap()
+    TestServer::new(app::app().with_state(AppState::new(facade)))
 }
 
 fn line_items(quantity: u64) -> serde_json::Value {

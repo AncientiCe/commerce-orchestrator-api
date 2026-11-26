@@ -41,7 +41,7 @@ fn verifier_for(keyrings: &[&SigningKeyring]) -> VerifyingKeyring {
 
 fn server(state: AppState) -> TestServer {
     let router = app::signed_router(app::app(), state.clone()).with_state(state);
-    TestServer::new(router).expect("test server")
+    TestServer::new(router)
 }
 
 fn now_unix() -> i64 {

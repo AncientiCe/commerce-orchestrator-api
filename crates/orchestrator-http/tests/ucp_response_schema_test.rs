@@ -33,7 +33,7 @@ fn state() -> AppState {
 }
 
 fn server() -> TestServer {
-    TestServer::new(app::app().with_state(state())).unwrap()
+    TestServer::new(app::app().with_state(state()))
 }
 
 fn create_body(quantity: u32) -> serde_json::Value {

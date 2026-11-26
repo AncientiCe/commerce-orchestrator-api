@@ -31,7 +31,7 @@ fn facade() -> orchestrator_api::OrchestratorFacade {
 }
 
 fn server_for(state: AppState) -> TestServer {
-    TestServer::new(app::app().with_state(state.with_discovery_base_url(BASE.to_string()))).unwrap()
+    TestServer::new(app::app().with_state(state.with_discovery_base_url(BASE.to_string())))
 }
 
 fn server() -> TestServer {

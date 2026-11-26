@@ -1,3 +1,10 @@
 [advisories]
 # Every ignore needs a written justification and a condition for removing it.
-ignore = []
+ignore = [
+    # chrono is unmaintained (no vulnerability). It reaches the lockfile only as a
+    # dev-dependency: axum-test -> expect-json -> chrono, used by the HTTP test
+    # suite. The shipped crates use jiff, and
+    # `cargo tree -e normal,build -i chrono` must print nothing.
+    # Remove this once expect-json drops chrono.
+    "RUSTSEC-2026-0543",
+]
