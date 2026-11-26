@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-11-26
+
+Machine payments at checkout, signed webhooks, and a current dependency stack. MPP checkouts can now run the full `Payment` HTTP authentication flow: a `402` challenge, a single-use credential, and a `Payment-Receipt`. Webhooks carry the RFC 9421 signatures UCP requires. Every dependency is on its current major version, and `chrono` is replaced by `jiff`. Protocol targets are unchanged: UCP `2026-08-25`, A2A `1.0`, MCP `2026-07-28`, ACP `2026-04-17`, AP2 `0.2`.
+
+### Upgrading
+
+1. **Rust embedders:** order and audit timestamps are `jiff::Timestamp`, and `JwtAuthnResolver::new_hs256` returns a `Result`. The minimum Rust version is 1.94.
+2. **Custom container images:** install `ca-certificates`. Outbound TLS now trusts the operating system's store.
+3. **JWT mode:** an empty `AUTH_JWT_HS256_SECRET` now fails at startup.
+4. **Optional:** set `MPP_CHALLENGE_SECRET` to challenge MPP checkouts. Webhooks are signed automatically wherever UCP signing keys are configured.
+
 ### Added
 
 - **MPP `Payment` challenges on checkout.** Set `MPP_CHALLENGE_SECRET` to turn this on. An MPP `POST /api/v1/checkout/execute` without a credential is answered with `402` and `WWW-Authenticate: Payment`. The challenge is HMAC-bound to the realm, method, intent, amount, expiry and the request body's digest. A credential sent in `Payment-Authorization` must answer a challenge for that exact body. It is used once, passed to the payment provider, and answered with a `Payment-Receipt`. Refusals are `402` with a fresh challenge and a draft problem type: `malformed-credential`, `invalid-challenge`, `payment-expired` or `verification-failed`. The other settings are `MPP_REALM` (default: the `PUBLIC_BASE_URL` host) and `MPP_CHALLENGE_TTL_SECS` (default 300). Unset, MPP checkouts behave as before. Metrics: `mpp_challenge_issued_total`, `mpp_receipt_issued_total`, `mpp_credential_rejected_<problem>_total` and `mpp_credential_check` latency.
@@ -298,6 +309,7 @@ Recorded in the [conformance matrix](https://github.com/AncientiCe/commerce-orch
 
 - File-backed persistence is directory-based JSON; not suitable for high concurrency without external locking.
 
+[0.12.0]: https://github.com/AncientiCe/commerce-orchestrator-api/releases/tag/v0.12.0
 [0.11.0]: https://github.com/AncientiCe/commerce-orchestrator-api/releases/tag/v0.11.0
 [0.10.0]: https://github.com/AncientiCe/commerce-orchestrator-api/releases/tag/v0.10.0
 [0.9.0]: https://github.com/AncientiCe/commerce-orchestrator-api/releases/tag/v0.9.0
