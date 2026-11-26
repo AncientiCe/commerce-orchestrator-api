@@ -3,6 +3,9 @@ name = "orchestrator-mcp"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
 description = "Model Context Protocol (MCP) tool server for the commerce orchestrator"
 
 [dependencies]

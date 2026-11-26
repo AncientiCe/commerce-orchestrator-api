@@ -3,6 +3,9 @@ name = "orchestrator-http"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
 description = "REST API service for commerce orchestrator (Agent-facing)"
 
 [[bin]]
@@ -19,7 +22,6 @@ provider-mocks = { path = "../provider-mocks" }
 orchestrator-observability = { path = "../orchestrator-observability" }
 orchestrator-mcp = { path = "../orchestrator-mcp" }
 axum = { version = "0.7", features = ["json", "macros", "tokio"] }
-tower = "0.4"
 tower-http = { version = "0.5", features = ["trace"] }
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
@@ -31,7 +33,6 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 utoipa = "5"
-utoipa-axum = "0.2"
 
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 
@@ -40,7 +41,6 @@ base64 = "0.23.1"
 sha2 = "0.10"
 provider-mocks = { path = "../provider-mocks" }
 async-trait = "0.1"
-tower = "0.4"
 axum-test = "16"
 jsonschema = { version = "0.59", default-features = false }
 http = "1"

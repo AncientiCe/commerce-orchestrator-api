@@ -3,10 +3,12 @@ name = "orchestrator-observability"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
 description = "Tracing spans, metrics helpers, and audit event schemas"
 
 [dependencies]
-orchestrator-core = { path = "../orchestrator-core" }
 tracing = "0.1"
 serde = { version = "1", features = ["derive"] }
 uuid = { version = "1", features = ["v4", "serde"] }

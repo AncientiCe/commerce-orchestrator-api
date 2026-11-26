@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Refresh the lockfile (tokio 1.54, rustls-webpki 0.103.17, webpki-roots 1.0.12 and others) and drop dependencies nothing used. Removing the unused `utoipa-axum` also removes `paste` (RUSTSEC-2024-0436), so `audit.toml` no longer ignores any advisory. Member crates inherit the workspace `authors`, `license` and `repository`.
+
 ## [0.11.0] - 2026-11-04
 
 ### Added
