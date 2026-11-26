@@ -15,18 +15,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Refresh the lockfile (tokio 1.54, rustls-webpki 0.103.17, webpki-roots 1.0.12 and others) and drop dependencies nothing used. Removing the unused `utoipa-axum` also removes `paste` (RUSTSEC-2024-0436), so `audit.toml` no longer ignores any advisory. Member crates inherit the workspace `authors`, `license` and `repository`.
+- Refresh the lockfile (tokio 1.54, rustls-webpki 0.103.17, webpki-roots 1.0.12 and others) and drop dependencies nothing used. Removing the unused `utoipa-axum` also removes `paste` (RUSTSEC-2024-0436) and its audit exception. Member crates inherit the workspace `authors`, `license` and `repository`.
 - **BREAKING for Rust embedders — timestamps are `jiff::Timestamp`.** `OrderRecord.created_at`, `OrderEvent.occurred_at` and `AuditEvent.occurred_at` were `chrono::DateTime<Utc>`. Orders stored by earlier releases (UTC `Z` or `+00:00`) still load. REST order `created_at` / `occurred_at` stay RFC 3339 but now write UTC as `Z` instead of `+00:00`.
-
 - **BREAKING for Rust embedders — `JwtAuthnResolver::new_hs256` returns `Result<_, EmptyJwtSecret>`.** jsonwebtoken 12 refuses empty HMAC secrets, and the server now fails at startup with `jwt auth: …` instead of accepting tokens signed with an empty key.
-
 - The HTTP server moves to axum 0.8, tower-http 0.7 and utoipa 6. Routes and responses are unchanged. The rest of the major dependencies move too: sqlx 0.9, jsonwebtoken 12, sha2 0.11 / hmac 0.13, serde_jcs 0.4, prometheus-client 0.26 and jiff 1.
 - The workspace `rust-version` rises from 1.89 to 1.94, which sqlx 0.9 requires. The Docker builder stays on `rust:1.98`.
 - Outbound HTTPS moves to reqwest 0.13, which verifies servers against the operating system's trust store instead of the bundled `webpki-roots` list. The shipped image already installs `ca-certificates`. Custom images need it too, and private CAs can now go in the OS store.
 
 ### Security
 
-- Replace `chrono`, now unmaintained (RUSTSEC-2026-0543), with `jiff`.
+- Replace `chrono`, now unmaintained (RUSTSEC-2026-0543), with `jiff`. The shipped crates no longer depend on it. It remains only as a test dependency through `axum-test`, documented in `audit.toml`.
 
 ## [0.11.0] - 2026-11-04
 
