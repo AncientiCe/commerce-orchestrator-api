@@ -26,11 +26,11 @@ serde_json = "1"
 # It is an internal (underscore) feature because sqlx expects you to depend on the
 # `sqlx` facade; this crate depends on sqlx-core/sqlx-postgres directly, so it has
 # to be requested here.
-sqlx-core = { version = "0.8", default-features = false, features = [
+sqlx-core = { version = "0.9", default-features = false, features = [
     "json",
     "_rt-tokio",
 ] }
-sqlx-postgres = { version = "0.8" }
+sqlx-postgres = { version = "0.9", features = ["json"] }
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
 hmac = "0.13"
 sha2 = "0.11"

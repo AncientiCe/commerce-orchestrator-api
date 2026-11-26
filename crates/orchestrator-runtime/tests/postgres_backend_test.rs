@@ -22,6 +22,7 @@ use orchestrator_runtime::persistence::open_postgres_stores;
 use orchestrator_runtime::webhooks::WebhookRegistration;
 
 use sqlx_core::query::query;
+use sqlx_core::sql_str::AssertSqlSafe;
 use sqlx_postgres::{PgPool, PgPoolOptions};
 
 /// `None` means "no database configured": the caller returns instead of failing.
@@ -37,17 +38,24 @@ fn database_url() -> Option<String> {
 
 /// A private schema per test, so a failure cannot poison the next run and the
 /// tests do not fight over the same `outbox` table.
-async fn isolated(url: &str, schema: &str) -> (String, PgPool) {
+async fn isolated(url: &str, schema: &'static str) -> (String, PgPool) {
+    assert!(
+        schema.bytes().all(|b| b.is_ascii_lowercase() || b == b'_'),
+        "schema names are fixed identifiers"
+    );
     let admin = PgPoolOptions::new()
         .max_connections(1)
         .connect(url)
         .await
         .expect("connect to DATABASE_URL");
-    query(&format!("DROP SCHEMA IF EXISTS {schema} CASCADE"))
-        .execute(&admin)
-        .await
-        .expect("drop schema");
-    query(&format!("CREATE SCHEMA {schema}"))
+    // Schema names are fixed test identifiers, checked above.
+    query(AssertSqlSafe(format!(
+        "DROP SCHEMA IF EXISTS {schema} CASCADE"
+    )))
+    .execute(&admin)
+    .await
+    .expect("drop schema");
+    query(AssertSqlSafe(format!("CREATE SCHEMA {schema}")))
         .execute(&admin)
         .await
         .expect("create schema");
