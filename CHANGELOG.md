@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **BREAKING for Rust embedders — `JwtAuthnResolver::new_hs256` returns `Result<_, EmptyJwtSecret>`.** jsonwebtoken 12 refuses empty HMAC secrets, and the server now fails at startup with `jwt auth: …` instead of accepting tokens signed with an empty key.
 
+- Outbound HTTPS moves to reqwest 0.13, which verifies servers against the operating system's trust store instead of the bundled `webpki-roots` list. The shipped image already installs `ca-certificates`. Custom images need it too, and private CAs can now go in the OS store.
+
 ### Security
 
 - Replace `chrono`, now unmaintained (RUSTSEC-2026-0543), with `jiff`.

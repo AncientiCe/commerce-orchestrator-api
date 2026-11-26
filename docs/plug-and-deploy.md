@@ -7,6 +7,7 @@ This guide walks from zero to a running Commerce Orchestrator calling your six d
 - Rust toolchain (for local run and tests).
 - Docker (for container build).
 - Kubernetes cluster or Docker Compose for deployment (or run the server locally and point it at stub/mock URLs for development).
+- An operating-system CA trust store on the host or image. Outbound HTTPS (providers, OAuth token endpoints, Web Bot Auth key directories) is verified against the platform's trust store, not a bundled root list. The provided image installs `ca-certificates`. If you build a custom image, install it too, or add your private CA there.
 
 ## 1. Downstream API Contracts
 
