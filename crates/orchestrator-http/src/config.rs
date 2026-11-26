@@ -914,9 +914,53 @@ pub struct ServerSection {
     /// entries. Unset publishes an empty registry.
     #[serde(default)]
     pub ucp_payment_handlers: Option<String>,
+    /// HMAC key that binds MPP `Payment` challenges on checkout. Set, MPP
+    /// checkouts must answer a `402` challenge; unset, they are not challenged.
+    #[serde(default)]
+    pub mpp_challenge_secret: Option<String>,
+    /// Protection space named in MPP challenges. Defaults to the host of
+    /// `public_base_url`.
+    #[serde(default)]
+    pub mpp_realm: Option<String>,
+    /// Seconds an MPP challenge stays answerable (default 300, at most 3600).
+    #[serde(default)]
+    pub mpp_challenge_ttl_secs: Option<u64>,
 }
 
 impl ServerSection {
+    /// MPP challenge settings, or `None` when no challenge secret is configured.
+    pub fn mpp_settings(&self) -> Result<Option<crate::mpp::MppSettings>, String> {
+        let Some(secret) = self
+            .mpp_challenge_secret
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        else {
+            return Ok(None);
+        };
+        let realm = match self
+            .mpp_realm
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            Some(realm) => realm.to_string(),
+            None => self
+                .public_base_url
+                .as_deref()
+                .and_then(|url| url::Url::parse(url).ok())
+                .and_then(|url| url.host_str().map(str::to_string))
+                .ok_or("MPP_REALM: set it, or set PUBLIC_BASE_URL to derive it")?,
+        };
+        let ttl = self.mpp_challenge_ttl_secs.unwrap_or(300);
+        if ttl == 0 || ttl > 3600 {
+            return Err("MPP_CHALLENGE_TTL_SECS: must be 1 to 3600 seconds".into());
+        }
+        crate::mpp::MppSettings::new(secret.as_bytes().to_vec(), realm, ttl)
+            .map(Some)
+            .map_err(|e| format!("MPP: {e}"))
+    }
+
     /// Parse and check the configured payment handler registry.
     pub fn payment_handlers(&self) -> Result<serde_json::Value, String> {
         let Some(raw) = self
@@ -1057,6 +1101,17 @@ impl ServerConfig {
         if let Ok(v) = std::env::var("UCP_PAYMENT_HANDLERS") {
             let t = v.trim().to_string();
             self.server.ucp_payment_handlers = (!t.is_empty()).then_some(t);
+        }
+        if let Ok(v) = std::env::var("MPP_CHALLENGE_SECRET") {
+            let t = v.trim().to_string();
+            self.server.mpp_challenge_secret = (!t.is_empty()).then_some(t);
+        }
+        if let Ok(v) = std::env::var("MPP_REALM") {
+            let t = v.trim().to_string();
+            self.server.mpp_realm = (!t.is_empty()).then_some(t);
+        }
+        if let Ok(v) = std::env::var("MPP_CHALLENGE_TTL_SECS") {
+            self.server.mpp_challenge_ttl_secs = v.trim().parse().ok();
         }
         if let Ok(v) = std::env::var("RUST_LOG") {
             let t = v.trim().to_string();
@@ -1415,6 +1470,44 @@ mod tests {
         };
         let keyring = section.to_verifying_keyring().unwrap().expect("keyring");
         assert_eq!(keyring.kids(), vec!["agent-ed", "agent-ec"]);
+    }
+
+    #[test]
+    fn mpp_is_off_without_a_challenge_secret() {
+        assert!(ServerSection::default().mpp_settings().unwrap().is_none());
+    }
+
+    #[test]
+    fn mpp_realm_defaults_to_the_public_host() {
+        let server = ServerSection {
+            mpp_challenge_secret: Some("s3cret".to_string()),
+            public_base_url: Some("https://shop.example.com/base".to_string()),
+            ..Default::default()
+        };
+        let settings = server.mpp_settings().unwrap().expect("enabled");
+        assert_eq!(settings.realm(), "shop.example.com");
+    }
+
+    #[test]
+    fn mpp_needs_a_realm_when_there_is_no_public_url() {
+        let server = ServerSection {
+            mpp_challenge_secret: Some("s3cret".to_string()),
+            ..Default::default()
+        };
+        let err = server.mpp_settings().unwrap_err();
+        assert!(err.contains("MPP_REALM"), "got: {err}");
+    }
+
+    #[test]
+    fn mpp_rejects_an_out_of_range_challenge_lifetime() {
+        let server = ServerSection {
+            mpp_challenge_secret: Some("s3cret".to_string()),
+            mpp_realm: Some("shop.example".to_string()),
+            mpp_challenge_ttl_secs: Some(0),
+            ..Default::default()
+        };
+        let err = server.mpp_settings().unwrap_err();
+        assert!(err.contains("MPP_CHALLENGE_TTL_SECS"), "got: {err}");
     }
 
     fn server_with_handlers(json: &str) -> ServerSection {

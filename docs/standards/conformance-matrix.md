@@ -11,7 +11,7 @@ This document records target protocol versions and the Commerce Orchestrator's c
 | MCP (Model Context Protocol) | **Dual-era**: `2026-07-28` modern + `2025-11-25` / `2024-11-05` legacy | `server/discover` + per-request version meta; legacy `initialize` retained |
 | AP2 (Agent Payments Protocol) | **0.2** | [AP2 spec](https://ap2-protocol.org/); closed + open (HNP) mandates, VDCs |
 | ACP (Agentic Commerce Protocol) | **2026-04-17** | [ACP OpenAPI](https://github.com/agentic-commerce-protocol/agentic-commerce-protocol); merchant-hosted checkout sessions, Cart capability, delegate payment, mandatory `Idempotency-Key`, and `/.well-known/acp.json` discovery |
-| MPP (Machine Payments Protocol) | 2026 protocol stream | [MPP protocol](https://mpp.dev/protocol/); HTTP 402 challenge/credential/receipt flows and method/intent metadata |
+| MPP (Machine Payments Protocol) | **draft-httpauth-payment-01** (`charge` intent: draft-payment-intent-charge-00) | [MPP protocol](https://mpp.dev/protocol/), [Payment auth drafts](https://paymentauth.org/); HTTP 402 challenge/credential/receipt on REST checkout and method/intent metadata |
 
 ## Conformance Matrix
 
@@ -160,8 +160,11 @@ These are part of the current UCP release and are **not** advertised in discover
 | MPP metadata extraction for audit | required | Adapter extraction provides method/intent metadata without exposing credential payloads in logs | `adapters.rs`, `authz_and_adapters` |
 | MPP capability flag in discovery | required | Discovery capability flags include `dev.ucp.payments.mpp=true` for staged rollout signaling | `ucp_mapping.rs`, `discovery_test` |
 | Downstream payment adapter forwarding hints | optional | HTTP payment adapter forwards MPP context to downstream payment services (`X-Payment-Method`, `X-Mpp-Method`, `X-Mpp-Intent`) when payment method is MPP | `integration-adapters/src/payment.rs`, `adapters_http_test` |
-
-| Payment challenge binding primitives | optional | `MppChallenge` binds with HMAC-SHA256 over the published draft-httpauth-payment vectors; credentials and receipts encode/decode as base64url JCS. Not yet wired into checkout, so no 402 challenge is issued | `orchestrator-api/src/mpp.rs`, `mpp_wire` |
+| Payment challenge binding primitives | optional | `MppChallenge` binds with HMAC-SHA256 over the published draft-httpauth-payment vectors; credentials and receipts encode/decode as base64url JCS | `orchestrator-api/src/mpp.rs`, `mpp_wire` |
+| `402` Payment challenge on checkout | optional | With `MPP_CHALLENGE_SECRET` set, an MPP `POST /api/v1/checkout/execute` without a credential gets `402`, `Cache-Control: no-store`, an RFC 9457 `payment-required` problem, and `WWW-Authenticate: Payment`. The challenge is bound to realm, method, intent, a `charge` request (`amount` string, lowercase `currency`), `expires`, the body's RFC 9530 digest, `header="Payment-Authorization"` and a nonce in `opaque`. Unconfigured, MPP checkouts are not challenged | `mpp_checkout_test::an_mpp_checkout_without_a_credential_is_challenged`, `mpp_checkout_test::without_a_challenge_secret_mpp_checkout_is_not_challenged`, `mpp_checkout_test::other_payment_methods_are_not_challenged` |
+| Credential verification and single use | optional | The credential is read only from `Payment-Authorization` (one header, else `400`). Its echoed challenge must match this request and verify under the secret; an unexpired, unused `id` is claimed once in the persisted replay store. Refusals are `402` with a fresh challenge: `malformed-credential`, `invalid-challenge` (edited, other body, reused), `payment-expired`, `verification-failed` (provider refused the proof) | `mpp_checkout_test::a_credential_is_accepted_only_once`, `…::a_credential_cannot_pay_for_a_different_request`, `…::an_edited_challenge_is_refused`, `…::an_expired_challenge_is_refused`, `…::a_malformed_credential_is_refused_with_a_fresh_challenge`, `…::a_declined_proof_is_refused_with_a_fresh_challenge` |
+| `Payment-Receipt` | optional | A completed MPP checkout carries `Payment-Receipt` (`status: success`, `method`, RFC 3339 `timestamp`, `reference`, `challengeId`) and `Cache-Control: private`; errors never carry one. Metrics: `mpp_challenge_issued_total`, `mpp_receipt_issued_total`, `mpp_credential_rejected_<problem>_total`, `mpp_credential_check` operation latency | `mpp_checkout_test::a_valid_credential_completes_checkout_with_a_receipt`, `mpp_checkout_test::challenges_receipts_and_rejections_are_counted` |
+| MPP on UCP/ACP complete, A2A and MCP | not_supported_yet | Those transports carry payment in their own models (UCP payment handlers, ACP delegate payment, A2A DataParts), not in an HTTP auth scheme; only REST checkout issues `Payment` challenges. The MCP transport draft (`_meta` credentials) is not implemented | conformance review |
 
 ## Acceptance Criteria (Summary)
 
@@ -169,11 +172,11 @@ These are part of the current UCP release and are **not** advertised in discover
 2. **REST / UCP / ACP**: Cart, checkout lifecycle, catalog, order, payment, and ACP session/cart endpoints behave as documented; auth and tenant checks enforced; ACP POST routes require `Idempotency-Key`; ACP discovery is published at `/.well-known/acp.json`.
 3. **A2A/MCP**: Adapter layer converts A2A (and MCP dual-era) requests into domain types and executes via the same facade; policy and idempotency unchanged.
 4. **AP2 0.2**: Payment intent carries AP2 fields; strict mode verifies closed and optional open (HNP) mandates with constraint binding.
-5. **MPP**: Payment intent can carry MPP method metadata; discovery advertises MPP capability flag.
+5. **MPP**: Payment intent can carry MPP method metadata; discovery advertises MPP capability flag; with a challenge secret configured, REST checkout runs the `402` `Payment` challenge / credential / receipt flow.
 
 ## Machine-Readable Conformance (for CI)
 
-Conformance is asserted by the following tests; CI runs them in the "Conformance (discovery, REST binding, signatures, A2A, AP2)" step:
+Conformance is asserted by the following tests; CI runs them in the "Conformance (discovery, REST binding, signatures, A2A, AP2, MPP)" step:
 
 - `cargo test -p orchestrator-http --test discovery_test` — discovery endpoint, advertised capabilities, capability-route parity, A2A/ACP routes
 - `cargo test -p orchestrator-http --test ucp_profile_schema_test` — `/.well-known/ucp` validates against the official UCP `2026-08-25` business profile schema; profile rules the schema cannot express
@@ -183,6 +186,7 @@ Conformance is asserted by the following tests; CI runs them in the "Conformance
 - `cargo test -p orchestrator-http --test ucp_signature_test` and `cargo test -p orchestrator-api --test ucp_signing` — RFC 9421 signatures, Content-Digest, ES256/Ed25519, UCP error codes, RFC 9421 test vector
 - `cargo test -p orchestrator-http --test a2a_binding_test` — A2A 1.0 Agent Card, `SendMessage`, task operations, error shape
 - `cargo test -p orchestrator-api --test authz_and_adapters` — authz, AP2 0.2 HNP, A2A version negotiation, AP2 strict mode
+- `cargo test -p orchestrator-http --test mpp_checkout_test` — MPP `402` challenge, credential binding and single use, receipts, problem types
 - `cargo test -p orchestrator-mcp` — MCP dual-era discover / version errors / legacy initialize
 
 CI must pass these before claiming alignment in release notes.

@@ -18,6 +18,7 @@ use crate::state::AppState;
 use axum::{
     extract::{Path, State},
     http::HeaderMap,
+    response::{IntoResponse, Response},
     routing::{get, post, put},
     Json, Router,
 };
@@ -34,8 +35,8 @@ use orchestrator_api::{
 };
 use orchestrator_core::contract::{
     AddItemPayload, CancelCartPayload, CartCommand, CartId, CheckoutRequest, CreateCartPayload,
-    GetCartPayload, RemoveItemPayload, SetFulfillmentSelectionPayload, StartCheckoutPayload,
-    UpdateItemQtyPayload,
+    GetCartPayload, PaymentMethodType, RemoveItemPayload, SetFulfillmentSelectionPayload,
+    StartCheckoutPayload, UpdateItemQtyPayload,
 };
 use provider_contracts::PaymentDelegationRequest;
 use std::collections::HashSet;
@@ -985,16 +986,32 @@ async fn acp_delegate_payment(
 async fn execute_checkout(
     AuthContextExtractor(auth_ctx): AuthContextExtractor,
     State(state): State<AppState>,
-    Json(req): Json<CheckoutRequestDto>,
-) -> Result<Json<TransactionResultDto>, ApiError> {
-    let request = CheckoutRequest::try_from(req).map_err(ApiError::BadRequest)?;
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> Result<Response, ApiError> {
+    let req: CheckoutRequestDto = serde_json::from_slice(&body)
+        .map_err(|e| ApiError::BadRequest(format!("invalid checkout body: {e}")))?;
+    let mut request = CheckoutRequest::try_from(req).map_err(ApiError::BadRequest)?;
     let redacted = redact_checkout_request(&request);
     tracing::info!(checkout_request = ?redacted, "checkout execute");
+    let paid = match (&state.mpp, request.payment_intent.payment_method_type) {
+        (Some(settings), Some(PaymentMethodType::Mpp)) => {
+            match crate::mpp::gate(settings, &state, &mut request, &headers, &body).await? {
+                crate::mpp::Gate::Respond(response) => return Ok(response),
+                crate::mpp::Gate::Paid(paid) => Some(paid),
+            }
+        }
+        _ => None,
+    };
     let result = state
         .facade
-        .execute_checkout_authorized(&auth_ctx, request)
+        .execute_checkout_authorized(&auth_ctx, request.clone())
         .await?;
-    Ok(Json(result.into()))
+    let dto: TransactionResultDto = result.clone().into();
+    match paid {
+        Some(paid) => paid.respond(&request, result, dto),
+        None => Ok(Json(dto).into_response()),
+    }
 }
 
 /// POST /api/v1/a2a/checkout — A2A envelope: { "capability": "...", "payload": { CheckoutRequest } }. Same authz and idempotency as REST.

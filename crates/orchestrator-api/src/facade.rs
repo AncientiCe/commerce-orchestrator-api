@@ -274,6 +274,20 @@ impl OrchestratorFacade {
         result
     }
 
+    /// Claim a single-use payment challenge id until `expires_at` (epoch seconds).
+    /// Returns false when the id was already used. Shares the persisted replay
+    /// store with AP2 mandates, so callers prefix ids with their scheme.
+    pub async fn claim_payment_challenge(
+        &self,
+        challenge_id: &str,
+        expires_at: i64,
+    ) -> Result<bool, FacadeError> {
+        self.runner
+            .record_mandate(challenge_id, expires_at)
+            .await
+            .map_err(FacadeError::Runner)
+    }
+
     /// Execute checkout with explicit authz and tenant boundary enforcement.
     pub async fn execute_checkout_authorized(
         &self,

@@ -5,6 +5,7 @@ pub mod auth;
 pub mod config;
 pub mod dto;
 pub mod error;
+pub mod mpp;
 pub mod observability;
 pub mod openapi;
 pub mod routes;
@@ -18,6 +19,7 @@ pub use config::{
     ResolvedComponents, ServerConfig,
 };
 pub use error::ApiError;
+pub use mpp::MppSettings;
 pub use state::AppState;
 
 pub mod web_bot_auth;

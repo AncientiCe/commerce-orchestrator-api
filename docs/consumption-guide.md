@@ -221,9 +221,57 @@ when at least one discount applies; ACP session totals carry `discount_minor`.
 MPP note:
 
 - For machine payments, set `payment_intent.payment_method_type` to `mpp`.
-- Put the machine payment credential/token in `payment_intent.token_or_reference`.
-- Include `payment_intent.mpp_method` (for example `stripe`, `tempo`) and `payment_intent.mpp_intent` (for example `charge`, `session`).
+- Include `payment_intent.mpp_method` (a lowercase method name, for example `stripe` or `tempo`) and `payment_intent.mpp_intent` (for example `charge`).
 - Do not mix AP2 fields (`ap2_consent_proof`, `payment_handler_id`) with `payment_method_type = mpp`.
+- When the operator has not set `MPP_CHALLENGE_SECRET`, put the credential in `payment_intent.token_or_reference`. The payment provider gets it as sent.
+
+#### MPP `Payment` challenges
+
+With `MPP_CHALLENGE_SECRET` set, an MPP checkout is paid through the `Payment` HTTP authentication scheme (draft-httpauth-payment):
+
+1. **Send the checkout without a credential.** The answer is `402 Payment Required` with `Cache-Control: no-store`, an RFC 9457 problem body (`type: https://paymentauth.org/problems/payment-required`), and a challenge:
+
+   ```text
+   WWW-Authenticate: Payment id="…", realm="shop.example.com", method="tempo", intent="charge",
+     request="<base64url JSON>", expires="2026-11-26T12:05:00Z", digest="sha-256=:…:",
+     header="Payment-Authorization", opaque="…"
+   ```
+
+   - `request` decodes to `{"amount": "<amount_minor>", "currency": "<lowercase ISO 4217>"}`.
+   - `digest` is the RFC 9530 `Content-Digest` of the exact body you sent.
+   - `id` is an HMAC over every other parameter, so none of them can be edited.
+2. **Pay, then resend the same body.** Send the byte-identical body with `Payment-Authorization: Payment <base64url JSON>`. The JSON is `{ "challenge": { …the parameters echoed… }, "payload": { …method-specific proof… }, "source": "…" }`, as the draft defines. The credential goes in `Payment-Authorization` because `Authorization` already carries your API bearer token.
+3. **The orchestrator checks the credential.** The challenge must be bound by this deployment, unexpired, issued for this body, and unused. The orchestrator then claims its `id` once and hands the credential to your payment provider as `token_or_reference`. The provider verifies the method-specific proof.
+4. **On success,** you get `200` with the transaction result, `Cache-Control: private`, and `Payment-Receipt: <base64url JSON>` (`status`, `method`, `timestamp`, `reference`, `challengeId`).
+
+Refusals are `402` with a fresh challenge and one of these problem types:
+
+| Problem `type` (under `https://paymentauth.org/problems/`) | Cause |
+|---|---|
+| `malformed-credential` | The credential is not base64url JSON of the draft's shape. |
+| `invalid-challenge` | The challenge was not issued by this deployment for this body, its parameters were edited, or its `id` was already used. |
+| `payment-expired` | The challenge's `expires` has passed. |
+| `verification-failed` | The payment provider did not accept the proof. |
+
+Sending more than one `Payment-Authorization` header is `400` (`bad-request`). Authentication runs first, so a bad bearer token is `401` and the credential is not consumed.
+
+```mermaid
+sequenceDiagram
+  participant Agent
+  participant Orchestrator
+  participant PSP as Payment provider
+  Agent->>Orchestrator: POST /checkout/execute (payment_method_type=mpp)
+  Orchestrator-->>Agent: 402 WWW-Authenticate: Payment (bound to body, amount, expiry)
+  Agent->>Agent: pay with the method, build credential
+  Agent->>Orchestrator: same body + Payment-Authorization: Payment …
+  Orchestrator->>Orchestrator: verify binding, expiry, digest; claim id once
+  Orchestrator->>PSP: authorize (credential as token_or_reference)
+  alt proof accepted
+    Orchestrator-->>Agent: 200 + Payment-Receipt
+  else proof refused
+    Orchestrator-->>Agent: 402 verification-failed + fresh challenge
+  end
+```
 
 **Response (success):** Transaction result with `transaction_id`, `status`, `totals_breakdown`, `payment_reference`, `receipt_payload`, `correlation_id`, `payment_state`, `order_id`.
 

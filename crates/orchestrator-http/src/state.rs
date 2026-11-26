@@ -29,6 +29,9 @@ pub struct AppState {
     /// handler's reverse-DNS name. The handlers belong to the operator's payment
     /// providers, so they are configured rather than invented here.
     pub payment_handlers: serde_json::Map<String, serde_json::Value>,
+    /// MPP `Payment` challenges on checkout. `None` means MPP checkouts are not
+    /// challenged and their `token_or_reference` goes to the provider as sent.
+    pub mpp: Option<crate::mpp::MppSettings>,
 }
 
 impl AppState {
@@ -49,6 +52,7 @@ impl AppState {
             inbound_keys: None,
             embedded_checkout_url: None,
             payment_handlers: serde_json::Map::new(),
+            mpp: None,
         }
     }
 
@@ -61,6 +65,12 @@ impl AppState {
     /// Require and verify inbound agent signatures against these public keys.
     pub fn with_inbound_verification(mut self, keys: VerifyingKeyring) -> Self {
         self.inbound_keys = Some(keys);
+        self
+    }
+
+    /// Challenge MPP checkouts with the `Payment` HTTP authentication scheme.
+    pub fn with_mpp(mut self, settings: crate::mpp::MppSettings) -> Self {
+        self.mpp = Some(settings);
         self
     }
 
